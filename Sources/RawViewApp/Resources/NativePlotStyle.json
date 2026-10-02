@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "source": "figrecipe/presets/nature-single.yaml",
+  "source_sha256": "8f0a5f6cb35b0391009061e2c5f7df17ef7c6cf52e81c1e44b9cf02e2d37b91d",
+  "font_family": "Arial",
+  "grid": false,
+  "full_box": true,
+  "tick_direction": "out",
+  "palette_rgb": [
+    [
+      0,
+      64,
+      255
+    ],
+    [
+      225,
+      38,
+      0
+    ],
+    [
+      0,
+      158,
+      115
+    ],
+    [
+      230,
+      159,
+      0
+    ],
+    [
+      123,
+      44,
+      191
+    ],
+    [
+      102,
+      102,
+      102
+    ],
+    [
+      0,
+      0,
+      0
+    ]
+  ]
+}
