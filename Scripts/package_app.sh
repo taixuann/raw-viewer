@@ -1,10 +1,10 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-build="${RAWVIEW_BUILD_DIR:-/private/tmp/RawView-TAI73-build}"
-app="${RAWVIEW_APP_PATH:-/private/tmp/RawView-TAI73.app}"
+build="${RAWVIEW_BUILD_DIR:-/tmp/RawView-build}"
+app="${RAWVIEW_APP_PATH:-/tmp/RawView.app}"
 bundle_id="${RAWVIEW_BUNDLE_ID:-org.taixuann.rawview}"
-cache="${CLANG_MODULE_CACHE_PATH:-/private/tmp/RawView-TAI73-module-cache}"
+cache="${CLANG_MODULE_CACHE_PATH:-/tmp/RawView-module-cache}"
 mkdir -p "$cache"
 bin_dir=$(CLANG_MODULE_CACHE_PATH="$cache" swift build --disable-sandbox --scratch-path "$build" --package-path "$root/tools/raw-viewer" -c release --show-bin-path)
 CLANG_MODULE_CACHE_PATH="$cache" swift build --disable-sandbox --scratch-path "$build" --package-path "$root/tools/raw-viewer" -c release
