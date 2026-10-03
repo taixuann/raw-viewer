@@ -28,7 +28,77 @@ public struct MeasurementChannel: Decodable, Identifiable, Sendable {
     public let name: String
     public let label: String
     public let unit: String
-    public let values: [Double]
+    public let quantity: String?
+    /// Row-aligned samples in acquisition order. `nil` is a preserved gap (blank,
+    /// NaN, or Infinity in the source cell): the row is kept, finite values are
+    /// bitwise exact, and plots break the line at gaps instead of interpolating.
+    public let values: [Double?]
+    /// Parallel gap classification: `nil` where the value is finite. Blank
+    /// cells, recorded NaN/infinity tokens, and overflow saturation stay
+    /// distinguishable; external JSON nulls without a recorded reason decode
+    /// as `.unknown`.
+    public let gapReasons: [GapReason?]
+
+    public init(name: String, label: String, unit: String, quantity: String?, values: [Double?], gapReasons: [GapReason?]? = nil) {
+        self.name = name
+        self.label = label
+        self.unit = unit
+        self.quantity = quantity
+        self.values = values
+        self.gapReasons = gapReasons ?? values.map { $0 == nil ? .unknown : nil }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, label, unit, quantity, values, gapReasons = "gap_reasons"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = try box.decode(String.self, forKey: .name)
+        label = try box.decode(String.self, forKey: .label)
+        unit = try box.decode(String.self, forKey: .unit)
+        quantity = try box.decodeIfPresent(String.self, forKey: .quantity)
+        values = try box.decode([Double?].self, forKey: .values)
+        if let reasons = try box.decodeIfPresent([GapReason?].self, forKey: .gapReasons) {
+            guard reasons.count == values.count else {
+                throw DecodingError.dataCorruptedError(forKey: .gapReasons, in: box, debugDescription: "gap_reasons length (\(reasons.count)) must match values length (\(values.count))")
+            }
+            gapReasons = reasons
+        } else {
+            gapReasons = values.map { $0 == nil ? .unknown : nil }
+        }
+    }
+
+    /// Number of preserved acquisition rows (including gaps).
+    public var rowCount: Int { values.count }
+    /// Number of gap cells in this channel.
+    public var gapCount: Int { values.filter({ $0 == nil }).count }
+
+    /// Ordered-table cell text: the formatted number, or the gap marker for
+    /// the recorded reason.
+    public func text(at index: Int) -> String {
+        if let value = values[index] { return NumberLabel.format(value) }
+        return gapReasons[index]?.marker ?? GapReason.unknown.marker
+    }
+}
+
+public enum GapReason: String, Codable, Sendable {
+    case blank
+    case nan
+    case infinite
+    case saturated
+    case unknown
+
+    /// Ordered-table marker distinguishing recorded gap reasons.
+    public var marker: String {
+        switch self {
+        case .blank: "—"
+        case .nan: "NaN"
+        case .infinite: "∞"
+        case .saturated: "sat"
+        case .unknown: "—"
+        }
+    }
 }
 
 public struct MetadataField: Decodable, Identifiable, Sendable {
@@ -125,8 +195,10 @@ public struct NormalizedMeasurement: Sendable {
         guard Set(envelope.channels.map(\.name)).count == envelope.channels.count else {
             throw ContractError.invalid("Channel names must be unique")
         }
-        guard envelope.channels.allSatisfy({ $0.values.allSatisfy(\.isFinite) }) else {
-            throw ContractError.invalid("Channels must contain only finite values")
+        guard envelope.channels.allSatisfy({ channel in
+            channel.values.allSatisfy({ $0 == nil || $0!.isFinite })
+        }) else {
+            throw ContractError.invalid("Channels must contain only finite values or null gaps")
         }
         if let count = envelope.channels.first?.values.count,
            !envelope.channels.allSatisfy({ $0.values.count == count }) {
@@ -162,23 +234,48 @@ public enum AxisTransformError: Error, Sendable, Equatable {
 }
 
 public enum AxisTransform {
-    public static func values(_ input: [Double], absolute: Bool, scale: AxisScale) -> Result<[Double], AxisTransformError> {
-        let transformed = input.map { absolute ? abs($0) : $0 }
-        guard transformed.allSatisfy(\.isFinite) else { return .failure(.nonFinite) }
+    public static func values(_ input: [Double?], absolute: Bool, scale: AxisScale) -> Result<[Double?], AxisTransformError> {
+        var transformed: [Double?] = []
+        transformed.reserveCapacity(input.count)
+        for sample in input {
+            guard let sample else { transformed.append(nil); continue }
+            transformed.append(absolute ? abs(sample) : sample)
+        }
+        guard transformed.allSatisfy({ $0 == nil || $0!.isFinite }) else { return .failure(.nonFinite) }
         if scale == .logarithmic {
-            guard transformed.allSatisfy({ $0 > 0 }) else { return .failure(.invalidLogDomain) }
-            return .success(transformed.map(log10))
+            guard transformed.allSatisfy({ $0 == nil || $0! > 0 }) else { return .failure(.invalidLogDomain) }
+            return .success(transformed.map { $0 == nil ? nil : log10($0!) })
         }
         return .success(transformed)
+    }
+
+    /// Segments of contiguous valid indices for native path drawing. A gap in
+    /// either x or y breaks the line; no interpolation or sorting is applied.
+    public static func segments(x: [Double?], y: [Double?]) -> [[Int]] {
+        var runs: [[Int]] = []
+        var current: [Int] = []
+        for index in x.indices where y.indices.contains(index) {
+            if x[index] != nil && y[index] != nil {
+                current.append(index)
+            } else if !current.isEmpty {
+                runs.append(current)
+                current = []
+            }
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs
     }
 }
 
 public enum NumberLabel {
-    public static func format(_ value: Double) -> String {
-        guard value.isFinite else { return "—" }
+    public static func format(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
         if value != 0 && (abs(value) < 0.001 || abs(value) >= 1000) {
             return value.formatted(.number.precision(.significantDigits(3...3)).notation(.scientific))
         }
         return value.formatted(.number.precision(.significantDigits(1...3)))
+    }
+    public static func format(_ value: Double) -> String {
+        format(Optional(value))
     }
 }

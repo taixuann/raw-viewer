@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import SwiftUI
 import UniformTypeIdentifiers
 import RawViewCore
@@ -21,35 +20,65 @@ final class RawViewModel: ObservableObject {
     @Published var focusedSourceID: String?
     @Published var isLoading = false
     @Published var error: String?
-    @Published var trustConfirmed = false
-    @Published private(set) var hasReaderApproval = false
+    @Published var profileIssues: [String] = []
     @Published var inspectedSources = 0
     @Published var inspectionTotal = 0
     @Published var loadingPhase = "Idle"
+    @Published var inspectionCancelled = false
     @Published var tab = "Plot"
     @Published var xAbsolute = false
     @Published var yAbsolute = false
     @Published var xScale: AxisScale = .linear
     @Published var yScale: AxisScale = .linear
-    private var operationTask: Task<Void, Never>?
+    // Independent cancellation identities: inventory, bulk inspection, and the
+    // focused-source load each own their task slot, so changing focus cancels
+    // only the focused load and never drops in-flight inspection results.
+    private var discoveryTask: Task<Void, Never>?
+    private var inspectionTask: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?
     private var activeLoadID = UUID()
+    private var inspectionID = UUID()
     private var activeScopeURL: URL?
-    private var pendingApproval: ReaderApproval?
-
-    var pendingReaderFingerprint: String { pendingApproval.map { String($0.readerSHA256.prefix(12)) } ?? "unavailable" }
+    private let discoveryGate = DiscoveryGate()
 
     init() {
         if let bookmark = UserDefaults.standard.data(forKey: "rawView.projectBookmark.v1") {
             var stale = false
             if let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope,
                                   relativeTo: nil, bookmarkDataIsStale: &stale) {
-                _ = url.startAccessingSecurityScopedResource()
-                activeScopeURL = url
-                if let restored = try? ProjectContext.open(url) { install(restored) }
-            } else if let path = UserDefaults.standard.string(forKey: "rawView.lastProjectPath.v1"),
-                      let opened = try? ProjectContext.open(URL(fileURLWithPath: path)) {
-                install(opened)
+                let scoped = url.startAccessingSecurityScopedResource()
+                if scoped { activeScopeURL = url }
+                do {
+                    install(try ProjectContext.open(url))
+                } catch {
+                    if scoped {
+                        url.stopAccessingSecurityScopedResource()
+                        activeScopeURL = nil
+                    }
+                    self.error = "The previously selected project could not be reopened: \(error.localizedDescription)"
+                }
+            } else if UserDefaults.standard.string(forKey: "rawView.lastProjectPath.v1") != nil {
+                restoreSavedPathIfPresent()
+            } else {
+                self.error = "The previously selected project could not be reopened. Choose a project containing a readable data/raw directory."
             }
+            return
+        }
+        // No bookmark (openProject persists the path even when bookmark
+        // creation returns nil): the saved path is still tried. Silence only
+        // when both saved values are absent.
+        restoreSavedPathIfPresent()
+    }
+
+    /// Installs the project at the saved `lastProjectPath`, if any. Silent
+    /// when absent (first launch); otherwise installs or reports the same
+    /// actionable saved-project error as the bookmark path.
+    private func restoreSavedPathIfPresent() {
+        guard let path = UserDefaults.standard.string(forKey: "rawView.lastProjectPath.v1") else { return }
+        do {
+            install(try ProjectContext.open(URL(fileURLWithPath: path)))
+        } catch {
+            self.error = "The previously selected project could not be reopened: \(error.localizedDescription)"
         }
     }
 
@@ -73,67 +102,34 @@ final class RawViewModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
 
-    func resumeOrRequestApproval() {
-        guard let project, !sources.isEmpty else { return }
-        guard let approval = savedApproval(for: project), approval.isCurrent(for: project) else {
-            removeSavedApproval(for: project)
-            hasReaderApproval = false
-            requestReaderApproval()
-            return
-        }
-        hasReaderApproval = true
-        startInspection(project, approval: approval)
-    }
-
-    func requestReaderApproval() {
-        guard let project else { return }
-        guard let candidate = ReaderApproval.issue(afterUserReviewOf: project) else {
-            pendingApproval = nil
-            trustConfirmed = false
-            error = "The project reader is missing, unreadable, or resolves outside data/instruments. Add a regular reader.py inside this project, then reopen it."
-            return
-        }
-        pendingApproval = candidate
-        trustConfirmed = true
-    }
-
-    func cancelApproval() {
-        pendingApproval = nil
-        trustConfirmed = false
-    }
-
-    func approveProjectReader() {
-        guard let project, let approval = pendingApproval else { return }
-        guard approval.isCurrent(for: project) else {
-            error = "The project reader changed while its approval prompt was open. Review the current reader and approve again."
-            requestReaderApproval()
-            return
-        }
-        saveApproval(approval, for: project)
-        cancelApproval()
-        hasReaderApproval = true
-        startInspection(project, approval: approval)
-    }
-
     func cancelLoad() {
-        operationTask?.cancel()
-        operationTask = nil
+        if inspectionTask != nil { inspectionCancelled = true }
+        discoveryTask?.cancel()
+        discoveryTask = nil
+        inspectionTask?.cancel()
+        inspectionTask = nil
+        loadTask?.cancel()
+        loadTask = nil
         activeLoadID = UUID()
+        inspectionID = UUID()
         isLoading = false
+        loadingPhase = "Idle"
         if let id = focusedSourceID { sourceStates[id]?.isLoading = false }
     }
 
+    private func refreshLoading() {
+        isLoading = discoveryTask != nil || inspectionTask != nil || loadTask != nil
+        if !isLoading { loadingPhase = "Idle" }
+    }
+
     func loadFocused() {
-        guard let project, hasReaderApproval, let id = focusedSourceID,
+        guard let project, let id = focusedSourceID,
               let source = sources.first(where: { $0.id == id }) else { return }
-        guard let approval = savedApproval(for: project), approval.isCurrent(for: project) else {
-            removeSavedApproval(for: project)
-            hasReaderApproval = false
-            requestReaderApproval()
-            return
-        }
         guard sourceStates[id]?.measurement == nil, sourceStates[id]?.isLoading != true else { return }
-        operationTask?.cancel()
+        // Cancels only the focused load: bulk inspection keeps running and its
+        // results are never lost by a focus change.
+        loadTask?.cancel()
+        loadTask = nil
         for (previousID, var previousState) in sourceStates where previousState.isLoading {
             previousState.isLoading = false
             sourceStates[previousID] = previousState
@@ -143,13 +139,16 @@ final class RawViewModel: ObservableObject {
         isLoading = true
         sourceStates[id]?.isLoading = true
         sourceStates[id]?.error = nil
-        operationTask = Task { [weak self] in
-            defer { if taskID == self?.activeLoadID { self?.isLoading = false } }
+        loadTask = Task { [weak self] in
+            defer {
+                if taskID == self?.activeLoadID { self?.loadTask = nil }
+                self?.refreshLoading()
+            }
             do {
-                let result = try await ReaderClient.load(source.url, project: project, approval: approval)
+                let measurement = try await InstrumentReader.load(source.url, project: project)
                 guard taskID == self?.activeLoadID, let self else { return }
                 var state = self.sourceStates[id] ?? GallerySourceState()
-                state.measurement = result.measurement
+                state.measurement = measurement
                 state.isLoading = false
                 state.error = nil
                 self.sourceStates[id] = state
@@ -165,71 +164,120 @@ final class RawViewModel: ObservableObject {
 
     private func install(_ context: ProjectContext) {
         cancelLoad()
-        cancelApproval()
-        hasReaderApproval = false
         project = context
         focusedSourceID = nil
         tab = "Plot"
         error = nil
-        do {
-            sources = try context.discoverSources()
-            sourceStates = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, GallerySourceState()) })
-            if sources.isEmpty { error = "No readable regular files were found under data/raw." }
-            else { resumeOrRequestApproval() }
-        } catch {
-            sources = []
-            sourceStates = [:]
-            self.error = "Could not inventory data/raw: \(error.localizedDescription)"
+        profileIssues = []
+        sources = []
+        sourceStates = [:]
+        inspectionCancelled = false
+        // Discovery runs through the cancellable core seam off the main actor so
+        // large raw directories never block the UI. Cancellation propagates to
+        // the worker; the gate token drops stale results when the user reselects.
+        let requestID = UUID()
+        activeLoadID = requestID
+        isLoading = true
+        loadingPhase = "Discovering"
+        inspectedSources = 0
+        inspectionTotal = 0
+        discoveryTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if requestID == self.activeLoadID { self.discoveryTask = nil }
+                self.refreshLoading()
+            }
+            let generation = await self.discoveryGate.begin()
+            let discovered: [RawSource]
+            do {
+                discovered = try await context.discoverSourcesAsync()
+            } catch is CancellationError {
+                return
+            } catch {
+                guard requestID == self.activeLoadID, await self.discoveryGate.isCurrent(generation) else { return }
+                self.sources = []
+                self.sourceStates = [:]
+                self.error = "Could not inventory data/raw: \(error.localizedDescription)"
+                return
+            }
+            guard !Task.isCancelled, requestID == self.activeLoadID,
+                  await self.discoveryGate.isCurrent(generation) else { return }
+            self.sources = discovered
+            self.sourceStates = Dictionary(uniqueKeysWithValues: discovered.map { ($0.id, GallerySourceState()) })
+            if discovered.isEmpty {
+                self.error = "No readable regular files were found under data/raw."
+            } else {
+                self.startInspection(context)
+            }
         }
     }
 
-    private func startInspection(_ context: ProjectContext, approval: ReaderApproval) {
-        operationTask?.cancel()
-        let requestID = UUID()
-        activeLoadID = requestID
+    private func startInspection(_ context: ProjectContext) {
+        // Cancels only bulk inspection: discovery already finished and any
+        // focused load keeps its own slot and state.
+        inspectionTask?.cancel()
+        inspectionTask = nil
+        inspectionID = UUID()
+        let requestID = inspectionID
         isLoading = true
         error = nil
         loadingPhase = "Inspecting"
         inspectedSources = 0
         inspectionTotal = sources.count
+        profileIssues = []
+        inspectionCancelled = false
         sourceStates = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, GallerySourceState()) })
-        operationTask = Task {
-            _ = await ReaderClient.inspectMany(sources, project: context, approval: approval,
+        inspectSources(sources, project: context, requestID: requestID, baseCompleted: 0)
+    }
+
+    /// Resumes a cancelled inspection for the sources still lacking results,
+    /// keeping everything already inspected. Returns false when nothing is pending.
+    @discardableResult
+    func resumeInspection() -> Bool {
+        guard let project, inspectionTask == nil else { return false }
+        let pending = sources.filter { sourceStates[$0.id]?.inspection == nil }
+        guard !pending.isEmpty else { return false }
+        inspectionID = UUID()
+        let requestID = inspectionID
+        inspectionCancelled = false
+        isLoading = true
+        loadingPhase = "Inspecting"
+        inspectionTotal = sources.count
+        inspectedSources = sources.count - pending.count
+        inspectSources(pending, project: project, requestID: requestID, baseCompleted: sources.count - pending.count)
+        return true
+    }
+
+    private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int) {
+        inspectionTask = Task {
+            let report = await InstrumentReader.inspectMany(targets, project: project,
                 onProgress: { results, completed in
                     await MainActor.run {
-                        guard requestID == self.activeLoadID else { return }
+                        guard requestID == self.inspectionID else { return }
                         for result in results {
                             var state = self.sourceStates[result.id] ?? GallerySourceState()
                             state.inspection = result.inspection
                             state.error = result.error
                             self.sourceStates[result.id] = state
                         }
-                        self.inspectedSources = completed
+                        self.inspectedSources = baseCompleted + completed
                     }
                 })
-            guard !Task.isCancelled, requestID == activeLoadID else { return }
-            isLoading = false
-            loadingPhase = "Idle"
-            if focusedSourceID == nil { focusedSourceID = sources.first?.id }
-            loadFocused()
+            guard !Task.isCancelled, requestID == self.inspectionID else {
+                // Superseded runs must not touch the new run's slot or flag.
+                if Task.isCancelled, requestID == self.inspectionID {
+                    self.inspectionCancelled = true
+                    self.inspectionTask = nil
+                }
+                self.refreshLoading()
+                return
+            }
+            self.profileIssues = report.profileIssues
+            self.inspectionTask = nil
+            self.refreshLoading()
+            if self.focusedSourceID == nil { self.focusedSourceID = self.sources.first?.id }
+            self.loadFocused()
         }
-    }
-
-    private func approvalKey(for project: ProjectContext) -> String {
-        let digest = SHA256.hash(data: Data(project.root.path.utf8))
-            .map { String(format: "%02x", $0) }.joined()
-        return "rawView.readerApproval.v1.\(digest)"
-    }
-    private func savedApproval(for project: ProjectContext) -> ReaderApproval? {
-        guard let data = UserDefaults.standard.data(forKey: approvalKey(for: project)) else { return nil }
-        return try? JSONDecoder().decode(ReaderApproval.self, from: data)
-    }
-    private func saveApproval(_ approval: ReaderApproval, for project: ProjectContext) {
-        guard let data = try? JSONEncoder().encode(approval) else { return }
-        UserDefaults.standard.set(data, forKey: approvalKey(for: project))
-    }
-    private func removeSavedApproval(for project: ProjectContext) {
-        UserDefaults.standard.removeObject(forKey: approvalKey(for: project))
     }
 }
 
@@ -254,20 +302,32 @@ struct RawViewShell: View {
                 }
                 if let project = model.project {
                     Text(project.root.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if model.isLoading && model.loadingPhase == "Inspecting" {
+                    if model.isLoading && model.loadingPhase == "Discovering" {
+                        ProgressView {
+                            Text("Discovering sources under data/raw…")
+                        }
+                        Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
+                    } else if model.isLoading && model.loadingPhase == "Inspecting" {
                         ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
                             Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
                         }
                         Button("Cancel Inspection", action: model.cancelLoad).buttonStyle(.bordered)
-                    } else if !model.sources.isEmpty {
-                        Button("Review and Approve Reader", action: model.requestReaderApproval)
-                            .buttonStyle(.borderedProminent)
+                    } else if model.inspectionCancelled {
+                        let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
+                        if remaining > 0 {
+                            Text("Inspection cancelled · \(remaining) remaining")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
+                        }
                     }
                     ProjectSourcesSidebar(sources: model.sources,
                         inspections: Dictionary(uniqueKeysWithValues: model.sourceStates.compactMap { id, state in state.inspection.map { (id, $0) } }),
                         states: model.sourceStates, focusedSourceID: $model.focusedSourceID)
+                    if !model.profileIssues.isEmpty {
+                        profileIssueList
+                    }
                     Spacer()
-                    Text("The approved reader and configured parser run with your permissions.")
+                    Text("RawView's built-in readers parse sources. Raw files and instrument profiles are never modified.")
                         .font(.caption2).foregroundStyle(.secondary)
                 } else {
                     ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
@@ -280,7 +340,7 @@ struct RawViewShell: View {
                 ProjectGallery(sources: model.sources, states: model.sourceStates,
                                focusedSourceID: $model.focusedSourceID, tab: $model.tab,
                                xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
-                               xScale: $model.xScale, yScale: $model.yScale)
+                               xScale: $model.xScale, yScale: $model.yScale, retry: model.loadFocused)
                     .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 let state = model.focusedSourceID.flatMap { model.sourceStates[$0] }
@@ -298,11 +358,14 @@ struct RawViewShell: View {
             }
         }
         .onChange(of: model.focusedSourceID) { _, _ in model.loadFocused() }
-        .alert("Approve Project Reader?", isPresented: $model.trustConfirmed) {
-            Button("Cancel", role: .cancel) { model.cancelApproval() }
-            Button("Approve and Inspect Sources") { model.approveProjectReader() }
-        } message: {
-            Text("RawView discovered \(model.sources.count) files. Approval lets this project's data/instruments/reader.py and its configured shared instrument parser run with your permissions across every discovered source. They may access or change files your account can access. Approval is saved for this project and this exact reader version (SHA-256 \(model.pendingReaderFingerprint)); changing the reader requires approval again. Review the reader and configured parser before continuing.")
+    }
+
+    private var profileIssueList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("PROFILE ISSUES").font(.caption2.bold()).foregroundStyle(.orange)
+            ForEach(Array(model.profileIssues.enumerated()), id: \.offset) { _, issue in
+                Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+            }
         }
     }
 }
@@ -320,7 +383,7 @@ struct NativePlot: View {
     @State private var pan = CGSize.zero
     @State private var dragStart = CGSize.zero
 
-    private var transformed: Result<([Double], [(String, [Double])]), PlotFailure> {
+    private var transformed: Result<([Double?], [(String, [Double?])]), PlotFailure> {
         guard let xName = measurement.view.x, let yNames = measurement.view.y,
               let x = measurement.channel(named: xName) else { return .failure(.message("No plottable channels were declared")) }
         let yChannels = yNames.compactMap(measurement.channel(named:))
@@ -331,7 +394,7 @@ struct NativePlot: View {
         switch AxisTransform.values(x.values, absolute: xAbsolute, scale: xScale) {
         case .failure(let message): return .failure(.message("X: \(message.message)"))
         case .success(let xs):
-            var series: [(String, [Double])] = []
+            var series: [(String, [Double?])] = []
             for name in yNames {
                 guard let channel = measurement.channel(named: name) else { return .failure(.message("Y channel \(name) is missing")) }
                 switch AxisTransform.values(channel.values, absolute: yAbsolute, scale: yScale) {
@@ -365,20 +428,21 @@ struct NativePlot: View {
                             .foregroundStyle(palette(index)).font(.caption)
                     }
                     Spacer()
-                    Text("Drag to pan · Pinch to zoom · \(data.0.count) ordered points")
+                    Text("Drag to pan · Pinch to zoom · \(data.0.count) ordered rows · \(gapCount(data)) gaps")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
     }
 
-    private func draw(_ data: ([Double], [(String, [Double])]), in context: inout GraphicsContext, size: CGSize) {
-        guard !data.0.isEmpty, let first = data.1.first?.1, !first.isEmpty else { return }
+    private func draw(_ data: ([Double?], [(String, [Double?])]), in context: inout GraphicsContext, size: CGSize) {
+        let finiteX = data.0.compactMap { $0 }
+        let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
+        guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
         let plot = CGRect(x: 66, y: 12, width: max(1, size.width - 84), height: max(1, size.height - 58))
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.black), lineWidth: 0.8)
-        let xRange = viewport(expanded(data.0), pan: pan.width, dimension: plot.width, vertical: false)
-        let allY = data.1.flatMap(\.1)
-        let yRange = viewport(expanded(allY), pan: pan.height, dimension: plot.height, vertical: true)
+        let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
+        let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
@@ -404,15 +468,33 @@ struct NativePlot: View {
         plotContext.clip(to: Path(plot))
         for (seriesIndex, item) in data.1.enumerated() {
             guard item.1.count == data.0.count else { continue }
-            var line = Path()
-            for index in data.0.indices {
-                let tx = (data.0[index] - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
-                let ty = (item.1[index] - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
-                let point = CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height)
-                if index == data.0.startIndex { line.move(to: point) } else { line.addLine(to: point) }
+            // Gap segmentation: a nil x or y breaks the line; rows stay in order.
+            // A singleton run would stroke as an invisible zero-length line, so
+            // it is drawn as a visible dot instead while gaps stay breaks.
+            for run in AxisTransform.segments(x: data.0, y: item.1) {
+                if run.count == 1, let index = run.first,
+                   let xv = data.0[index], let yv = item.1[index] {
+                    let tx = (xv - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
+                    let ty = (yv - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
+                    let point = CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height)
+                    plotContext.fill(Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)), with: .color(palette(seriesIndex)))
+                    continue
+                }
+                var line = Path()
+                for (pointIndex, index) in run.enumerated() {
+                    guard let xv = data.0[index], let yv = item.1[index] else { continue }
+                    let tx = (xv - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
+                    let ty = (yv - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
+                    let point = CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height)
+                    if pointIndex == 0 { line.move(to: point) } else { line.addLine(to: point) }
+                }
+                plotContext.stroke(line, with: .color(palette(seriesIndex)), lineWidth: 1.4)
             }
-            plotContext.stroke(line, with: .color(palette(seriesIndex)), lineWidth: 1.4)
         }
+    }
+
+    private func gapCount(_ data: ([Double?], [(String, [Double?])])) -> Int {
+        data.0.filter({ $0 == nil }).count + data.1.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
     }
 
     private func expanded(_ values: [Double]) -> ClosedRange<Double> {
@@ -457,7 +539,7 @@ struct MeasurementTable: View {
                         HStack(spacing: 0) {
                             cell(String(index), width: 64)
                             ForEach(measurement.channels) { channel in
-                cell(String(channel.values[index]), width: 150)
+                                cell(channel.text(at: index), width: 150)
                             }
                         }
                         .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.035) : .clear)
@@ -496,7 +578,7 @@ struct InspectorPane: View {
                         field("Instrument", measurement.instrument.name)
                         field("Mode", measurement.applicationMode ?? "Unknown")
                         field("Channels / Points", "\(measurement.channels.count) / \(measurement.channels.first?.values.count ?? 0)")
-                        field("Reader-reported support", measurement.supportStatus)
+                        field("Profile-reported support", measurement.supportStatus)
                     }
                     ForEach(measurement.metadataSections) { section in
                         self.section(section.title) {
@@ -507,7 +589,7 @@ struct InspectorPane: View {
                     }
                     if !measurement.warnings.isEmpty {
                         section("Validation") {
-                            field("Reader-reported state", measurement.provenance["validation_state"] ?? "Unknown")
+                            field("Profile-reported state", measurement.provenance["profile_schema_version"].map { "schema v\($0)" } ?? "Unknown")
                             ForEach(Array(measurement.warnings.enumerated()), id: \.offset) { _, warning in
                                 Text(warning).font(.caption).foregroundStyle(.orange)
                             }
@@ -521,10 +603,10 @@ struct InspectorPane: View {
                         field("Instrument", inspection.instrumentName ?? inspection.instrumentID ?? "Unknown")
                         field("Mode", inspection.applicationMode ?? "Unknown")
                         field("Device", inspection.deviceID ?? "Unknown")
-                        field("Study", inspection.studyToken ?? "Unknown")
+                        field("Category", inspection.category ?? "Unknown")
                     }
                     section("Status") {
-                        field("Reader support", inspection.supportStatus ?? "Unknown")
+                        field("Profile support", inspection.supportStatus ?? "Unknown")
                         field("Validation", inspection.validationState ?? "Unknown")
                     }
                     section("Source") {
@@ -535,7 +617,7 @@ struct InspectorPane: View {
                     if let source { Text(source.path).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled) }
                 } else if let source {
                     field("Selected", source.lastPathComponent)
-                    Text(error == nil ? "Waiting for project metadata inspection." : "Metadata inspection is unavailable for this source.")
+                    Text(error == nil ? "Waiting for source inspection." : "Source inspection is unavailable for this source.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text("Select one source to inspect it.").font(.caption).foregroundStyle(.secondary)

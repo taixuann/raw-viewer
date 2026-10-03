@@ -1,0 +1,225 @@
+import Foundation
+
+public struct ProjectContext: Sendable {
+    public let root: URL
+    public let rawRoot: URL
+
+    public static func open(_ root: URL) throws -> Self {
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let raw = canonicalRoot.appendingPathComponent("data/raw", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+        guard raw.path.hasPrefix(canonicalRoot.path + "/") else { throw ReaderError.invalidProject }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: raw.path, isDirectory: &isDirectory), isDirectory.boolValue,
+              FileManager.default.isReadableFile(atPath: raw.path) else { throw ReaderError.invalidProject }
+        return .init(root: canonicalRoot, rawRoot: raw)
+    }
+
+    public func containsSource(_ source: URL) -> Bool {
+        // Pure containment on the resolved path: readability is decided by the
+        // secured open, so a missing or unreadable in-root file is never
+        // mislabeled as outside data/raw.
+        let canonical = source.resolvingSymlinksInPath().standardizedFileURL
+        return canonical.path.hasPrefix(rawRoot.path + "/")
+    }
+
+    /// Source-local display path for diagnostics: the claimed project-relative
+    /// path when the selection sits inside the project, else the file name.
+    public func claimedPath(of source: URL) -> String {
+        if source.path.hasPrefix(root.path + "/") {
+            return String(source.path.dropFirst(root.path.count + 1))
+        }
+        return source.lastPathComponent
+    }
+
+    public func discoverSources() throws -> [RawSource] {
+        try walkRawSources(onVisitDirectory: nil, onVisitFile: nil, cancellable: false)
+    }
+
+    /// Cancellable off-main inventory. This is the production seam used by
+    /// `RawViewModel.install`: discovery runs detached (never on the main
+    /// actor), outer cancellation propagates to the worker through a
+    /// cancellation handler, and the walk itself stops at incremental
+    /// checkpoints. The hooks fire once per visited directory / regular file.
+    public func discoverSourcesAsync(
+        onVisitDirectory: (@Sendable (URL) -> Void)? = nil,
+        onVisitFile: (@Sendable (URL) -> Void)? = nil
+    ) async throws -> [RawSource] {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            try self.walkRawSources(onVisitDirectory: onVisitDirectory, onVisitFile: onVisitFile, cancellable: true)
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await worker.value
+        }, onCancel: {
+            worker.cancel()
+        })
+    }
+
+    private func walkRawSources(
+        onVisitDirectory: (@Sendable (URL) -> Void)?,
+        onVisitFile: (@Sendable (URL) -> Void)?,
+        cancellable: Bool
+    ) throws -> [RawSource] {
+        var discovered: [String: RawSource] = [:]
+        var visitedDirectories = Set<String>()
+        var filesSinceCheck = 0
+
+        func checkpoint() throws {
+            if cancellable { try Task.checkCancellation() }
+        }
+
+        // Incremental traversal: the enumerator yields entries lazily instead
+        // of loading whole directory arrays, so cancellation lands promptly
+        // even inside a single very wide directory.
+        var enumerationError: Error?
+        guard let enumerator = FileManager.default.enumerator(
+            at: rawRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .isSymbolicLinkKey],
+            options: [],
+            errorHandler: { _, error in enumerationError = error; return false }
+        ) else {
+            throw ReaderError.invalidProject
+        }
+        try checkpoint()
+        visitedDirectories.insert(rawRoot.path)
+        onVisitDirectory?(rawRoot)
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .isSymbolicLinkKey])
+            guard let values else { continue }
+            let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+            guard canonical.path.hasPrefix(rawRoot.path + "/") else {
+                if values.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+            if values.isDirectory == true {
+                // A descendant project carries its own data/raw marker: prune
+                // the whole subtree instead of recursing into its project data.
+                var isNestedProjectData: ObjCBool = false
+                let marker = canonical.appendingPathComponent("data/raw", isDirectory: true).path
+                if FileManager.default.fileExists(atPath: marker, isDirectory: &isNestedProjectData),
+                   isNestedProjectData.boolValue {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                guard visitedDirectories.insert(canonical.path).inserted else {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                try checkpoint()
+                onVisitDirectory?(canonical)
+            } else if values.isRegularFile == true, values.isReadable == true, let size = values.fileSize {
+                onVisitFile?(canonical)
+                let relativePath = String(canonical.path.dropFirst(root.path.count + 1))
+                discovered[relativePath] = RawSource(relativePath: relativePath, url: canonical, byteSize: Int64(size))
+                // ponytail: per-file checkpoints only every 64 files; directory
+                // tops plus the lazy enumerator are the cancellation bounds.
+                if cancellable {
+                    filesSinceCheck += 1
+                    if filesSinceCheck.isMultiple(of: 64) { try Task.checkCancellation() }
+                }
+            }
+        }
+        if let enumerationError { throw enumerationError }
+        return discovered.values.sorted { $0.relativePath < $1.relativePath }
+    }
+}
+
+/// Serializes folder-inventory generations so a superseded discovery can never
+/// install stale sources. The viewer takes a token per discovery and installs
+/// only while its token is current; reselection starts a new generation.
+public actor DiscoveryGate {
+    private var generation = 0
+    public init() {}
+    /// Starts a new generation, superseding all previous ones.
+    public func begin() -> Int { generation += 1; return generation }
+    /// Whether the token is still the latest generation.
+    public func isCurrent(_ token: Int) -> Bool { token == generation }
+}
+
+/// Failure to pin a file open without following symlinks. Callers map these
+/// to source-local diagnostics carrying the project-relative display path.
+enum SecureOpenError: Error, Equatable {
+    case symlink(path: String)
+    case missing(path: String)
+    case unreadable(path: String)
+    case escaped(path: String)
+}
+
+/// Descriptor-relative, no-follow opens: the returned handle pins the exact
+/// object that path checks validated, closing check-to-open races where a
+/// symlink is swapped in between.
+enum SecureFile {
+    static func openNoFollow(_ path: String) throws -> FileHandle {
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            switch errno {
+            case ENOENT, ENOTDIR: throw SecureOpenError.missing(path: path)
+            case ELOOP: throw SecureOpenError.symlink(path: path)
+            case EACCES, EPERM: throw SecureOpenError.unreadable(path: path)
+            default: throw SecureOpenError.unreadable(path: path)
+            }
+        }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    }
+
+    /// Canonical path of the already-opened object (no new lookups), so the
+    /// containment check below validates and hashes/reads the same object.
+    static func canonicalPath(of handle: FileHandle) -> String? {
+        var buffer = [CChar](repeating: 0, count: 1024)
+        guard fcntl(handle.fileDescriptor, F_GETPATH, &buffer) == 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    /// Kernel-domain canonicalization (POSIX realpath). `URL`
+    /// path-resolution is a no-op on some system prefixes (observed: `/var`
+    /// stays unresolved while the kernel reports `/private/var`), so the
+    /// opened-object check below must compare kernel-canonical forms.
+    static func kernelCanonical(_ path: String) -> String {
+        var buffer = [CChar](repeating: 0, count: 1024)
+        guard realpath(path, &buffer) != nil else { return path }
+        return String(cString: buffer)
+    }
+
+    /// Opens `resolvedPath` without following a final-component symlink and
+    /// verifies the opened object itself still sits beneath `rootPath`.
+    static func openVerified(resolvedPath: String, beneath rootPath: String) throws -> FileHandle {
+        let handle = try openNoFollow(resolvedPath)
+        guard let actual = canonicalPath(of: handle),
+              actual == rootPath || actual.hasPrefix(rootPath + "/") ||
+              actual == kernelCanonical(rootPath) || actual.hasPrefix(kernelCanonical(rootPath) + "/") else {
+            try? handle.close()
+            throw SecureOpenError.escaped(path: resolvedPath)
+        }
+        return handle
+    }
+}
+
+extension SecureOpenError {
+    /// Source-local diagnostic carrying the project-relative display path.
+    func readerError(display: String) -> ReaderError {
+        switch self {
+        case .symlink:
+            return .invalidSource("\(display): source file is a symlink or was replaced by one during open; symlinks are never followed.")
+        case .missing:
+            return .invalidSource("\(display): source file is missing from this project's data/raw (it may have been moved or deleted after discovery).")
+        case .unreadable:
+            return .invalidSource("\(display): source file exists but is not readable.")
+        case .escaped(let path):
+            return .sourceOutsideRaw(display.isEmpty ? path : display)
+        }
+    }
+
+    /// Profile-issue string carrying the project-relative display path.
+    func profileIssue(display: String) -> String {
+        switch self {
+        case .symlink:
+            return "\(display): profile is a symlink or was replaced by one during open; skipped."
+        case .missing:
+            return "\(display): profile disappeared before it could be read; skipped."
+        case .unreadable:
+            return "\(display): profile is not readable; skipped."
+        case .escaped:
+            return "\(display): profile resolves outside this project; skipped."
+        }
+    }
+}

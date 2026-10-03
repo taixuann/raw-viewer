@@ -13,11 +13,16 @@ struct ProjectSourcesSidebar: View {
 
     static let facets: [(String, String)] = [
         ("", "None"), ("sample", "Sample / Device"), ("instrument", "Instrument"),
-        ("study", "Study"), ("mode", "Mode"), ("date", "Date / Batch"), ("status", "Status"),
+        ("category", "Category"), ("mode", "Mode"), ("date", "Date / Batch"), ("status", "Status"),
     ]
 
     static func facetTitle(_ key: String) -> String {
         facets.first(where: { $0.0 == key })?.1 ?? key
+    }
+
+    static func clean(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
     private func groups(for key: String) -> [SourceGroup] {
@@ -25,7 +30,8 @@ struct ProjectSourcesSidebar: View {
         var base: [SourceGroup]
         switch key {
         case "sample": base = grouping.sampleDevice
-        case "study": base = grouping.study
+        case "instrument": base = grouping.instrument
+        case "category": base = grouping.category
         case "mode": base = grouping.measurementMode
         case "date": base = grouping.dateBatch.sorted { $0.label > $1.label }
         case "status":
@@ -148,27 +154,40 @@ struct ProjectSourcesSidebar: View {
     }
 
     private var filteredSources: [RawSource] {
-        sources.filter { matches($0.id, label: $0.url.lastPathComponent) && filter.matches(labelsByFacet(for: $0)) }
+        // The instrument label per source is resolved once per filtering pass
+        // from the same stable-ID grouping the sidebar displays, instead of
+        // scanning all inspections separately for every source row.
+        let instrumentLabels = instrumentLabelsBySourceID()
+        return sources.filter { matches($0.id, label: $0.url.lastPathComponent) && filter.matches(labelsByFacet(for: $0, instrumentLabels: instrumentLabels)) }
+    }
+
+    /// SourceID-to-instrument-label map reused from `SourceGrouping`'s existing
+    /// group output, so a filter chip's label always equals the displayed group
+    /// label — including the ID-qualified label when display names collide.
+    private func instrumentLabelsBySourceID() -> [String: String] {
+        let grouping = SourceGrouping(inspections: Array(inspections.values))
+        var map: [String: String] = [:]
+        map.reserveCapacity(inspections.count)
+        for group in grouping.instrument {
+            for id in group.sourceIDs { map[id] = group.label }
+        }
+        return map
     }
 
     /// Facet labels for one source, matching the group labels `SourceGrouping` produces so a
     /// filter chip's label always equals the displayed group label.
-    private func labelsByFacet(for source: RawSource) -> [String: Set<String>] {
+    private func labelsByFacet(for source: RawSource, instrumentLabels: [String: String]) -> [String: Set<String>] {
         guard let inspection = inspections[source.id] else { return [:] }
-        func clean(_ value: String?) -> String? {
-            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-            return value
-        }
         var labels: [String: Set<String>] = [
-            "sample": Set([clean(inspection.deviceID)].compactMap { $0 }),
-            "instrument": Set([clean(inspection.instrumentName) ?? clean(inspection.instrumentID)].compactMap { $0 }),
-            "study": Set([clean(inspection.studyToken)].compactMap { $0 }),
-            "mode": Set([clean(inspection.applicationMode)].compactMap { $0 }),
+            "sample": Set([Self.clean(inspection.deviceID)].compactMap { $0 }),
+            "instrument": Set([instrumentLabels[source.id]].compactMap { $0 }),
+            "category": Set([Self.clean(inspection.category)].compactMap { $0 }),
+            "mode": Set([Self.clean(inspection.applicationMode)].compactMap { $0 }),
             "date": Set([SourceGrouping.date(from: inspection.timestamp)].compactMap { $0 }),
         ]
         var status: Set<String> = []
-        if let value = clean(inspection.supportStatus) { status.insert("Support: \(value)") }
-        if let value = clean(inspection.validationState) { status.insert("Validation: \(value)") }
+        if let value = Self.clean(inspection.supportStatus) { status.insert("Support: \(value)") }
+        if let value = Self.clean(inspection.validationState) { status.insert("Validation: \(value)") }
         if let error = states[source.id]?.error { status.insert("Error: \(error)") }
         labels["status"] = status
         return labels
@@ -205,6 +224,7 @@ struct ProjectGallery: View {
     @Binding var yAbsolute: Bool
     @Binding var xScale: AxisScale
     @Binding var yScale: AxisScale
+    let retry: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -227,8 +247,8 @@ struct ProjectGallery: View {
                 if let source = sources.first(where: { $0.id == focusedSourceID }) {
                     Text(source.url.lastPathComponent).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                     Spacer()
-                    if states[source.id]?.measurement != nil {
-                        Text("Loaded · selected source hash verified before and after parsing")
+                    if let sha = states[source.id]?.measurement?.source.sha256 {
+                        Text("Loaded · SHA-256 of parsed bytes \(String(sha.prefix(12)))…")
                     }
                 }
             }
@@ -266,11 +286,11 @@ struct ProjectGallery: View {
             if let measurement = states[source.id]?.measurement {
                 if measurement.supportStatus != "supported" {
                     ContentUnavailableView("Unsupported Source", systemImage: "exclamationmark.triangle",
-                        description: Text("The reader reports: \(measurement.supportStatus). Its source remains available in the Data tab."))
+                        description: Text("The profile reports: \(measurement.supportStatus). Its source remains available in the Data tab."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if measurement.view.kind == "metadata-only" {
                     ContentUnavailableView("No Figure for This Source", systemImage: "chart.xyaxis.line",
-                        description: Text("The reader reports metadata only; its data remains available in the Data tab."))
+                        description: Text("The profile reports metadata only; its data remains available in the Data tab."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute, yAbsolute: yAbsolute,
@@ -296,20 +316,25 @@ struct ProjectGallery: View {
         let message: String
         if state?.isLoading == true {
             title = "Loading Source"
-            message = "The project reader is processing this file."
+            message = "RawView's built-in reader is processing this file."
         } else if let error = state?.error {
             title = "Source Unavailable"
             message = error
         } else if state?.inspection?.supportStatus != nil && state?.inspection?.supportStatus != "supported" {
             title = "Unsupported Source"
-            message = "Reader support status: \(state?.inspection?.supportStatus ?? "Unknown")."
+            message = "Profile support status: \(state?.inspection?.supportStatus ?? "Unknown")."
         } else if state?.inspection == nil {
-            title = "Awaiting Reader Approval"
-            message = "Approve the project reader to inspect this file."
+            title = "Awaiting Inspection"
+            message = "This source is waiting to be inspected."
         } else {
             title = "No Data Available"
             message = "The source did not produce a normalized measurement."
         }
-        return ContentUnavailableView(title, systemImage: symbol, description: Text(message)).frame(minHeight: 180)
+        return VStack(spacing: 12) {
+            ContentUnavailableView(title, systemImage: symbol, description: Text(message))
+            if state?.error != nil {
+                Button("Retry Load", action: retry).buttonStyle(.bordered)
+            }
+        }.frame(minHeight: 180)
     }
 }

@@ -2,116 +2,122 @@ import Foundation
 import Testing
 @testable import RawViewCore
 
-@Test func approvalIsBoundToCanonicalProjectAndReaderHashAndCanBeRevoked() throws {
-    let projectRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: projectRoot) }
-    let raw = projectRoot.appendingPathComponent("data/raw")
-    let instruments = projectRoot.appendingPathComponent("data/instruments")
-    try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: instruments, withIntermediateDirectories: true)
-    let reader = instruments.appendingPathComponent("reader.py")
-    try Data("# fixture one".utf8).write(to: reader)
-    let project = try ProjectContext.open(projectRoot)
-    let approval = try #require(ReaderApproval.issue(afterUserReviewOf: project))
-    #expect(approval.isCurrent(for: project))
-    let otherRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: otherRoot) }
-    let otherRaw = otherRoot.appendingPathComponent("data/raw")
-    let otherInstruments = otherRoot.appendingPathComponent("data/instruments")
-    try FileManager.default.createDirectory(at: otherRaw, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: otherInstruments, withIntermediateDirectories: true)
-    try Data("# fixture one".utf8).write(to: otherInstruments.appendingPathComponent("reader.py"))
-    #expect(!approval.isCurrent(for: try ProjectContext.open(otherRoot)))
-    let encoded = try JSONEncoder().encode(approval)
-    let restored = try JSONDecoder().decode(ReaderApproval.self, from: encoded)
-    #expect(restored == approval)
-    #expect(restored.isCurrent(for: project))
-    try Data("# fixture changed".utf8).write(to: reader)
-    #expect(!restored.isCurrent(for: project))
-    var storedApproval: ReaderApproval? = restored
-    storedApproval = nil
-    #expect(storedApproval == nil)
-}
+struct ReaderTrustTests {
+    @Test func projectReaderAndRuntimeCodeAreNeverExecuted() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("PROJECT_CODE_EXECUTED")
+        let script = "from pathlib import Path\nPath(\"\(marker.path)\").write_text(\"ran\")\n"
 
-@Test func selectedSourceCannotEscapeRawRootThroughSymlink() throws {
-    let projectRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let rawRoot = projectRoot.appendingPathComponent("data/raw")
-    let instruments = projectRoot.appendingPathComponent("data/instruments")
-    try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: instruments, withIntermediateDirectories: true)
-    try Data("print('reader')".utf8).write(to: instruments.appendingPathComponent("reader.py"))
-    let outside = projectRoot.appendingPathComponent("outside.csv")
-    try Data("fixture".utf8).write(to: outside)
-    try FileManager.default.createSymbolicLink(at: rawRoot.appendingPathComponent("escape.csv"), withDestinationURL: outside)
-    let project = try ProjectContext.open(projectRoot)
-    #expect(!project.containsSource(rawRoot.appendingPathComponent("escape.csv")))
-}
+        try write("data/raw/dual.csv", Data(Fixtures.dualSweepCSV.utf8), under: root)
+        try write("data/instruments/keysight-b1500a.yaml", Data(Fixtures.keysightProfile.utf8), under: root)
+        try write("data/instruments/reader.py", Data(script.utf8), under: root)
+        try write("data/runtime/instrument_runtime.py", Data(script.utf8), under: root)
 
-@Test func externalInstrumentsRootSymlinkAllowsInventoryButCannotReceiveApproval() throws {
-    let projectRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let externalInstruments = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer {
-        try? FileManager.default.removeItem(at: projectRoot)
-        try? FileManager.default.removeItem(at: externalInstruments)
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.results.count == 1)
+        #expect(report.results[0].inspection != nil)
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.channel(named: "voltage")?.values == [0, 0.1, 0.2, 0.1, 0])
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
-    let rawRoot = projectRoot.appendingPathComponent("data/raw")
-    try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: externalInstruments, withIntermediateDirectories: true)
-    try Data("fixture".utf8).write(to: rawRoot.appendingPathComponent("source.csv"))
-    let marker = projectRoot.appendingPathComponent("READER_EXECUTED")
-    try Data("from pathlib import Path\nPath(\"\(marker.path)\").write_text(\"ran\")\n".utf8)
-        .write(to: externalInstruments.appendingPathComponent("reader.py"))
-    try FileManager.default.createSymbolicLink(
-        at: projectRoot.appendingPathComponent("data/instruments"),
-        withDestinationURL: externalInstruments
-    )
-    let project = try ProjectContext.open(projectRoot)
-    #expect(try project.discoverSources().map(\.relativePath) == ["data/raw/source.csv"])
-    #expect(!FileManager.default.fileExists(atPath: marker.path))
-    #expect(ReaderApproval.issue(afterUserReviewOf: project) == nil)
-    #expect(!FileManager.default.fileExists(atPath: marker.path))
-}
 
-@Test func inProjectInstrumentsSymlinkMayReceiveApproval() throws {
-    let projectRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: projectRoot) }
-    let rawRoot = projectRoot.appendingPathComponent("data/raw")
-    let sharedInstruments = projectRoot.appendingPathComponent("shared-instruments")
-    try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: sharedInstruments, withIntermediateDirectories: true)
-    try Data("fixture".utf8).write(to: rawRoot.appendingPathComponent("source.csv"))
-    let marker = projectRoot.appendingPathComponent("READER_EXECUTED")
-    try Data("from pathlib import Path\nPath(\"\(marker.path)\").write_text(\"ran\")\n".utf8)
-        .write(to: sharedInstruments.appendingPathComponent("reader.py"))
-    try FileManager.default.createSymbolicLink(
-        at: projectRoot.appendingPathComponent("data/instruments"),
-        withDestinationURL: sharedInstruments
-    )
+    @Test func escapedSourceSymlinkCannotBeInspectedOrLoaded() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write("data/raw/inside.csv", Data(Fixtures.dualSweepCSV.utf8), under: root)
+        let outside = root.appendingPathComponent("outside.csv")
+        try Data(Fixtures.dualSweepCSV.utf8).write(to: outside)
+        let escapedLink = root.appendingPathComponent("data/raw/escape.csv")
+        try FileManager.default.createSymbolicLink(at: escapedLink, withDestinationURL: outside)
 
-    let project = try ProjectContext.open(projectRoot)
+        let project = try ProjectContext.open(root)
+        #expect(try project.discoverSources().map(\.relativePath) == ["data/raw/inside.csv"])
+        let forged = RawSource(relativePath: "data/raw/escape.csv", url: escapedLink, byteSize: 1)
+        let report = await InstrumentReader.inspectMany([forged], project: project)
+        #expect(report.results.first?.inspection == nil)
+        #expect(report.results.first?.error?.contains("data/raw/escape.csv") == true)
+        #expect(report.results.first?.error?.contains("outside") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(escapedLink, project: project)
+        }
+        do {
+            _ = try await InstrumentReader.load(escapedLink, project: project)
+            Issue.record("escaped source loaded instead of rejected")
+        } catch {
+            #expect(error.localizedDescription.contains("data/raw/escape.csv"))
+            #expect(error.localizedDescription.contains("outside"))
+        }
+    }
 
-    #expect(try project.discoverSources().map(\.relativePath) == ["data/raw/source.csv"])
-    #expect(!FileManager.default.fileExists(atPath: marker.path))
-    #expect(ReaderApproval.issue(afterUserReviewOf: project) != nil)
-    #expect(!FileManager.default.fileExists(atPath: marker.path))
-}
+    @Test func externalInstrumentsRootFailsClosedWithoutUsingOutsideProfiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
+        let outsideInstruments = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-outside-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outsideInstruments)
+        }
+        let marker = outsideInstruments.appendingPathComponent("PROFILE_CODE_EXECUTED")
+        try write("data/raw/dual.csv", Data(Fixtures.dualSweepCSV.utf8), under: root)
+        try FileManager.default.createDirectory(at: outsideInstruments, withIntermediateDirectories: true)
+        try Data(Fixtures.keysightProfile.utf8).write(to: outsideInstruments.appendingPathComponent("keysight-b1500a.yaml"))
+        try Data("from pathlib import Path\nPath(\"\(marker.path)\").write_text(\"ran\")\n".utf8)
+            .write(to: outsideInstruments.appendingPathComponent("reader.py"))
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("data/instruments"),
+            withDestinationURL: outsideInstruments
+        )
 
-@Test func escapingReaderSymlinkDoesNotBlockInventoryOrReceiveApproval() throws {
-    let projectRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: projectRoot) }
-    let rawRoot = projectRoot.appendingPathComponent("data/raw")
-    let instruments = projectRoot.appendingPathComponent("data/instruments")
-    try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: instruments, withIntermediateDirectories: true)
-    try Data("fixture".utf8).write(to: rawRoot.appendingPathComponent("source.csv"))
-    let marker = projectRoot.appendingPathComponent("READER_EXECUTED")
-    let externalReader = projectRoot.appendingPathComponent("external-reader.py")
-    try Data("from pathlib import Path\nPath(\"\(marker.path)\").write_text(\"ran\")\n".utf8).write(to: externalReader)
-    try FileManager.default.createSymbolicLink(at: instruments.appendingPathComponent("reader.py"), withDestinationURL: externalReader)
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        #expect(report.profileIssues.contains { $0.contains("data/instruments resolves outside this project") })
+        #expect(report.results.first?.inspection == nil)
+        #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+        }
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
 
-    let project = try ProjectContext.open(projectRoot)
+    @Test func escapedProfileSymlinkIsSkipped() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-profile-\(UUID().uuidString).yaml")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try write("data/raw/dual.csv", Data(Fixtures.dualSweepCSV.utf8), under: root)
+        try write("data/instruments/.keep", Data(), under: root)
+        try Data(Fixtures.keysightProfile.utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("data/instruments/escaped.yaml"),
+            withDestinationURL: outside
+        )
 
-    #expect(try project.discoverSources().map(\.relativePath) == ["data/raw/source.csv"])
-    #expect(ReaderApproval.issue(afterUserReviewOf: project) == nil)
-    #expect(!FileManager.default.fileExists(atPath: marker.path))
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        #expect(report.profileIssues.contains { $0.contains("data/instruments/escaped.yaml") && $0.contains("resolves outside data/instruments") })
+        #expect(report.results.first?.inspection == nil)
+        #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
+    }
+
+    @Test func missingRawDirectoryOffersActionableMessage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write("data/instruments/.keep", Data(), under: root)
+        do {
+            _ = try ProjectContext.open(root)
+            Issue.record("a project without data/raw was accepted")
+        } catch {
+            #expect(error.localizedDescription.contains("data/raw"))
+        }
+    }
+
+    private func write(_ relativePath: String, _ data: Data, under root: URL) throws {
+        let url = root.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+    }
 }

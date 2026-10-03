@@ -1,18 +1,37 @@
 # RawView
 
-RawView is a native macOS project viewer. Opening a project inventories regular
-files under `data/raw` and shows searchable Sample / Device, Instrument, Study,
-Mode, Date / Batch, and Status trees. After one explicit approval, the project's
-`data/instruments/reader.py` inspects and loads every discovered source. Approval
-is saved for that project and exact reader SHA-256; changing the reader requires
-approval again. The reader and configured parsers run with the user's
-permissions and can access or change files available to that account.
+RawView is a native macOS viewer for raw research measurements. Opening a project
+inventories exactly the regular files under the selected project's `data/raw`
+directory: nested project folders are never discovered as additional roots, and
+a missing raw directory offers a clear diagnostic so another folder can be
+selected.
 
-The center switches between project-wide Plot and Data tabs. Each source keeps a
-matching figure and ordered, untransformed table panel. Failed or unsupported
-sources retain their own status panel. X and Y absolute, linear, and logarithmic
-controls live in the right inspector and apply to every figure; invalid log
-domains are reported on the affected source's plot only.
+Instrument profiles are declarative YAML under the existing plural
+`data/instruments/` directory. RawView owns the readers: the first supported
+format is the Keysight B1500A I-V tabular CSV (`DataName`/`DataValue` rows with
+`V1`/`I1` or `I2` columns). Profiles must declare `schema_version: 1`; existing
+unversioned profiles stay visible with an explicit upgrade diagnostic, block
+only the sources they claim, and are never rewritten. RawView never executes
+project code.
+
+The center switches between project-wide Plot and Data tabs. Each supported
+source keeps a matching figure and an ordered, untransformed table: every
+original point is preserved in acquisition order, including sweep reversals.
+Blank cells, recorded NaN/infinity tokens, and overflow saturation stay
+distinguishable gaps (plot lines break with visible dots on singleton runs,
+tables show per-reason markers) with per-gap warnings naming file, line,
+column, reason, and raw token; other corrupt text blocks the affected source.
+The table keeps every format-declared channel while only the mode's axes drive
+the plot. The sidebar groups by Category (a filename grouping aid, never
+scientific study membership), and a cancelled inspection keeps partial results
+with a resume action. The
+right inspector shows identity, source, and profile-reported state; X and Y
+absolute, linear, and logarithmic controls apply to the selected figure, with
+invalid log domains reported on the affected source only. Header metadata
+(SetupTitle, Dimension, record time) and filename-derived device, timestamp,
+and category are preserved in the inspector; the filename category is a
+grouping aid, not scientific study membership. Invalid, unsupported,
+or ambiguous sources keep their own actionable status and can be retried.
 
 Build and package locally:
 
@@ -21,14 +40,16 @@ tools/raw-viewer/Scripts/package_app.sh
 open /tmp/RawView.app   # developer build output (local)
 ```
 
-The reader JSON contract is documented in [CONTRACT.md](CONTRACT.md). Inspection
-uses `inspect-many --paths-json` in batches of at most 256 project-relative
-paths. Parsing is bounded to two concurrent source loads, with per-source
-failures, progress, cancellation, and retry.
+The reader contract and instrument profile schema are documented in
+[CONTRACT.md](CONTRACT.md); a working profile is in
+[Examples/keysight-b1500a.yaml](Examples/keysight-b1500a.yaml). Discovery,
+inspection, and loading run off the main thread on independent cancellation
+identities in bounded batches with per-source failures, progress,
+cancellation, resume, and retry. Sources stream with cancellation checkpoints
+and no file-size cap.
 
-The current package script is a developer build. It uses the host's Python 3 and
-user-site dependencies when available. It is not distribution-ready: a minimal,
-deterministic app-bundled Python runtime and its dependencies remain unimplemented.
+The current package script is a developer build. It is not distribution-ready:
+notarization and distribution packaging remain unimplemented.
 
 The native Canvas style resource is generated from
 `figrecipe/presets/nature-single.yaml`; check for drift with:
@@ -52,7 +73,8 @@ Donor disposition:
 
 No donor source code or package was copied into this app.
 
-Raw reader behavior depends on the project-owned reader and its configured
-parsers. A fixture fake reader can verify RawView's app path without running a
-research reader or inspecting research raw files; fixture results do not
-establish scientific validation for any real source.
+Fixture-based checks verify the app path; they do not establish scientific
+validation for any real source. The first format's semantics were derived
+read-only from the res_volatile-polydopamine instrument profiles and a real
+dual-sweep CSV; migrating that project's profiles is a separate, project-owned
+change.

@@ -1,0 +1,45 @@
+# RawView instrument profile schema v1 — example
+# Copy into a project's data/instruments/ directory and adjust to the instrument.
+# RawView validates this file and reports the profile path and field for every problem.
+# RawView never rewrites profiles and never executes project code.
+# Gap semantics: blank, NaN, and Infinity source cells are preserved as null gaps
+# (plot breaks, table shows the gap marker); other corrupt text blocks the source.
+# Schema v1 has no transforms mechanism: do not add a transforms field.
+schema_version: 1
+
+instrument:
+  id: keysight-b1500a
+  name: Keysight B1500A Semiconductor Device Parameter Analyzer
+  vendor: Keysight Technologies
+  model: B1500A
+
+formats:
+  - id: csv
+    kind: tabular
+    extensions: [".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      names_prefix: "DataName"
+      data_prefix: "DataValue"
+    columns:
+      voltage:
+        header: "V1"
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "I2"
+        aliases: ["I1"]
+        quantity: current
+        unit: "A"
+        label: "Current"
+
+modes:
+  - id: dual-sweep
+    format: csv
+    # Case-insensitive substrings searched in the first 64 KiB of the source.
+    detect: ["2-terminal dual Vsweep", "dual Vsweep"]
+    extract:
+      x: voltage
+      y: [current]
