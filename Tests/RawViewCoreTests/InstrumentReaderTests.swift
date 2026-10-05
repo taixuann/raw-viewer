@@ -253,8 +253,10 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first?.error)
-        #expect(error.contains("No mode signature matched"))
+        #expect(error.contains("No profile mode matched"))
         #expect(error.contains("dual-sweep"))
+        #expect(error.contains("not in header sample"))
+        #expect(!error.contains("filename_contains_all"))
     }
 
     @Test func extractionFailuresStayLocalToTheirSource() async throws {
@@ -1186,6 +1188,286 @@ struct InstrumentReaderTests {
             #expect(combined.contains(fragment), "profile \(name) should report \(fragment)")
         }
     }
+
+    @Test func v2FilenameSelectorGatesMatchingOnBasenameOnly() async throws {
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\nDataValue, 0.1, 2E-12\nDataValue, 0.2, 3E-12\n"
+        let root = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2],
+            sources: [
+                "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv": Data(csv.utf8),
+                "data/raw/run_synth-token_only.csv": Data(csv.utf8),
+                "data/raw/synth-token_dual-sweep/nested.csv": Data(csv.utf8),
+            ]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        // Both basename tokens (case-insensitive) plus header loads exact arrays in order.
+        let good = try #require(report.results.first { $0.source.relativePath == "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv" })
+        #expect(good.inspection?.applicationMode == "dual-sweep")
+        let measurement = try await InstrumentReader.load(good.source.url, project: project)
+        #expect(measurement.channel(named: "voltage")?.values == [0, 0.1, 0.2])
+        #expect(measurement.channel(named: "current")?.values == [1e-12, 2e-12, 3e-12])
+        // One of two required tokens with the same header stays visible and
+        // blocked: the diagnostic names the missing filename token, not the
+        // header (which matched via the second detect alternative, proving
+        // detect keeps OR semantics).
+        let partial = try #require(report.results.first { $0.source.relativePath == "data/raw/run_synth-token_only.csv" })
+        let partialError = try #require(partial.error)
+        #expect(partial.inspection == nil)
+        #expect(partialError.contains("filename_contains_all tokens \"dual-sweep\" not in basename \"run_synth-token_only.csv\""))
+        #expect(partialError.contains("detect matched header sample"))
+        #expect(!partialError.contains("not in header sample"))
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(partial.source.url, project: project)
+        }
+        // Parent directories never satisfy the selector: both tokens live only
+        // in the directory, not the basename.
+        let nested = try #require(report.results.first { $0.source.relativePath == "data/raw/synth-token_dual-sweep/nested.csv" })
+        let nestedError = try #require(nested.error)
+        #expect(nested.inspection == nil)
+        #expect(nestedError.contains("not in basename \"nested.csv\""))
+        #expect(!nestedError.contains("not in header sample"))
+    }
+
+    @Test func profileWithoutFilenameSelectorKeepsLegacyMatching() async throws {
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        let root = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2NoSelector],
+            sources: ["data/raw/unrelated.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        #expect(report.results.first?.inspection?.applicationMode == "dual-sweep")
+        let measurement = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+        #expect(measurement.channel(named: "voltage")?.values == [0])
+    }
+
+    @Test func brokenFilenameSelectorIsolationUsesItsOwnSelectors() async throws {
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        // Unrelated broken filename must not poison a uniquely valid match.
+        let unrelated = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": Fixtures.brokenUnrelatedFilename],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: unrelated) }
+        let unrelatedProject = try ProjectContext.open(unrelated)
+        let unrelatedReport = await InstrumentReader.inspectMany(try unrelatedProject.discoverSources(), project: unrelatedProject)
+        #expect(unrelatedReport.results.first?.inspection?.applicationMode == "dual-sweep")
+        let measurement = try await InstrumentReader.load(try unrelatedProject.discoverSources()[0].url, project: unrelatedProject)
+        #expect(measurement.channel(named: "voltage")?.values == [0])
+        // A genuinely matching broken selector stays fail-closed.
+        let matching = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": Fixtures.brokenMatchingFilename],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: matching) }
+        let matchingProject = try ProjectContext.open(matching)
+        let matchingReport = await InstrumentReader.inspectMany(try matchingProject.discoverSources(), project: matchingProject)
+        let result = try #require(matchingReport.results.first)
+        #expect(result.inspection == nil)
+        #expect(result.error?.contains("broken.yaml") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(result.source.url, project: matchingProject)
+        }
+    }
+
+    @Test func filenameSelectorIsV2Only() async throws {
+        let v1 = Fixtures.keysightProfile.replacingOccurrences(
+            of: "    detect: [\"2-terminal dual Vsweep\", \"dual Vsweep\"]",
+            with: "    filename_contains_all: [\"keysight-b1500a.dual-sweep\"]\n    detect: [\"2-terminal dual Vsweep\", \"dual Vsweep\"]")
+        let root = try makeProject(profiles: ["keysight-b1500a.yaml": v1], sources: ["data/raw/a.csv": Data(Fixtures.dualSweepCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        // The header would match absent the field, so the block proves the
+        // exact unknown-key rejection rather than a no-match diagnostic.
+        #expect(report.profileIssues.contains { $0.contains("modes[0].filename_contains_all is not part of schema v1 (unknown key)") })
+        #expect(report.results.first?.inspection == nil)
+        // Control: the same header matches the same v1 profile without the field.
+        let control = try makeProject(profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile], sources: ["data/raw/a.csv": Data(Fixtures.dualSweepCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: control) }
+        let controlProject = try ProjectContext.open(control)
+        let controlReport = await InstrumentReader.inspectMany(try controlProject.discoverSources(), project: controlProject)
+        #expect(controlReport.results.first?.inspection?.applicationMode == "dual-sweep")
+    }
+
+    @Test func filenameSelectorPreservesAmbiguity() async throws {
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        let copy = Fixtures.filenameV2.replacingOccurrences(of: "id: synth", with: "id: synth-copy")
+        let root = try makeProject(
+            profiles: ["a.yaml": Fixtures.filenameV2, "b.yaml": copy],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let error = try #require(report.results.first?.error)
+        #expect(error.contains("Ambiguous"))
+        #expect(error.contains("a.yaml"))
+        #expect(error.contains("b.yaml"))
+    }
+
+    @Test func malformedFilenameSelectorIsFailClosed() async throws {
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        // An empty selector list is schema-invalid: the source stays blocked
+        // with a diagnostic naming the exact field.
+        let empty = Fixtures.filenameV2.replacingOccurrences(
+            of: "filename_contains_all: [\"synth-token\", \"dual-sweep\"]",
+            with: "filename_contains_all: []")
+        let invalid = try makeProject(
+            profiles: ["synth.yaml": empty],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: invalid) }
+        let invalidProject = try ProjectContext.open(invalid)
+        let invalidReport = await InstrumentReader.inspectMany(try invalidProject.discoverSources(), project: invalidProject)
+        let invalidResult = try #require(invalidReport.results.first)
+        #expect(invalidResult.inspection == nil)
+        #expect(((invalidResult.error ?? "") + invalidReport.profileIssues.joined()).contains("modes[0].filename_contains_all must be a non-empty list of non-empty strings."))
+        // A malformed broken claim keeps no trustworthy selectors, so it still
+        // blocks a uniquely valid match with its own diagnostic.
+        let malformed = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": Fixtures.brokenMalformedFilename],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: malformed) }
+        let malformedProject = try ProjectContext.open(malformed)
+        let malformedReport = await InstrumentReader.inspectMany(try malformedProject.discoverSources(), project: malformedProject)
+        let malformedResult = try #require(malformedReport.results.first)
+        #expect(malformedResult.inspection == nil)
+        #expect(malformedResult.error?.contains("broken.yaml") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(malformedResult.source.url, project: malformedProject)
+        }
+        // A malformed filename plus a trustworthy nonmatching header proves the
+        // broken mode unrelated, so the valid match stands.
+        let headerMiss = Fixtures.brokenMalformedFilename.replacingOccurrences(
+            of: "SYNTH-SPECIFIC-HEADER", with: "SYNTH-OTHER-HEADER")
+        let unrelated = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": headerMiss],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: unrelated) }
+        let unrelatedProject = try ProjectContext.open(unrelated)
+        let unrelatedReport = await InstrumentReader.inspectMany(try unrelatedProject.discoverSources(), project: unrelatedProject)
+        #expect(unrelatedReport.results.first?.inspection?.applicationMode == "dual-sweep")
+    }
+
+    @Test func filenameMatchHeaderMissStaysUnmatchedAndUnblocking() async throws {
+        // Filename tokens match but both detect alternatives miss: the valid
+        // mode stays unmatched with a header cause, never a filename cause.
+        let other = "SetupTitle, SYNTH-OTHER-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        let root = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(other.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let result = try #require(report.results.first)
+        let error = try #require(result.error)
+        #expect(result.inspection == nil)
+        #expect(error.contains("filename_contains_all matched basename \"run_synth-token_dual-sweep.csv\""))
+        #expect(error.contains("detect \"SYNTH-MISSING-HEADER\", \"SYNTH-SPECIFIC-HEADER\" not in header sample"))
+        #expect(!error.contains("not in basename"))
+        // A broken mode whose trustworthy header selector misses does not block
+        // a uniquely valid match, even with a matching filename selector.
+        let headerMiss = Fixtures.brokenMatchingFilename.replacingOccurrences(
+            of: "SYNTH-SPECIFIC-HEADER", with: "SYNTH-OTHER-HEADER")
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        let pair = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": headerMiss],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: pair) }
+        let pairProject = try ProjectContext.open(pair)
+        let pairReport = await InstrumentReader.inspectMany(try pairProject.discoverSources(), project: pairProject)
+        #expect(pairReport.results.first?.inspection?.applicationMode == "dual-sweep")
+    }
+
+    @Test func mixedDetectListCannotExonerateBrokenClaim() async throws {
+        // A detect list mixing a nonmatching scalar with a non-scalar mapping
+        // is malformed as a whole: its surviving string must not count as
+        // trustworthy header evidence exonerating the source, so the uniquely
+        // valid match stays blocked with the broken profile identified.
+        let mixed = Fixtures.filenameV2
+            .replacingOccurrences(of: "    detect: [\"SYNTH-MISSING-HEADER\", \"SYNTH-SPECIFIC-HEADER\"]", with: "    detect:\n      - UNRELATED-HEADER\n      - bad: map")
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        let root = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": mixed],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let result = try #require(report.results.first)
+        #expect(result.inspection == nil)
+        #expect(result.error?.contains("data/instruments/broken.yaml") == true)
+        #expect(result.error?.contains("modes[0].detect must contain only strings") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(result.source.url, project: project)
+        }
+        // A trustworthy filename miss still clears the malformed-detect mode:
+        // the same mixed list paired with an unrelated token does not block.
+        let cleared = mixed.replacingOccurrences(
+            of: "filename_contains_all: [\"synth-token\", \"dual-sweep\"]",
+            with: "filename_contains_all: [\"unrelated-token\"]")
+        let freed = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": cleared],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: freed) }
+        let freedProject = try ProjectContext.open(freed)
+        let freedReport = await InstrumentReader.inspectMany(try freedProject.discoverSources(), project: freedProject)
+        #expect(freedReport.results.first?.inspection?.applicationMode == "dual-sweep")
+    }
+
+    @Test func uncertainBrokenClaimBlocks() async throws {
+        // The broken profile pairs a matching filename with a missing detect
+        // list (uncertain) alongside an unrelated valid signature: the
+        // uncertain mode keeps the source blocked with its own diagnostic.
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
+        let root = try makeProject(
+            profiles: ["synth.yaml": Fixtures.filenameV2, "broken.yaml": Fixtures.brokenUncertainFilename],
+            sources: ["data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let result = try #require(report.results.first)
+        #expect(result.inspection == nil)
+        #expect(result.error?.contains("data/instruments/broken.yaml") == true)
+        #expect(result.error?.contains("modes[0].detect must list at least one header signature string.") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(result.source.url, project: project)
+        }
+    }
+
+    @Test func v1FilenameFieldCannotExonerateBrokenClaim() async throws {
+        // A schema-v1 broken claim carrying the unknown filename field plus a
+        // matching header still blocks: the field is ignored as evidence
+        // outside schema v2 and the header match stands.
+        let broken = Fixtures.unversionedKeysightProfile.replacingOccurrences(
+            of: "    detect: [\"2-terminal dual Vsweep\"]",
+            with: "    filename_contains_all: [\"v1check\"]\n    detect: [\"2-terminal dual Vsweep\"]")
+        let root = try makeProject(
+            profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile, "broken.yaml": broken],
+            sources: ["data/raw/v1check.csv": Data(Fixtures.dualSweepCSV.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let result = try #require(report.results.first)
+        #expect(result.inspection == nil)
+        #expect(result.error?.contains("data/instruments/broken.yaml") == true)
+        #expect(result.error?.contains("unversioned") == true)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(result.source.url, project: project)
+        }
+    }
 }
 
 private actor ProgressRecorder {
@@ -1501,6 +1783,102 @@ enum Fixtures {
     DATNAME, X, Y
     DATROW, 1, 2
     DATROW, 2, 4
+    """
+
+    static let filenameV2 = """
+    schema_version: 2
+    instrument:
+      id: synth
+      name: Synth
+    formats:
+      - id: csv
+        kind: tabular
+        extensions: [".csv"]
+        delimiter: ","
+        rows:
+          names_prefix: "DataName"
+          data_prefix: "DataValue"
+        columns:
+          voltage:
+            header: "V1"
+            quantity: voltage
+            unit: "V"
+          current:
+            header: "I1"
+            quantity: current
+            unit: "A"
+    modes:
+      - id: dual-sweep
+        format: csv
+        filename_contains_all: ["synth-token", "dual-sweep"]
+        detect: ["SYNTH-MISSING-HEADER", "SYNTH-SPECIFIC-HEADER"]
+        extract:
+          x: voltage
+          y: [current]
+    """
+
+    /// No filename gate: filenameV2 with only that field removed; both detect
+    /// alternatives are preserved.
+    static let filenameV2NoSelector = filenameV2.replacingOccurrences(
+        of: "    filename_contains_all: [\"synth-token\", \"dual-sweep\"]\n", with: "")
+
+    /// Schema v2 shape broken by one unknown key, so its well-formed filename
+    /// selector stays trustworthy evidence while the profile stays invalid.
+    static let brokenUnrelatedFilename = filenameV2
+        .replacingOccurrences(of: "id: synth", with: "id: broken")
+        .replacingOccurrences(of: "name: Synth", with: "name: Broken")
+        .replacingOccurrences(of: "filename_contains_all: [\"synth-token\", \"dual-sweep\"]", with: "filename_contains_all: [\"unrelated-token\"]")
+        .replacingOccurrences(of: "detect: [\"SYNTH-MISSING-HEADER\", \"SYNTH-SPECIFIC-HEADER\"]", with: "detect: [\"SYNTH-SPECIFIC-HEADER\"]\n    summary: synthetic")
+
+    static let brokenMatchingFilename = filenameV2
+        .replacingOccurrences(of: "id: synth", with: "id: broken")
+        .replacingOccurrences(of: "name: Synth", with: "name: Broken")
+        .replacingOccurrences(of: "detect: [\"SYNTH-MISSING-HEADER\", \"SYNTH-SPECIFIC-HEADER\"]", with: "detect: [\"SYNTH-SPECIFIC-HEADER\"]\n    summary: synthetic")
+
+    static let brokenMalformedFilename = filenameV2
+        .replacingOccurrences(of: "id: synth", with: "id: broken")
+        .replacingOccurrences(of: "name: Synth", with: "name: Broken")
+        .replacingOccurrences(of: "filename_contains_all: [\"synth-token\", \"dual-sweep\"]", with: "filename_contains_all: []")
+
+    /// Schema v2 shape with two modes: the first pairs a matching filename
+    /// selector with a missing detect list (uncertain, must block); the second
+    /// carries an unrelated valid signature (proven unrelated on its own).
+    static let brokenUncertainFilename = """
+    schema_version: 2
+    instrument:
+      id: broken
+      name: Broken
+    formats:
+      - id: csv
+        kind: tabular
+        extensions: [".csv"]
+        delimiter: ","
+        rows:
+          names_prefix: "DataName"
+          data_prefix: "DataValue"
+        columns:
+          voltage:
+            header: "V1"
+            quantity: voltage
+            unit: "V"
+          current:
+            header: "I1"
+            quantity: current
+            unit: "A"
+    modes:
+      - id: uncertain
+        format: csv
+        filename_contains_all: ["synth-token", "dual-sweep"]
+        detect: []
+        extract:
+          x: voltage
+          y: [current]
+      - id: elsewhere
+        format: csv
+        detect: ["SYNTH-ELSEWHERE-HEADER"]
+        extract:
+          x: voltage
+          y: [current]
     """
 }
 

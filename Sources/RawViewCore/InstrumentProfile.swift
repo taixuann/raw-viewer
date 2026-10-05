@@ -35,6 +35,9 @@ struct ProfileMode: Sendable, Equatable {
     let id: String
     let formatID: String
     let detect: [String]
+    /// Schema v2 only, nil when absent: every token must occur
+    /// case-insensitively in the source basename.
+    let filenameContainsAll: [String]?
     let x: String
     let y: [String]
 }
@@ -62,17 +65,53 @@ enum ProfileResolution: Sendable {
     case failed(String)
 }
 
+/// Per-mode selector evidence from one syntactically parseable mode of a
+/// schema-invalid profile. A nil filename list means the mode declares no
+/// usable filename evidence (absent, ignored outside schema v2, or
+/// malformed): it proves nothing either way. An empty signature list means
+/// header evidence is missing. Only a trustworthy selector proving a mismatch
+/// makes the mode unrelated to a source.
+struct BrokenModeSelectors: Sendable {
+    /// Well-formed filename tokens; meaningful only for schema v2 claims.
+    let filenames: [String]?
+    /// Complete-list header signatures: the whole detect value was a list of
+    /// scalar strings with at least one non-empty survivor. Empty means the
+    /// evidence is missing or malformed and proves nothing.
+    let signatures: [String]
+}
+
 struct BrokenClaim: Sendable {
     /// A syntactically parseable but schema-invalid profile, kept whole: its
     /// selectors and diagnostics are never mixed with another profile's, so one
-    /// broken profile cannot borrow another's signatures.
+    /// broken profile cannot borrow another's signatures. Each mode is judged
+    /// on its own selectors: the profile blocks a source when any mode could
+    /// still conflict with it.
     let relativePath: String
     let extensions: [String]
-    let signatures: [String]
     let issues: [String]
+    let modeSelectors: [BrokenModeSelectors]
 
-    func conflicts(sample: String) -> Bool {
-        !sample.isEmpty && signatures.contains { sample.contains($0.lowercased()) }
+    /// Per-source conflict using this profile's own selectors only. A mode is
+    /// unrelated when a trustworthy selector proves mismatch: a valid filename
+    /// list missing any token from the basename, or a complete trustworthy
+    /// detect list with no signature in the header sample. Anything else — a
+    /// match on both sides, or uncertainty from a malformed/missing selector
+    /// (including a detect list that mixes scalars with non-scalars) — keeps
+    /// the source blocked. A filename match plus missing detect is uncertain
+    /// and blocks; a header match plus malformed filename is uncertain and
+    /// blocks. A claim with no mode evidence at all blocks fail-closed.
+    func blocks(sample: String, basename: String) -> Bool {
+        if modeSelectors.isEmpty { return true }
+        let lowerBase = basename.lowercased()
+        for mode in modeSelectors {
+            let filenameMismatch = mode.filenames.map { tokens in
+                !tokens.allSatisfy { lowerBase.contains($0.lowercased()) }
+            } ?? false
+            let headerMismatch = !mode.signatures.isEmpty
+                && !mode.signatures.contains { sample.contains($0.lowercased()) }
+            if !filenameMismatch && !headerMismatch { return true }
+        }
+        return false
     }
 }
 
@@ -80,9 +119,9 @@ struct ProfileLoadOutcome: Sendable {
     let profile: InstrumentProfile?
     let issues: [String]
     let extensions: [String]
-    /// Lenient detect-signature evidence from a syntactically parseable but
+    /// Per-mode lenient selector evidence from a syntactically parseable but
     /// schema-invalid profile. Malformed YAML supplies no selectors.
-    let signatures: [String]
+    let modeSelectors: [BrokenModeSelectors]
 }
 
 struct ProfileCatalog: Sendable {
@@ -191,7 +230,7 @@ struct ProfileCatalog: Sendable {
             } else {
                 issues.append(contentsOf: outcome.issues)
                 if !outcome.extensions.isEmpty {
-                    brokenClaims.append(BrokenClaim(relativePath: relativePath, extensions: outcome.extensions, signatures: outcome.signatures, issues: outcome.issues))
+                    brokenClaims.append(BrokenClaim(relativePath: relativePath, extensions: outcome.extensions, issues: outcome.issues, modeSelectors: outcome.modeSelectors))
                 }
             }
         }
@@ -206,36 +245,46 @@ struct ProfileCatalog: Sendable {
         profiles.contains { $0.formats.contains { $0.extensions.contains(fileExtension) } }
     }
 
-    /// Resolves one source by extension and bounded header sample. Every failure
-    /// message names the profile(s) and field or signature that would fix it.
-    /// Per-source isolation: a uniquely matched valid source stays usable beside
-    /// an invalid profile claiming the same extension only when the invalid
-    /// profile's own declared signatures provably do not match this source. A
-    /// conflicting same-source signature, or an undecidable claim with no
-    /// trustworthy selectors, keeps the source blocked instead of claiming a
-    /// unique mapping.
-    func resolve(extension fileExtension: String, headerSample: String) -> ProfileResolution {
+    /// Resolves one source by extension, bounded header sample, and basename.
+    /// Every failure message names the profile(s) and field or signature that
+    /// would fix it. A v2 mode matches only when its filename selector (when
+    /// present) matches the basename AND a detect signature occurs in the
+    /// header sample. Per-source isolation: a uniquely matched valid source
+    /// stays usable beside an invalid profile claiming the same extension only
+    /// when every mode of that profile is proven unrelated by its own
+    /// trustworthy selectors — a valid filename list missing a basename token,
+    /// or a valid non-empty detect list with no header match. A mode that
+    /// could still conflict (both sides match, or uncertainty from a
+    /// malformed/missing selector) keeps the source blocked instead of claiming
+    /// a unique mapping. Filename evidence counts only for declared schema v2
+    /// claims; other claims fall back to header evidence alone.
+    func resolve(extension fileExtension: String, headerSample: String, basename: String) -> ProfileResolution {
         let valid = profiles.filter { profile in
             profile.formats.contains { $0.extensions.contains(fileExtension) }
         }
         let claims = brokenClaims.filter { $0.extensions.contains(fileExtension) }
 
         let sample = headerSample.lowercased()
+        let base = basename.lowercased()
         var matches: [ProfileMatch] = []
         var misses: [String] = []
+        var sawFilenameGate = false
         for profile in valid {
             for format in profile.formats where format.extensions.contains(fileExtension) {
                 let modes = profile.modes.filter { $0.formatID == format.id }
                 let matched = modes.filter { mode in
-                    mode.detect.contains { sample.contains($0.lowercased()) }
+                    let filenameOK = mode.filenameContainsAll.map { $0.allSatisfy { base.contains($0.lowercased()) } } ?? true
+                    let headerOK = mode.detect.contains { sample.contains($0.lowercased()) }
+                    return filenameOK && headerOK
                 }
                 for mode in matched {
                     matches.append(ProfileMatch(profile: profile, format: format, mode: mode))
                 }
                 if matched.isEmpty {
+                    if modes.contains(where: { $0.filenameContainsAll != nil }) { sawFilenameGate = true }
                     let declared = modes.isEmpty
                         ? "no mode for format \(format.id)"
-                        : modes.map { "\($0.id) [\($0.detect.joined(separator: ", "))]" }.joined(separator: ", ")
+                        : modes.map { describeMiss($0, basename: basename, sample: sample) }.joined(separator: ", ")
                     misses.append("\(profile.relativePath): \(declared)")
                 }
             }
@@ -243,8 +292,8 @@ struct ProfileCatalog: Sendable {
         if matches.count == 1 {
             // Only the claims whose own selectors conflict with this source —
             // or that carry no trustworthy selectors at all — block it. Claims
-            // with provably unrelated signatures stay out of this diagnostic.
-            let blocking = claims.filter { $0.signatures.isEmpty || $0.conflicts(sample: sample) }
+            // with provably unrelated filename or header selectors stay out.
+            let blocking = claims.filter { $0.blocks(sample: sample, basename: basename) }
             if blocking.isEmpty {
                 return .matched(matches[0])
             }
@@ -263,7 +312,35 @@ struct ProfileCatalog: Sendable {
             return .failed("No instrument profile supports \"\(fileExtension)\" files. Add a versioned profile under data/instruments; see CONTRACT.md.")
         }
 
-        return .failed("No mode signature matched this source. Declared modes: \(misses.joined(separator: "; ")). Add a detect signature for this file or fix the profile.")
+        // The per-mode causes above name exactly which requirement missed, so
+        // the advice only mentions the v2-only field when a gated mode was
+        // actually involved; v1 profiles never see it.
+        let advice = sawFilenameGate
+            ? "A v2 mode with filename_contains_all needs every token in the basename and one detect signature in the first 64 KiB."
+            : "Add a detect signature for this file or fix the profile."
+        return .failed("No profile mode matched this source (basename \"\(basename)\"). Declared modes: \(misses.joined(separator: "; ")). \(advice)")
+    }
+
+    /// Truthful per-mode miss cause: names filename tokens missing from the
+    /// basename separately from detect signatures missing from the header
+    /// sample, notes when the other side did match, and says when both miss.
+    /// Called only for modes that did not match, so at least one cause applies.
+    private func describeMiss(_ mode: ProfileMode, basename: String, sample: String) -> String {
+        var parts: [String] = []
+        if let tokens = mode.filenameContainsAll {
+            let missing = tokens.filter { !basename.lowercased().contains($0.lowercased()) }
+            if missing.isEmpty {
+                parts.append("filename_contains_all matched basename \"\(basename)\"")
+            } else {
+                parts.append("filename_contains_all tokens \(missing.map { "\"\($0)\"" }.joined(separator: ", ")) not in basename \"\(basename)\"")
+            }
+        }
+        if mode.detect.contains(where: { sample.contains($0.lowercased()) }) {
+            parts.append("detect matched header sample")
+        } else {
+            parts.append("detect \(mode.detect.map { "\"\($0)\"" }.joined(separator: ", ")) not in header sample")
+        }
+        return "\(mode.id) [\(parts.joined(separator: "; "))]"
     }
 }
 
@@ -272,54 +349,97 @@ func sha256Hex(_ data: Data) -> String {
 }
 
 private enum ProfileSchema {
+    private struct Selectors {
+        let extensions: [String]
+        let modeSelectors: [BrokenModeSelectors]
+    }
+
     static func load(text: String, relativePath: String, sha256: String) -> ProfileLoadOutcome {
+        func emptyOutcome(_ issues: [String]) -> ProfileLoadOutcome {
+            ProfileLoadOutcome(profile: nil, issues: issues, extensions: [], modeSelectors: [])
+        }
         let root: YAMLNode
         do {
             root = try YAMLParser.parse(text)
         } catch let error as YAMLParseError {
             // Malformed YAML supplies no trustworthy selectors: the global issue
             // stays visible and nothing is guessed from the broken content.
-            return ProfileLoadOutcome(profile: nil, issues: ["\(relativePath): YAML parse error \(error.localizedDescription)"], extensions: [], signatures: [])
+            return emptyOutcome(["\(relativePath): YAML parse error \(error.localizedDescription)"])
         } catch {
-            return ProfileLoadOutcome(profile: nil, issues: ["\(relativePath): YAML parse error \(error.localizedDescription)"], extensions: [], signatures: [])
+            return emptyOutcome(["\(relativePath): YAML parse error \(error.localizedDescription)"])
         }
         guard root.mapEntries != nil else {
-            return ProfileLoadOutcome(profile: nil, issues: ["\(relativePath): the profile document must be a mapping."], extensions: [], signatures: [])
+            return emptyOutcome(["\(relativePath): the profile document must be a mapping."])
         }
+        // Only a declared schema_version 2 gives filename_contains_all meaning:
+        // for v1, unversioned, malformed-version, and unsupported-version claims
+        // the unknown key is ignored as selector evidence while header evidence
+        // is preserved.
+        let declaredVersion = root.value(for: "schema_version")?.scalarValue.flatMap(Int.init)
+        let selectors = lenientSelectors(root, filenameTrusted: declaredVersion == 2)
         // A nested raw_viewer block is no longer supported: a viewer profile
         // must be a standalone top-level document. The diagnostic stays
         // fail-closed with the profile path and the migration target.
         if root.value(for: "raw_viewer") != nil {
-            let selectors = lenientSelectors(root)
             return ProfileLoadOutcome(profile: nil, issues: [
                 "\(relativePath): raw_viewer profile blocks are not supported; move the versioned profile to a standalone top-level document (companion profiles live in data/instruments/rawview/) (see CONTRACT.md)."
-            ], extensions: selectors.extensions, signatures: selectors.signatures)
+            ], extensions: selectors.extensions, modeSelectors: selectors.modeSelectors)
         }
-        let selectors = lenientSelectors(root)
+        func broken(_ issues: [String]) -> ProfileLoadOutcome {
+            ProfileLoadOutcome(profile: nil, issues: issues, extensions: selectors.extensions, modeSelectors: selectors.modeSelectors)
+        }
         guard let versionText = root.value(for: "schema_version")?.scalarValue else {
-            return ProfileLoadOutcome(profile: nil, issues: [
+            return broken([
                 "\(relativePath): profile is unversioned. Add \"schema_version: 1\" and migrate this profile to schema version 1 (see CONTRACT.md). RawView does not rewrite profiles."
-            ], extensions: selectors.extensions, signatures: selectors.signatures)
+            ])
         }
         guard let version = Int(versionText) else {
-            return ProfileLoadOutcome(profile: nil, issues: [
+            return broken([
                 "\(relativePath): schema_version must be an integer; found \"\(versionText)\"."
-            ], extensions: selectors.extensions, signatures: selectors.signatures)
+            ])
         }
         guard ProfileCatalog.supportedSchemaVersions.contains(version) else {
-            return ProfileLoadOutcome(profile: nil, issues: [
+            return broken([
                 "\(relativePath): unsupported schema_version \(version); this viewer supports schema_version 1 and 2."
-            ], extensions: selectors.extensions, signatures: selectors.signatures)
+            ])
         }
         return validate(root, relativePath: relativePath, sha256: sha256, selectors: selectors, version: version)
     }
 
     /// Conservative declarative evidence from a syntactically parseable profile,
-    /// independent of full schema acceptance: claimed extensions plus declared
+    /// independent of full schema acceptance: claimed extensions plus per-mode
     /// detect signatures in both the v1 (`modes[].detect`) and legacy
-    /// (`application_modes[].detect.signatures`) shapes. Only plain strings are
-    /// kept; anything else contributes no evidence.
-    private static func lenientSelectors(_ root: YAMLNode) -> (extensions: [String], signatures: [String]) {
+    /// (`application_modes[].detect.signatures`) shapes, plus per-mode
+    /// `filename_contains_all` tokens only when `filenameTrusted` (declared
+    /// schema v2). Detect evidence is complete-list only: the whole value must
+    /// be a list of scalar strings with at least one non-empty survivor, so a
+    /// mixed scalar/non-scalar list contributes nothing instead of lending its
+    /// valid-looking members false trust.
+    private static func trustworthySignatures(_ node: YAMLNode?) -> [String] {
+        guard let items = node?.listItems else { return [] }
+        var kept: [String] = []
+        for item in items {
+            guard case .scalar(let text) = item else { return [] }
+            if !text.isEmpty { kept.append(text) }
+        }
+        return kept
+    }
+
+    /// Complete filename-token list: the whole value must be a non-empty list
+    /// of non-empty scalar strings. Returns nil for a missing value and for
+    /// any malformed one; scalarValue is nil for empty strings and non-scalars
+    /// alike, so both are rejected by matching `.scalar` directly.
+    private static func filenameTokenList(_ node: YAMLNode?) -> [String]? {
+        guard let items = node?.listItems, !items.isEmpty else { return nil }
+        var tokens: [String] = []
+        for item in items {
+            guard case .scalar(let text) = item, !text.isEmpty else { return nil }
+            tokens.append(text)
+        }
+        return tokens
+    }
+
+    private static func lenientSelectors(_ root: YAMLNode, filenameTrusted: Bool) -> Selectors {
         var extensions: [String] = []
         if let formatNodes = root.value(for: "formats")?.listItems {
             for node in formatNodes {
@@ -330,29 +450,27 @@ private enum ProfileSchema {
                 }
             }
         }
-        var signatures: [String] = []
+        var modeSelectors: [BrokenModeSelectors] = []
         if let modeNodes = root.value(for: "modes")?.listItems {
             for mode in modeNodes {
-                guard let detectNodes = mode.value(for: "detect")?.listItems else { continue }
-                for node in detectNodes {
-                    guard let value = node.scalarValue, !value.isEmpty else { continue }
-                    signatures.append(value)
+                let sigs = trustworthySignatures(mode.value(for: "detect"))
+                var filenames: [String]? = nil
+                if filenameTrusted, let filenameNode = mode.value(for: "filename_contains_all") {
+                    filenames = filenameTokenList(filenameNode)
                 }
+                modeSelectors.append(BrokenModeSelectors(filenames: filenames, signatures: sigs))
             }
         }
         if let modeNodes = root.value(for: "application_modes")?.listItems {
             for mode in modeNodes {
-                guard let signatureNodes = mode.value(for: "detect")?.value(for: "signatures")?.listItems else { continue }
-                for node in signatureNodes {
-                    guard let value = node.scalarValue, !value.isEmpty else { continue }
-                    signatures.append(value)
-                }
+                let sigs = trustworthySignatures(mode.value(for: "detect")?.value(for: "signatures"))
+                modeSelectors.append(BrokenModeSelectors(filenames: nil, signatures: sigs))
             }
         }
-        return (Array(Set(extensions)).sorted(), Array(Set(signatures)).sorted())
+        return Selectors(extensions: Array(Set(extensions)).sorted(), modeSelectors: modeSelectors)
     }
 
-    private static func validate(_ root: YAMLNode, relativePath: String, sha256: String, selectors: (extensions: [String], signatures: [String]), version: Int) -> ProfileLoadOutcome {
+    private static func validate(_ root: YAMLNode, relativePath: String, sha256: String, selectors: Selectors, version: Int) -> ProfileLoadOutcome {
         let extensions = selectors.extensions
         var errors: [String] = []
         func fail(_ message: String) { errors.append("\(relativePath): \(message)") }
@@ -398,7 +516,7 @@ private enum ProfileSchema {
 
         guard let instrumentNode = root.value(for: "instrument"), instrumentNode.mapEntries != nil else {
             fail("instrument mapping is required.")
-            return ProfileLoadOutcome(profile: nil, issues: errors, extensions: extensions, signatures: selectors.signatures)
+            return ProfileLoadOutcome(profile: nil, issues: errors, extensions: extensions, modeSelectors: selectors.modeSelectors)
         }
         rejectUnknown(instrumentNode, allowed: ["id", "name", "vendor", "model"], scope: "instrument")
         let instrumentID = string(instrumentNode.value(for: "id"), "instrument.id")
@@ -594,7 +712,9 @@ private enum ProfileSchema {
             if node.value(for: "transforms") != nil {
                 fail("\(field).transforms are not part of schema v\(version); remove the field (see CONTRACT.md).")
             }
-            rejectUnknown(node, allowed: ["id", "format", "detect", "extract"], scope: field, skipping: ["transforms"])
+            var modeAllowed: Set<String> = ["id", "format", "detect", "extract"]
+            if version >= 2 { modeAllowed.insert("filename_contains_all") }
+            rejectUnknown(node, allowed: modeAllowed, scope: field, skipping: ["transforms"])
             let detect: [String]
             if let detectNode = node.value(for: "detect") {
                 guard let parsed = stringList(detectNode, "\(field).detect") else { continue }
@@ -603,6 +723,16 @@ private enum ProfileSchema {
                 detect = []
             }
             if detect.isEmpty { fail("\(field).detect must list at least one header signature string.") }
+            // Schema v2 only: optional basename gate. When present it must be
+            // a non-empty list of non-empty strings; v1 rejects the key above.
+            var filenameTokens: [String]? = nil
+            if version >= 2, let filenameNode = node.value(for: "filename_contains_all") {
+                guard let tokens = filenameTokenList(filenameNode) else {
+                    fail("\(field).filename_contains_all must be a non-empty list of non-empty strings.")
+                    continue
+                }
+                filenameTokens = tokens
+            }
             guard let extract = node.value(for: "extract"), let extractEntries = extract.mapEntries else {
                 fail("\(field).extract mapping with x and y is required.")
                 continue
@@ -637,16 +767,16 @@ private enum ProfileSchema {
                 }
             }
             if y.contains(x) { fail("\(field).extract.x \"\(x)\" must not also appear in extract.y.") }
-            modes.append(ProfileMode(id: id, formatID: formatID, detect: detect, x: x, y: y))
+            modes.append(ProfileMode(id: id, formatID: formatID, detect: detect, filenameContainsAll: filenameTokens, x: x, y: y))
         }
 
         guard errors.isEmpty, let instrumentID, let instrumentName else {
-            return ProfileLoadOutcome(profile: nil, issues: errors.isEmpty ? ["\(relativePath): profile is incomplete."] : errors, extensions: extensions, signatures: selectors.signatures)
+            return ProfileLoadOutcome(profile: nil, issues: errors.isEmpty ? ["\(relativePath): profile is incomplete."] : errors, extensions: extensions, modeSelectors: selectors.modeSelectors)
         }
         let profile = InstrumentProfile(instrumentID: instrumentID, instrumentName: instrumentName,
                                         vendor: vendor, model: model, formats: formats, modes: modes,
                                         relativePath: relativePath, sha256: sha256, schemaVersion: version)
-        return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, signatures: [])
+        return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, modeSelectors: [])
     }
 
     private static func encoding(named name: String) -> String.Encoding? {

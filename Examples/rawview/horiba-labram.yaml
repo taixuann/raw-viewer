@@ -53,12 +53,20 @@ formats:
 modes:
   - id: raman-tsv
     format: tab_comma
+    # Illustrative basename gate: replace with case-insensitive fragments that
+    # actually occur in exported basenames, or omit this optional selector for
+    # header-only matching.
+    filename_contains_all: ["horiba-labram.raman"]
     detect: ["#Laser="]
     extract:
       x: wavenumber
       y: [intensity]
   - id: raman-semicolon
     format: header_semicolon
+    # Illustrative basename gate: replace with case-insensitive fragments that
+    # actually occur in exported basenames, or omit this optional selector for
+    # header-only matching.
+    filename_contains_all: ["horiba-labram.raman"]
     detect: ["raman_shift;intensity"]
     extract:
       x: wavenumber

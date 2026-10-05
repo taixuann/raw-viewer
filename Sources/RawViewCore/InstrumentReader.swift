@@ -146,7 +146,7 @@ public enum InstrumentReader {
                 sample = ""
             }
             let match: ProfileMatch
-            switch catalog.resolve(extension: fileExtension, headerSample: sample) {
+            switch catalog.resolve(extension: fileExtension, headerSample: sample, basename: canonical.lastPathComponent) {
             case .failed(let message): throw ReaderError.invalidSource(message)
             case .matched(let value): match = value
             }
@@ -248,7 +248,7 @@ public enum InstrumentReader {
             } else {
                 throw ReaderError.invalidSource("\(relativePath): the file header could not be decoded with any accepted profile encoding.")
             }
-            switch catalog.resolve(extension: fileExtension, headerSample: sample) {
+            switch catalog.resolve(extension: fileExtension, headerSample: sample, basename: canonical.lastPathComponent) {
             case .failed(let message):
                 return SourceInspectionResult(source: source, inspection: nil, error: message)
             case .matched(let match):

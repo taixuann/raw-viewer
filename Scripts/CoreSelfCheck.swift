@@ -43,6 +43,7 @@ enum CoreSelfCheck {
         g.clear()
         precondition(g.isEmpty && g.matches([:]))
         try await readerBoundarySelfCheck()
+        try await filenameSelectorSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -109,6 +110,95 @@ enum CoreSelfCheck {
         precondition(escapedReport.results.first?.inspection == nil)
         try FileManager.default.removeItem(at: outsideRoot)
     }
+
+    /// Concise production-path check for the v2 basename gate. The broader
+    /// matrix (isolation pairs, malformed shapes, v1, ambiguity) lives in the
+    /// Swift Testing suite; this proves the gate loads, rejects on the
+    /// basename alone, keeps header-only legacy matching, and never lets a
+    /// malformed broken detect list exonerate a valid match.
+    static func filenameSelectorSelfCheck() async throws {
+        func write(_ root: URL, _ relativePath: String, _ contents: String) throws {
+            let url = root.appendingPathComponent(relativePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(contents.utf8).write(to: url)
+        }
+        let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\nDataValue, 0.1, 2E-12\nDataValue, 0.2, 3E-12\n"
+        // (a) All basename tokens plus a header alternative load every value.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-gate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write(root, "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv", csv)
+        try write(root, "data/instruments/synth.yaml", filenameV2Profile)
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let good = report.results.first { $0.source.relativePath == "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv" }
+        precondition(good?.inspection?.applicationMode == "dual-sweep")
+        let measurement = try await InstrumentReader.load(good!.source.url, project: project)
+        precondition(measurement.channel(named: "voltage")?.values == [0, 0.1, 0.2])
+        precondition(measurement.channel(named: "current")?.values == [1e-12, 2e-12, 3e-12])
+        // (b) One of two required tokens with a matching header is rejected on
+        // the basename alone: the filename cause is named, no header cause is.
+        let partialRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-partial-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: partialRoot) }
+        try write(partialRoot, "data/raw/run_synth-token_only.csv", csv)
+        try write(partialRoot, "data/instruments/synth.yaml", filenameV2Profile)
+        let partialProject = try ProjectContext.open(partialRoot)
+        let partialReport = await InstrumentReader.inspectMany(try partialProject.discoverSources(), project: partialProject)
+        precondition(partialReport.results.first?.inspection == nil)
+        precondition(partialReport.results.first?.error?.contains("filename_contains_all tokens \"dual-sweep\" not in basename \"run_synth-token_only.csv\"") == true)
+        precondition(partialReport.results.first?.error?.contains("not in header sample") == false)
+        // (c) Without the optional selector the same header still matches.
+        let legacyRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-legacy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: legacyRoot) }
+        try write(legacyRoot, "data/raw/unrelated.csv", csv)
+        try write(legacyRoot, "data/instruments/synth.yaml", filenameV2Profile.replacingOccurrences(of: "    filename_contains_all: [\"synth-token\", \"dual-sweep\"]\n", with: ""))
+        let legacyProject = try ProjectContext.open(legacyRoot)
+        let legacyReport = await InstrumentReader.inspectMany(try legacyProject.discoverSources(), project: legacyProject)
+        precondition(legacyReport.results.first?.inspection?.applicationMode == "dual-sweep")
+        // (d) A mixed scalar/non-scalar broken detect list is uncertain: it
+        // cannot exonerate the exact valid match.
+        let mixedRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-mixed-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: mixedRoot) }
+        try write(mixedRoot, "data/raw/run_synth-token_dual-sweep.csv", csv)
+        try write(mixedRoot, "data/instruments/synth.yaml", filenameV2Profile)
+        try write(mixedRoot, "data/instruments/broken.yaml", filenameV2Profile.replacingOccurrences(of: "    detect: [\"SYNTH-MISSING-HEADER\", \"SYNTH-SPECIFIC-HEADER\"]", with: "    detect:\n      - UNRELATED-HEADER\n      - bad: map"))
+        let mixedProject = try ProjectContext.open(mixedRoot)
+        let mixedReport = await InstrumentReader.inspectMany(try mixedProject.discoverSources(), project: mixedProject)
+        precondition(mixedReport.results.first?.inspection == nil)
+        precondition(mixedReport.results.first?.error?.contains("data/instruments/broken.yaml") == true)
+        precondition(mixedReport.results.first?.error?.contains("modes[0].detect must contain only strings") == true)
+    }
+
+    static let filenameV2Profile = """
+    schema_version: 2
+    instrument:
+      id: synth
+      name: Synth
+    formats:
+      - id: csv
+        kind: tabular
+        extensions: [".csv"]
+        delimiter: ","
+        rows:
+          names_prefix: "DataName"
+          data_prefix: "DataValue"
+        columns:
+          voltage:
+            header: "V1"
+            quantity: voltage
+            unit: "V"
+          current:
+            header: "I1"
+            quantity: current
+            unit: "A"
+    modes:
+      - id: dual-sweep
+        format: csv
+        filename_contains_all: ["synth-token", "dual-sweep"]
+        detect: ["SYNTH-MISSING-HEADER", "SYNTH-SPECIFIC-HEADER"]
+        extract:
+          x: voltage
+          y: [current]
+    """
 
     static let dualSweepCSV = "\u{FEFF}SetupTitle, 2-terminal dual Vsweep\nDataName, V1, I1\nDataValue, 0, 1E-12\nDataValue, 0.1, 2E-12\nDataValue, 0.2, 3E-12\nDataValue, 0.1, 4E-12\nDataValue, 0, 5E-12\n"
 

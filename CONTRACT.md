@@ -111,6 +111,7 @@ V2 additions over v1 (all fail-closed; v1 documents reject the new fields):
 | `formats[].rows.data_prefix` | May be `""` (empty string): every non-blank line after the header row is a data row (Keithley LVM rows carry an empty leading cell; the legacy Horiba semicolon table has numeric first cells). A non-empty marker keeps the v1 equality rule. Blank lines are skipped, never parsed as gap rows. |
 | `formats[].columns.<key>.column_index` | Required instead of `header`/`aliases` for `comment-tsv`: the 0-based source column. Indices must be unique per format. `header`/`aliases` are rejected for this kind, and `column_index` is rejected for `tabular`. |
 | `formats[].columns.<key>.required` | Tabular v2 only, `true` by default. `false` makes a declared non-axis channel optional: it resolves when its header is present and is skipped without invented values when absent, leaving required channels unchanged. Rejected in v1 and for `comment-tsv`. Plot axes (`extract.x`/`extract.y`) must reference required columns. |
+| `modes[].filename_contains_all` | Optional v2-only basename gate: a non-empty list of non-empty strings. Every token must occur case-insensitively in the source basename (`lastPathComponent` only; parent directories never match). Rejected in v1 as an unknown key. |
 | No `rows` for `comment-tsv` | A `rows` mapping under `comment-tsv` is rejected: the layout is headerless by definition. |
 
 ## Project profile ownership
@@ -135,20 +136,38 @@ locally against the selected project and are not included in shared docs.
    reports `No instrument profile supports "x"` even when the header bytes are
    undecodable. Multiple matching profiles or modes are ambiguous and block that
    source with a diagnostic naming each candidate.
-2. A mode matches when at least one `detect` signature appears,
-   case-insensitively, in the first 64 KiB of the decoded file. No match reports
-   the declared modes and signatures for that profile.
+2. A mode matches when its filename selector matches (every
+   `filename_contains_all` token occurs case-insensitively in the source
+   basename; a mode without the field keeps the legacy behavior) AND at least
+   one `detect` signature appears, case-insensitively, in the first 64 KiB of
+   the decoded file. Either `detect` alternative matching is enough (OR). A
+   mode that does not match reports its exact cause: filename tokens missing
+   from the basename and detect signatures missing from the header sample are
+   named separately, both are named when both miss, and a side that did match
+   is noted as matched — a filename-only miss never claims a header miss. The
+   trailing advice mentions `filename_contains_all` only when a gated mode was
+   involved, so v1 profiles never see v2-only advice.
 3. Per-source isolation: broken profiles keep their selectors and diagnostics
-   per profile and never borrow another profile's. A source with exactly one
-   valid mode match stays usable beside an unrelated invalid or unversioned
-   profile claiming the same extension only when that profile's own declared
-   detect signatures provably do not match the source (both `modes[].detect`
-   and legacy `application_modes[].detect.signatures` count as evidence). A
-   conflicting same-source signature, or a claim with no trustworthy selectors
-   (malformed YAML supplies none), keeps the source blocked with the
-   profile/field diagnostic instead of claiming a unique mapping. Sources with
-   no valid match stay blocked until the invalid profile is fixed or removed.
-   Sources that match no other source's declarations are unaffected.
+   per profile and never borrow another profile's, and each broken mode is
+   judged on its own selectors. Only a declared schema v2 gives
+   `filename_contains_all` meaning: v1, unversioned, malformed-version, and
+   unsupported-version claims ignore that unknown key as selector evidence and
+   keep their header evidence, so a matching header still blocks there. A
+   broken mode is unrelated only when a trustworthy selector proves mismatch:
+   a valid filename list missing any basename token, or a valid non-empty
+   detect list (from `modes[].detect` or legacy
+   `application_modes[].detect.signatures`) with no header match. Any other
+   mode could still conflict and keeps the source blocked: both sides
+   matching, or uncertainty from a malformed or missing selector. A filename
+   match plus a missing detect list is uncertain and blocks; a header match
+   plus a malformed filename is uncertain and blocks. A claim with no mode
+   evidence at all blocks fail-closed. A profile blocks when any of its modes
+   could conflict; one malformed mode never clears a source, and one proven
+   unrelated mode never blocks it. A source with exactly one valid mode match
+   stays usable beside a broken profile only when every mode of that profile
+   is proven unrelated to the source. Sources with no valid match stay blocked
+   until the invalid profile is fixed or removed. Sources that match no other
+   source's declarations are unaffected.
 
 ## Tabular extraction (row-block layouts)
 

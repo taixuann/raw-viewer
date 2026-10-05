@@ -51,6 +51,10 @@ modes:
   - id: dual-sweep
     format: lvm
     # Case-insensitive substrings searched in the first 64 KiB of the source.
+    # Illustrative basename gate: replace with case-insensitive fragments that
+    # actually occur in exported basenames, or omit this optional selector for
+    # header-only matching.
+    filename_contains_all: ["keithley-2400.dual-sweep"]
     detect: ["LabVIEW Measurement"]
     extract:
       x: voltage
