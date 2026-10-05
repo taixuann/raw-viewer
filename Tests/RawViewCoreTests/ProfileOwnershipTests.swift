@@ -16,16 +16,17 @@ struct ProfileOwnershipTests {
         let profiles = try Dictionary(uniqueKeysWithValues: profileNames.map { name in
             (name, try String(contentsOf: exampleRoot.appendingPathComponent(name), encoding: .utf8))
         })
-        let keithley = Fixtures.lvmSweep.replacingOccurrences(of: "LabVIEW Measurement", with: "Instrument Record")
-        let horiba = Fixtures.ramanTsv.replacingOccurrences(of: "#Laser=\t532nm\n", with: "")
+        // Basenames carry each example mode's illustrative `filename_contains_all`
+        // gate token, and the fixtures keep the detect signatures the shipped
+        // profiles look for (no content rewrite that would hide a header).
         let root = try makeOwnershipProject(
             parentProfiles: [:],
             companion: .files(profiles),
             sources: [
-                "data/raw/keysight.csv": Data(Fixtures.dualSweepCSV.utf8),
-                "data/raw/keithley.txt": Data(keithley.utf8),
-                "data/raw/horiba-comments.txt": Data(horiba.utf8),
-                "data/raw/horiba-semicolon.txt": Data(Fixtures.ramanSemicolon.utf8),
+                "data/raw/run1_keysight-b1500a.dual-sweep.csv": Data(Fixtures.dualSweepCSV.utf8),
+                "data/raw/run2_keithley-2400.dual-sweep.txt": Data(Fixtures.lvmSweep.utf8),
+                "data/raw/run3_horiba-labram.raman.txt": Data(Fixtures.ramanTsv.utf8),
+                "data/raw/run4_horiba-labram.raman-semicolon.txt": Data(Fixtures.ramanSemicolon.utf8),
             ]
         )
         defer { try? FileManager.default.removeItem(at: root) }
@@ -36,10 +37,10 @@ struct ProfileOwnershipTests {
         #expect(report.profileIssues.isEmpty)
         #expect(report.results.count == 4)
         #expect(report.results.allSatisfy { $0.inspection?.instrumentID != nil })
-        #expect(report.results.first { $0.source.relativePath == "data/raw/keysight.csv" }?.inspection?.instrumentID == "keysight-b1500a")
-        #expect(report.results.first { $0.source.relativePath == "data/raw/keithley.txt" }?.inspection?.instrumentID == "keithley-2400")
-        #expect(report.results.first { $0.source.relativePath == "data/raw/horiba-comments.txt" }?.inspection?.instrumentID == "horiba-labram")
-        #expect(report.results.first { $0.source.relativePath == "data/raw/horiba-semicolon.txt" }?.inspection?.instrumentID == "horiba-labram")
+        #expect(report.results.first { $0.source.relativePath == "data/raw/run1_keysight-b1500a.dual-sweep.csv" }?.inspection?.instrumentID == "keysight-b1500a")
+        #expect(report.results.first { $0.source.relativePath == "data/raw/run2_keithley-2400.dual-sweep.txt" }?.inspection?.instrumentID == "keithley-2400")
+        #expect(report.results.first { $0.source.relativePath == "data/raw/run3_horiba-labram.raman.txt" }?.inspection?.instrumentID == "horiba-labram")
+        #expect(report.results.first { $0.source.relativePath == "data/raw/run4_horiba-labram.raman-semicolon.txt" }?.inspection?.instrumentID == "horiba-labram")
     }
 
     @Test func companionProfilesOverrideStudyOwnedParentProfiles() async throws {

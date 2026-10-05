@@ -18,6 +18,11 @@ final class RawViewModel: ObservableObject {
     @Published var sources: [RawSource] = []
     @Published var sourceStates: [String: GallerySourceState] = [:]
     @Published var focusedSourceID: String?
+    @Published var selectedSourceIDs: Set<String> = []
+    @Published var hiddenSeries: Set<String> = []
+    @Published var lineWidth: Double = 1.4
+    @Published var studyManifests: [StudyManifest] = []
+    @Published var manifestIssues: [String] = []
     @Published var isLoading = false
     @Published var error: String?
     @Published var profileIssues: [String] = []
@@ -36,12 +41,51 @@ final class RawViewModel: ObservableObject {
     private var discoveryTask: Task<Void, Never>?
     private var inspectionTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
+    private var overlayLoadTask: Task<Void, Never>?
+    private var overlayLoadingIDs = Set<String>()
     private var activeLoadID = UUID()
+    private var overlayGeneration = UUID()
     private var inspectionID = UUID()
     private var activeScopeURL: URL?
     private let discoveryGate = DiscoveryGate()
+    // Content-verified per-project cache (Issues 6–7). The limit is user
+    // configurable; 0 disables storing and lookups for this project.
+    @Published var cacheLimitBytes: Int64 = MeasurementCache.defaultLimitBytes {
+        didSet {
+            UserDefaults.standard.set(cacheLimitBytes, forKey: "rawView.cacheLimitBytes.v1")
+            rebuildCache()
+        }
+    }
+    /// The displayed limit is the user's own setting, not the storage
+    /// implementation's clamped value, so "Off" round-trips through the picker.
+    @Published private(set) var cacheUsage: MeasurementCache.Usage?
+    private var cacheStorage: MeasurementCache?
+
+    /// The active cache for reader paths: nil when the user disabled caching.
+    private var cache: MeasurementCache? {
+        guard cacheLimitBytes > 0 else { return nil }
+        return cacheStorage
+    }
+
+    private func rebuildCache() {
+        guard let project else { cacheStorage = nil; cacheUsage = nil; return }
+        cacheStorage = MeasurementCache(project: project, limitBytes: max(1, cacheLimitBytes))
+        refreshCacheUsage()
+    }
+
+    func refreshCacheUsage() {
+        // The user-chosen limit is displayed; the storage side clamps internally.
+        cacheUsage = try? cacheStorage?.usage()
+    }
+
+    func clearCacheFiles() {
+        try? cacheStorage?.clear()
+        refreshCacheUsage()
+    }
 
     init() {
+        let savedLimit = UserDefaults.standard.object(forKey: "rawView.cacheLimitBytes.v1") as? Int64
+        cacheLimitBytes = savedLimit ?? MeasurementCache.defaultLimitBytes
         if let bookmark = UserDefaults.standard.data(forKey: "rawView.projectBookmark.v1") {
             var stale = false
             if let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope,
@@ -110,6 +154,7 @@ final class RawViewModel: ObservableObject {
         inspectionTask = nil
         loadTask?.cancel()
         loadTask = nil
+        cancelOverlayLoad()
         activeLoadID = UUID()
         inspectionID = UUID()
         isLoading = false
@@ -118,13 +163,139 @@ final class RawViewModel: ObservableObject {
     }
 
     private func refreshLoading() {
-        isLoading = discoveryTask != nil || inspectionTask != nil || loadTask != nil
+        isLoading = discoveryTask != nil || inspectionTask != nil || loadTask != nil || overlayLoadTask != nil
         if !isLoading { loadingPhase = "Idle" }
+    }
+
+    /// Deterministic multi-source selection: keep focus while selected,
+    /// otherwise take the sorted first. Loads all selected without stale results.
+    func updateSelection(_ ids: Set<String>) {
+        cancelOverlayLoad()
+        selectedSourceIDs = ids
+        focusedSourceID = OverlaySelection.focused(selected: ids, current: focusedSourceID)
+        hiddenSeries = hiddenSeries.intersection(ids)
+        loadFocused()
+        ensureSelectedLoaded()
+    }
+
+    func selectedMeasurementsSorted() -> [NormalizedMeasurement] {
+        selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
+    }
+
+    /// Overlay state for the current selection: nil when fewer than two are
+    /// selected (single-source display), otherwise eligible or blocked. A load
+    /// failure or missing measurement blocks the whole comparison; the caller
+    /// keeps the focused single-source plot when blocked.
+    func overlayResult() -> OverlayEligibility? {
+        guard selectedSourceIDs.count >= 2 else { return nil }
+        let ids = selectedSourceIDs.sorted()
+        for id in ids {
+            if let state = sourceStates[id] {
+                if state.isLoading { return .blocked(reason: "Loading \(ids.count) selected sources… The focused source remains shown until all finish.") }
+                if let error = state.error { return .blocked(reason: "Source \(id): \(error) Comparison needs every selected source loaded.") }
+                if state.measurement == nil { return .blocked(reason: "Source \(id) is not loaded yet. The focused source remains shown until all finish.") }
+            } else {
+                return .blocked(reason: "Source \(id) is not loaded yet. The focused source remains shown until all finish.")
+            }
+        }
+        let measurements = ids.compactMap { sourceStates[$0]?.measurement }
+        guard measurements.count == ids.count else {
+            return .blocked(reason: "Not every selected source finished loading. The focused source remains shown.")
+        }
+        return OverlayEvaluator.evaluate(measurements: measurements, manifests: studyManifests)
+    }
+
+    func ensureSelectedLoaded() {
+        guard let project, !selectedSourceIDs.isEmpty else { return }
+        let ids = selectedSourceIDs.sorted()
+        let pending = ids.filter { sourceStates[$0]?.measurement == nil && sourceStates[$0]?.isLoading != true }
+        guard !pending.isEmpty else { return }
+        overlayLoadTask?.cancel()
+        overlayLoadTask = nil
+        overlayGeneration = UUID()
+        let generation = overlayGeneration
+        overlayLoadingIDs = Set(pending)
+        isLoading = true
+        for id in pending {
+            var state = sourceStates[id] ?? GallerySourceState()
+            state.isLoading = true
+            state.error = nil
+            sourceStates[id] = state
+        }
+        let loadCache = cache
+        overlayLoadTask = Task { [weak self] in
+            defer {
+                if generation == self?.overlayGeneration, let self {
+                    self.overlayLoadTask = nil
+                    for id in self.overlayLoadingIDs {
+                        var state = self.sourceStates[id] ?? GallerySourceState()
+                        state.isLoading = false
+                        self.sourceStates[id] = state
+                    }
+                    self.overlayLoadingIDs.removeAll()
+                }
+                self?.refreshLoading()
+            }
+            guard let self else { return }
+            let byID = Dictionary(uniqueKeysWithValues: self.sources.map { ($0.id, $0) })
+            for id in pending {
+                if Task.isCancelled { break }
+                guard generation == self.overlayGeneration else { break }
+                guard let source = byID[id] else { continue }
+                do {
+                    let measurement = try await InstrumentReader.load(source.url, project: project, cache: loadCache)
+                    guard generation == self.overlayGeneration else { break }
+                    var state = self.sourceStates[id] ?? GallerySourceState()
+                    state.measurement = measurement
+                    state.isLoading = false
+                    state.error = nil
+                    self.sourceStates[id] = state
+                    self.overlayLoadingIDs.remove(id)
+                } catch {
+                    guard generation == self.overlayGeneration else { break }
+                    // Cancelled loads stay retryable without an error banner.
+                    if (error as? ReaderError) == .cancelled {
+                        var state = self.sourceStates[id] ?? GallerySourceState()
+                        state.isLoading = false
+                        self.sourceStates[id] = state
+                        self.overlayLoadingIDs.remove(id)
+                    } else {
+                        var state = self.sourceStates[id] ?? GallerySourceState()
+                        state.isLoading = false
+                        state.error = error.localizedDescription
+                        self.sourceStates[id] = state
+                        self.overlayLoadingIDs.remove(id)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Cancels the previous selection's reads and releases its pending states
+    /// before a new selection starts. Generation checks keep cancelled results
+    /// from installing after this reset.
+    private func cancelOverlayLoad() {
+        overlayLoadTask?.cancel()
+        overlayLoadTask = nil
+        overlayGeneration = UUID()
+        for id in overlayLoadingIDs {
+            guard var state = sourceStates[id] else { continue }
+            if state.measurement == nil { state.isLoading = false }
+            sourceStates[id] = state
+        }
+        overlayLoadingIDs.removeAll()
+        refreshLoading()
     }
 
     func loadFocused() {
         guard let project, let id = focusedSourceID,
               let source = sources.first(where: { $0.id == id }) else { return }
+        // Multi-source comparison owns loading: one generation loads every
+        // selected source so stale results never install.
+        if selectedSourceIDs.contains(id), selectedSourceIDs.count >= 2 {
+            ensureSelectedLoaded()
+            return
+        }
         guard sourceStates[id]?.measurement == nil, sourceStates[id]?.isLoading != true else { return }
         // Cancels only the focused load: bulk inspection keeps running and its
         // results are never lost by a focus change.
@@ -136,6 +307,7 @@ final class RawViewModel: ObservableObject {
         }
         activeLoadID = UUID()
         let taskID = activeLoadID
+        let focusCache = cache
         isLoading = true
         sourceStates[id]?.isLoading = true
         sourceStates[id]?.error = nil
@@ -145,7 +317,7 @@ final class RawViewModel: ObservableObject {
                 self?.refreshLoading()
             }
             do {
-                let measurement = try await InstrumentReader.load(source.url, project: project)
+                let measurement = try await InstrumentReader.load(source.url, project: project, cache: focusCache)
                 guard taskID == self?.activeLoadID, let self else { return }
                 var state = self.sourceStates[id] ?? GallerySourceState()
                 state.measurement = measurement
@@ -166,12 +338,17 @@ final class RawViewModel: ObservableObject {
         cancelLoad()
         project = context
         focusedSourceID = nil
+        selectedSourceIDs = []
+        hiddenSeries = []
+        studyManifests = []
+        manifestIssues = []
         tab = "Plot"
         error = nil
         profileIssues = []
         sources = []
         sourceStates = [:]
         inspectionCancelled = false
+        rebuildCache()
         // Discovery runs through the cancellable core seam off the main actor so
         // large raw directories never block the UI. Cancellation propagates to
         // the worker; the gate token drops stale results when the user reselects.
@@ -204,12 +381,20 @@ final class RawViewModel: ObservableObject {
                   await self.discoveryGate.isCurrent(generation) else { return }
             self.sources = discovered
             self.sourceStates = Dictionary(uniqueKeysWithValues: discovered.map { ($0.id, GallerySourceState()) })
+            // Manifests are existing project YAML (study_id + sources); loaded
+            // off-main so large projects never block the UI.
+            let loaded = await Task.detached(priority: .userInitiated) { ManifestIndex.load(project: context) }.value
+            guard !Task.isCancelled, requestID == self.activeLoadID,
+                  await self.discoveryGate.isCurrent(generation) else { return }
+            self.studyManifests = loaded.manifests
+            self.manifestIssues = loaded.issues
             if discovered.isEmpty {
                 self.error = "No readable regular files were found under data/raw."
             } else {
                 self.startInspection(context)
             }
         }
+        refreshCacheUsage()
     }
 
     private func startInspection(_ context: ProjectContext) {
@@ -250,7 +435,7 @@ final class RawViewModel: ObservableObject {
 
     private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int) {
         inspectionTask = Task {
-            let report = await InstrumentReader.inspectMany(targets, project: project,
+            let report = await InstrumentReader.inspectMany(targets, project: project, cache: cache,
                 onProgress: { results, completed in
                     await MainActor.run {
                         guard requestID == self.inspectionID else { return }
@@ -263,6 +448,7 @@ final class RawViewModel: ObservableObject {
                         self.inspectedSources = baseCompleted + completed
                     }
                 })
+            await MainActor.run { self.refreshCacheUsage() }
             guard !Task.isCancelled, requestID == self.inspectionID else {
                 // Superseded runs must not touch the new run's slot or flag.
                 if Task.isCancelled, requestID == self.inspectionID {
@@ -276,7 +462,12 @@ final class RawViewModel: ObservableObject {
             self.inspectionTask = nil
             self.refreshLoading()
             if self.focusedSourceID == nil { self.focusedSourceID = self.sources.first?.id }
+            if self.selectedSourceIDs.isEmpty, let first = self.sources.first?.id {
+                self.selectedSourceIDs = [first]
+                self.focusedSourceID = OverlaySelection.focused(selected: self.selectedSourceIDs, current: self.focusedSourceID)
+            }
             self.loadFocused()
+            self.ensureSelectedLoaded()
         }
     }
 }
@@ -322,8 +513,9 @@ struct RawViewShell: View {
                     }
                     ProjectSourcesSidebar(sources: model.sources,
                         inspections: Dictionary(uniqueKeysWithValues: model.sourceStates.compactMap { id, state in state.inspection.map { (id, $0) } }),
-                        states: model.sourceStates, focusedSourceID: $model.focusedSourceID)
-                    if !model.profileIssues.isEmpty {
+                        states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
+                        selectedSourceIDs: $model.selectedSourceIDs)
+                    if !model.profileIssues.isEmpty || !model.manifestIssues.isEmpty {
                         profileIssueList
                     }
                     Spacer()
@@ -336,37 +528,87 @@ struct RawViewShell: View {
             .padding(14)
             .navigationSplitViewColumnWidth(min: 220, ideal: 265)
         } detail: {
-            HStack(spacing: 0) {
-                ProjectGallery(sources: model.sources, states: model.sourceStates,
-                               focusedSourceID: $model.focusedSourceID, tab: $model.tab,
-                               xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
-                               xScale: $model.xScale, yScale: $model.yScale, retry: model.loadFocused)
-                    .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
-                Divider()
-                let state = model.focusedSourceID.flatMap { model.sourceStates[$0] }
-                let source = model.sources.first { $0.id == model.focusedSourceID }
-                InspectorPane(measurement: state?.measurement, inspection: state?.inspection, source: source?.url,
-                              error: state?.error ?? model.error)
-                    .frame(width: 285)
-            }
-            .overlay(alignment: .top) {
-                if let error = model.error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .padding(10).frame(maxWidth: .infinity).background(.regularMaterial)
-                        .foregroundStyle(.red).textSelection(.enabled)
+            RawDetailView(model: model)
+                .overlay(alignment: .top) {
+                    if let error = model.error {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .padding(10).frame(maxWidth: .infinity).background(.regularMaterial)
+                            .foregroundStyle(.red).textSelection(.enabled)
+                    }
                 }
-            }
         }
         .onChange(of: model.focusedSourceID) { _, _ in model.loadFocused() }
+        .onChange(of: model.selectedSourceIDs) { _, new in model.updateSelection(new) }
     }
 
     private var profileIssueList: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("PROFILE ISSUES").font(.caption2.bold()).foregroundStyle(.orange)
-            ForEach(Array(model.profileIssues.enumerated()), id: \.offset) { _, issue in
-                Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+            if !model.profileIssues.isEmpty {
+                Text("PROFILE ISSUES").font(.caption2.bold()).foregroundStyle(.orange)
+                ForEach(Array(model.profileIssues.enumerated()), id: \.offset) { _, issue in
+                    Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
+            if !model.manifestIssues.isEmpty {
+                Text("STUDY MANIFESTS").font(.caption2.bold()).foregroundStyle(.orange)
+                ForEach(Array(model.manifestIssues.enumerated()), id: \.offset) { _, issue in
+                    Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                }
             }
         }
+    }
+}
+
+struct RawDetailView: View {
+    @ObservedObject var model: RawViewModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ProjectGallery(sources: model.sources, states: model.sourceStates,
+                           focusedSourceID: $model.focusedSourceID,
+                           selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
+                           lineWidth: model.lineWidth, overlay: model.overlayResult(),
+                           tab: $model.tab,
+                           xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
+                           xScale: $model.xScale, yScale: $model.yScale, retry: model.loadFocused)
+                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            inspector
+                .frame(width: 300)
+        }
+    }
+
+    private var inspector: some View {
+        let focusedID = model.focusedSourceID
+        var currentState: GallerySourceState? = nil
+        if let focusedID { currentState = model.sourceStates[focusedID] }
+        var currentSource: RawSource? = nil
+        if let focusedID {
+            for candidate in model.sources where candidate.id == focusedID {
+                currentSource = candidate
+                break
+            }
+        }
+        return InspectorPane(measurement: currentState?.measurement, inspection: currentState?.inspection,
+                             source: currentSource?.url, error: currentState?.error ?? model.error,
+                             states: model.sourceStates,
+                             selectedIDs: model.selectedSourceIDs, focusedID: $model.focusedSourceID,
+                             hidden: $model.hiddenSeries, lineWidth: $model.lineWidth,
+                             xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
+                             xScale: $model.xScale, yScale: $model.yScale,
+                             overlay: model.overlayResult(),
+                             onRetry: model.loadFocused,
+                             cacheStatus: cacheStatus,
+                             onClearCache: { model.clearCacheFiles(); model.loadFocused() },
+                             onLimitChange: { model.cacheLimitBytes = $0 })
+    }
+
+    private var cacheStatus: InspectorPane.CacheStatus? {
+        guard model.project != nil else { return nil }
+        let usage = model.cacheUsage ?? MeasurementCache.Usage(usedBytes: 0, entryCount: 0,
+                                                               limitBytes: model.cacheLimitBytes, root: "")
+        return InspectorPane.CacheStatus(usedBytes: usage.usedBytes, entryCount: usage.entryCount,
+                                         limitBytes: model.cacheLimitBytes)
     }
 }
 
@@ -378,6 +620,7 @@ struct NativePlot: View {
     let yAbsolute: Bool
     let xScale: AxisScale
     let yScale: AxisScale
+    var lineWidth: Double = 1.4
     @State private var zoom = 1.0
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
@@ -439,8 +682,9 @@ struct NativePlot: View {
         let finiteX = data.0.compactMap { $0 }
         let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
         guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
-        let plot = CGRect(x: 66, y: 12, width: max(1, size.width - 84), height: max(1, size.height - 58))
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.black), lineWidth: 0.8)
+        let leftGutter = min(112, max(66, size.width * 0.24))
+        let plot = CGRect(x: leftGutter, y: 12, width: max(1, size.width - leftGutter - 18), height: max(1, size.height - 58))
+        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
         for index in 0...4 {
@@ -451,7 +695,7 @@ struct NativePlot: View {
             let py = plot.maxY - t * plot.height
             var tick = Path(); tick.move(to: CGPoint(x: px, y: plot.maxY)); tick.addLine(to: CGPoint(x: px, y: plot.maxY + 4))
             tick.move(to: CGPoint(x: plot.minX, y: py)); tick.addLine(to: CGPoint(x: plot.minX - 4, y: py))
-            context.stroke(tick, with: .color(.black), lineWidth: 0.7)
+            context.stroke(tick, with: .color(.primary), lineWidth: 0.7)
             context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 10)), at: CGPoint(x: px, y: plot.maxY + 17))
             context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativePlotStyle.fontFamily, size: 10)), at: CGPoint(x: plot.minX - 36, y: py))
         }
@@ -488,7 +732,7 @@ struct NativePlot: View {
                     let point = CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height)
                     if pointIndex == 0 { line.move(to: point) } else { line.addLine(to: point) }
                 }
-                plotContext.stroke(line, with: .color(palette(seriesIndex)), lineWidth: 1.4)
+                plotContext.stroke(line, with: .color(palette(seriesIndex)), lineWidth: lineWidth)
             }
         }
     }
@@ -568,63 +812,204 @@ struct InspectorPane: View {
     let inspection: SourceInspection?
     let source: URL?
     let error: String?
+    let states: [String: GallerySourceState]
+    let selectedIDs: Set<String>
+    @Binding var focusedID: String?
+    @Binding var hidden: Set<String>
+    @Binding var lineWidth: Double
+    @Binding var xAbsolute: Bool
+    @Binding var yAbsolute: Bool
+    @Binding var xScale: AxisScale
+    @Binding var yScale: AxisScale
+    let overlay: OverlayEligibility?
+    let onRetry: () -> Void
+    // Cache controls (Issues 6–7): usage/limit status, a clear action, and the
+    // configurable per-project limit. Presentation only — the model owns state.
+    var cacheStatus: CacheStatus? = nil
+    var onClearCache: (() -> Void)? = nil
+    var onLimitChange: ((Int64) -> Void)? = nil
+
+    struct CacheStatus {
+        var usedBytes: Int64
+        var entryCount: Int
+        var limitBytes: Int64
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
                 Text("INSPECTOR").font(.headline)
-                if let measurement {
-                    section("Identity") {
-                        field("Instrument", measurement.instrument.name)
-                        field("Mode", measurement.applicationMode ?? "Unknown")
-                        field("Channels / Points", "\(measurement.channels.count) / \(measurement.channels.first?.values.count ?? 0)")
-                        field("Profile-reported support", measurement.supportStatus)
-                    }
-                    ForEach(measurement.metadataSections) { section in
-                        self.section(section.title) {
-                            ForEach(section.fields) { value in
-                                field(value.label, value.value.displayText + (value.unit.map { " \($0)" } ?? ""))
-                            }
-                        }
-                    }
-                    if !measurement.warnings.isEmpty {
-                        section("Validation") {
-                            field("Profile-reported state", measurement.provenance["profile_schema_version"].map { "schema v\($0)" } ?? "Unknown")
-                            ForEach(Array(measurement.warnings.enumerated()), id: \.offset) { _, warning in
-                                Text(warning).font(.caption).foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                    section("Source") {
-                        field("Path", measurement.source.path)
-                    }
-                } else if let inspection {
-                    section("Identity") {
-                        field("Instrument", inspection.instrumentName ?? inspection.instrumentID ?? "Unknown")
-                        field("Mode", inspection.applicationMode ?? "Unknown")
-                        field("Device", inspection.deviceID ?? "Unknown")
-                        field("Category", inspection.category ?? "Unknown")
-                    }
-                    section("Status") {
-                        field("Profile support", inspection.supportStatus ?? "Unknown")
-                        field("Validation", inspection.validationState ?? "Unknown")
-                    }
-                    section("Source") {
-                        field("Path", inspection.source)
-                        field("Size", inspection.size.map { "\($0) bytes" } ?? "Unknown")
-                        field("Timestamp", inspection.timestamp ?? "Unknown")
-                    }
-                    if let source { Text(source.path).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled) }
-                } else if let source {
-                    field("Selected", source.lastPathComponent)
-                    Text(error == nil ? "Waiting for source inspection." : "Source inspection is unavailable for this source.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Select one source to inspect it.").font(.caption).foregroundStyle(.secondary)
-                }
+                    .accessibilityAddTraits(.isHeader)
+                dataSection
+                styleSection
+                seriesSection
+                axesSection
+                cacheSection
                 if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
             }.padding(14)
         }.background(.background)
+    }
+
+    private var cacheSection: some View {
+        section("Cache") {
+            if let cacheStatus, let onClearCache {
+                usageRow(cacheStatus)
+                HStack {
+                    Button("Clear cache") { onClearCache() }
+                        .help("Remove all RawView cache entries for this project. Raw files and profiles are never modified.")
+                        .accessibilityLabel("Clear RawView cache")
+                    Spacer()
+                }
+                Picker("Cache limit", selection: Binding(
+                    get: { cacheStatus.limitBytes },
+                    set: { newLimit in onLimitChange?(newLimit) }
+                )) {
+                    Text("Off").tag(Int64(0))
+                    Text("128 MiB").tag(Int64(128 * 1024 * 1024))
+                    Text("512 MiB").tag(Int64(512 * 1024 * 1024))
+                    Text("2 GiB").tag(Int64(2 * 1024 * 1024 * 1024))
+                }
+                .labelsHidden()
+                .accessibilityLabel("Cache disk limit")
+                Text("Verified entries stay in a private app-local cache; RawView ignores project-controlled cache files. Entries are capped at 128 MiB. Inspection hits re-hash the bounded header; measurement hits verify a fresh full-file SHA-256.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Text("No project open.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func usageRow(_ status: CacheStatus) -> some View {
+        let used = ByteCountFormatter.string(fromByteCount: status.usedBytes, countStyle: .file)
+        let limit = status.limitBytes <= 0 ? "Off" : ByteCountFormatter.string(fromByteCount: status.limitBytes, countStyle: .file)
+        return HStack {
+            Text("\(status.entryCount) entries · \(used) of \(limit)")
+                .font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("Cache usage: \(status.entryCount) entries, \(used) used of \(limit) limit")
+            Spacer()
+        }
+    }
+
+    private var dataSection: some View {        section("Data") {
+            if let measurement {
+                field("Instrument", measurement.instrument.name)
+                field("Mode", measurement.applicationMode ?? "Unknown")
+                field("Channels / Points", "\(measurement.channels.count) / \(measurement.channels.first?.values.count ?? 0)")
+                field("Gaps", "\(measurement.channels.reduce(0) { $0 + $1.gapCount })")
+                ForEach(measurement.channels) { channel in
+                    Text("\(channel.label) (\(channel.unit)) · \(channel.quantity ?? "no quantity")")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                if !measurement.warnings.isEmpty {
+                    Text("\(measurement.warnings.count) gap warnings").font(.caption).foregroundStyle(.orange)
+                }
+                field("Path", measurement.source.path)
+            } else if let inspection {
+                field("Instrument", inspection.instrumentName ?? inspection.instrumentID ?? "Unknown")
+                field("Mode", inspection.applicationMode ?? "Unknown")
+                field("Path", inspection.source)
+            } else if let source {
+                field("Selected", source.lastPathComponent)
+                Text("Waiting for source inspection.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Select one source to inspect it.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var styleSection: some View {
+        section("Style") {
+            HStack {
+                Text("Line width").font(.caption)
+                Slider(value: $lineWidth, in: 0.5...3.0, step: 0.1) {
+                    Text("Line width")
+                }.accessibilityLabel("Series line width")
+            }
+            Text("Colors follow the native plot palette and repeat after its configured colors; source labels stay distinct. Visibility only changes presentation.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private var seriesSection: some View {
+        section("Series") {
+            if selectedIDs.isEmpty {
+                Text("No sources selected.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(selectedIDs.sorted(), id: \.self) { id in
+                    seriesRow(id)
+                }
+            }
+            if case .blocked(let reason) = overlay {
+                Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+            } else if case .eligible(let path) = overlay {
+                Text("Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func seriesRow(_ id: String) -> some View {
+        let isHidden = hidden.contains(id)
+        let isFocused = focusedID == id
+        let state = states[id]
+        let label = URL(fileURLWithPath: id).lastPathComponent
+        return HStack(spacing: 8) {
+            Circle().fill(seriesColor(id)).frame(width: 9, height: 9).accessibilityHidden(true)
+            Button {
+                focusedID = id
+                onRetry()
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label).font(.caption).lineLimit(1).truncationMode(.middle)
+                    if let error = state?.error {
+                        Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
+                    } else if state?.isLoading == true {
+                        Text("Loading…").font(.caption2).foregroundStyle(.secondary)
+                    } else if isFocused {
+                        Text("Focused").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Focus this source")
+            .accessibilityLabel("Focus \(label)")
+            Spacer(minLength: 4)
+            Toggle(isOn: Binding(get: { !isHidden }, set: { show in
+                if show { hidden.remove(id) } else { hidden.insert(id) }
+            })) { Text("Show \(label)") }.labelsHidden()
+                .help(isHidden ? "Show this series" : "Hide this series")
+                .accessibilityLabel("\(label) visibility")
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var axesSection: some View {
+        section("Axes") {
+            axisControl("X", absolute: $xAbsolute, scale: $xScale)
+            axisControl("Y", absolute: $yAbsolute, scale: $yScale)
+            Text("Absolute applies before the scale; log needs positive values.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func axisControl(_ name: String, absolute: Binding<Bool>, scale: Binding<AxisScale>) -> some View {
+        HStack(spacing: 6) {
+            Text(name).font(.caption).bold().frame(width: 12, alignment: .leading)
+            Toggle("Absolute", isOn: absolute).labelsHidden()
+                .help("Display absolute values before applying the scale")
+                .accessibilityLabel("\(name) absolute values")
+            Picker(name + " scale", selection: scale) {
+                Text("Lin").tag(AxisScale.linear)
+                Text("Log").tag(AxisScale.logarithmic)
+            }.labelsHidden().pickerStyle(.segmented).frame(width: 96)
+                .accessibilityLabel("\(name) axis scale")
+        }
+    }
+
+    private func seriesColor(_ id: String) -> Color {
+        let order = selectedIDs.sorted()
+        let index = order.firstIndex(of: id) ?? 0
+        return NativeOverlayPalette.color(index)
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

@@ -10,16 +10,18 @@ Instrument profiles are declarative YAML under the existing plural
 `data/instruments/` directory, or under its `rawview/` companion directory
 when it exists: companion profiles then override the parent directory, and an
 empty or unusable companion directory never falls back to it. RawView owns the
-readers: supported layouts are the Keysight B1500A I-V tabular CSV
-(`DataName`/`DataValue` rows), the Keithley 2400 dual-sweep LVM tab file, both
-Horiba LabRAM Raman tables (comment-header TSV with European decimal comma,
-legacy semicolon table). Viewer profiles are standalone, versioned top-level
-YAML (`schema_version: 1` or `2`); nested `raw_viewer` blocks are rejected.
+readers: supported layouts are the Keysight B1500A I-V, dual-sweep,
+list-sweep, and WGFMU tabular CSV profiles (`DataName`/`DataValue` rows), the
+Keithley 2400 dual-sweep LVM tab file, and both Horiba LabRAM Raman tables
+(comment-header TSV with European decimal comma, legacy semicolon table).
+List-sweep values are shown exactly as stored, with no legacy sign transform;
+WGFMU plots channel 1 and keeps its profile-declared unit status. Viewer
+profiles are standalone, versioned top-level YAML (`schema_version: 1` or `2`);
+nested `raw_viewer` blocks are rejected.
 Existing unversioned profiles stay visible
 with an explicit upgrade diagnostic, block only the sources they claim, and
-are never rewritten. RawView never executes project code. Keysight
-list-sweep/WGFMU, GTIIT XPS, Autolab/IOP, and Oxford MFP layouts are
-explicitly out of scope (see CONTRACT.md).
+are never rewritten. RawView never executes project code. GTIIT XPS,
+Autolab/IOP, and Oxford MFP layouts remain out of scope (see CONTRACT.md).
 
 The center switches between project-wide Plot and Data tabs. Each supported
 source keeps a matching figure and an ordered, untransformed table: every
@@ -30,11 +32,17 @@ tables show per-reason markers) with per-gap warnings naming file, line,
 column, reason, and raw token; other corrupt text blocks the affected source.
 The table keeps every format-declared channel while only the mode's axes drive
 the plot. The sidebar groups by Category (a filename grouping aid, never
-scientific study membership), and a cancelled inspection keeps partial results
-with a resume action. The
-right inspector shows identity, source, and profile-reported state; X and Y
-absolute, linear, and logarithmic controls apply to the selected figure, with
-invalid log domains reported on the affected source only. Header metadata
+scientific study membership) and supports Shift/Command multi-selection, and a
+cancelled inspection keeps partial results
+with a resume action. Selecting multiple sources compares their original curves
+only when every source lists in one exact shared study manifest (`study_id` +
+`sources: [{path}]`) with matching X/Y quantities and exact units; otherwise the
+comparison stays blocked and the focused source remains shown. The floating
+central plot card keeps generous whitespace with distinct per-source
+labels/colors, and the
+right inspector exposes Data, Style, Series, and Axes controls (series
+visibility toggles, line width, existing X/Y absolute/linear/log behavior),
+with invalid log domains reported on the affected source only. Header metadata
 (SetupTitle, Dimension, record time) and filename-derived device, timestamp,
 and category are preserved in the inspector; the filename category is a
 grouping aid, not scientific study membership. Invalid, unsupported,
@@ -54,6 +62,23 @@ inspection, and loading run off the main thread on independent cancellation
 identities in bounded batches with per-source failures, progress,
 cancellation, resume, and retry. Sources stream with cancellation checkpoints
 and no file-size cap.
+
+Deterministic results are cached per project in a private app-local directory
+(512 MiB default per project, configurable in the inspector). RawView never
+reads or writes a cache under the selected project, so project-writable files
+cannot inject plotted measurements. The directory and entry names contain only
+digests; payloads include normalized measurements and their project-relative
+source paths. Inspection entries key on the source identity, the SHA-256 of
+the exact bounded header prefix, and the complete profile-catalog fingerprint,
+so same-size edits or profile changes invalidate them while row-only edits may
+reuse an inspection. Every cached full measurement still re-opens the source
+without following links and re-verifies a fresh full-content SHA-256 before
+decoding. Corrupt or partial entries are ordinary misses and rebuild. Entries
+store complete normalized measurements (every value bit pattern, gap reason,
+metadata field, warning, and provenance entry) as checksummed binary property
+lists, atomically replaced, and are never transformed. Each entry is capped at
+128 MiB. `.spe` and `.affm` files are skipped without being opened, including
+by the cache; raw files and instrument profiles are never modified.
 
 The current package script is a developer build. It is not distribution-ready:
 notarization and distribution packaging remain unimplemented.

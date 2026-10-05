@@ -108,7 +108,10 @@ enum YAMLParser {
                 }
                 index += 1
                 if valueText.isEmpty {
-                    if let next = peek, next.indent > indent {
+                    let nextIsIndentlessList = peek.map {
+                        $0.indent == indent && ($0.content == "-" || $0.content.hasPrefix("- "))
+                    } ?? false
+                    if let next = peek, next.indent > indent || nextIsIndentlessList {
                         entries.append((key, try parse(depth: depth + 1)))
                     } else {
                         entries.append((key, .scalar("")))

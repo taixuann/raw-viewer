@@ -90,6 +90,9 @@ struct BrokenClaim: Sendable {
     let extensions: [String]
     let issues: [String]
     let modeSelectors: [BrokenModeSelectors]
+    /// SHA-256 of the profile's raw bytes: invalid profile content is part of
+    /// the catalog fingerprint even when no selectors were parsed.
+    let contentSHA256: String
 
     /// Per-source conflict using this profile's own selectors only. A mode is
     /// unrelated when a trustworthy selector proves mismatch: a valid filename
@@ -131,6 +134,54 @@ struct ProfileCatalog: Sendable {
     let profiles: [InstrumentProfile]
     let issues: [String]
     let brokenClaims: [BrokenClaim]
+
+    /// Stable digest over the complete loaded catalog — valid profiles (file
+    /// content digests), broken claims (raw bytes digest + selectors), and
+    /// issues — encoded with Foundation `JSONEncoder` (`.sortedKeys`, so the
+    /// emitted bytes are deterministic) over ordered components; user-controlled
+    /// fields cannot alias fingerprint fields because every component is a
+    /// JSON string. Profile parse behavior depends only on file bytes, so
+    /// content digests characterize the parsed state exactly.
+    var fingerprint: String {
+        struct ValidMaterial: Codable {
+            var path: String
+            var contentSHA256: String
+            var schemaVersion: Int
+            var instrumentID: String
+        }
+        struct BrokenModeMaterial: Codable {
+            var filenames: [String]?
+            var signatures: [String]
+        }
+        struct BrokenMaterial: Codable {
+            var path: String
+            var contentSHA256: String
+            var extensions: [String]
+            var modes: [BrokenModeMaterial]
+        }
+        struct CatalogMaterial: Codable {
+            var valid: [ValidMaterial]
+            var broken: [BrokenMaterial]
+            var issues: [String]
+        }
+        let material = CatalogMaterial(
+            valid: profiles.map { profile in
+                ValidMaterial(path: profile.relativePath, contentSHA256: profile.sha256,
+                              schemaVersion: profile.schemaVersion, instrumentID: profile.instrumentID)
+            },
+            broken: brokenClaims.map { claim in
+                BrokenMaterial(path: claim.relativePath, contentSHA256: claim.contentSHA256,
+                               extensions: claim.extensions,
+                               modes: claim.modeSelectors.map { selector in
+                                   BrokenModeMaterial(filenames: selector.filenames, signatures: selector.signatures)
+                               })
+            },
+            issues: issues)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let encoded = try? encoder.encode(material)
+        return sha256Hex(encoded ?? Data())
+    }
 
     static func load(project: ProjectContext) -> ProfileCatalog {
         let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
@@ -230,7 +281,9 @@ struct ProfileCatalog: Sendable {
             } else {
                 issues.append(contentsOf: outcome.issues)
                 if !outcome.extensions.isEmpty {
-                    brokenClaims.append(BrokenClaim(relativePath: relativePath, extensions: outcome.extensions, issues: outcome.issues, modeSelectors: outcome.modeSelectors))
+                    brokenClaims.append(BrokenClaim(relativePath: relativePath, extensions: outcome.extensions,
+                                                    issues: outcome.issues, modeSelectors: outcome.modeSelectors,
+                                                    contentSHA256: sha256Hex(raw)))
                 }
             }
         }

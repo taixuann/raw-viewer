@@ -5,12 +5,12 @@ public enum ContractError: Error, Equatable {
     case invalid(String)
 }
 
-public struct SourceIdentity: Decodable, Sendable {
+public struct SourceIdentity: Decodable, Sendable, Equatable {
     public let path: String
     public let sha256: String
 }
 
-public struct InstrumentIdentity: Decodable, Sendable {
+public struct InstrumentIdentity: Decodable, Sendable, Equatable {
     public let id: String
     public let name: String
     /// Descriptive identity from the selected profile; nil when not declared.
@@ -118,9 +118,17 @@ public struct MetadataField: Decodable, Identifiable, Sendable {
     public let value: JSONValue
     public let unit: String?
     public let kind: String
+
+    init(key: String, label: String, value: JSONValue, unit: String?, kind: String) {
+        self.key = key
+        self.label = label
+        self.value = value
+        self.unit = unit
+        self.kind = kind
+    }
 }
 
-public enum JSONValue: Decodable, Sendable {
+public enum JSONValue: Codable, Sendable {
     case string(String), number(Double), boolean(Bool), null
 
     public init(from decoder: Decoder) throws {
@@ -145,6 +153,11 @@ public struct MetadataSection: Decodable, Identifiable, Sendable {
     public var id: String { title }
     public let title: String
     public let fields: [MetadataField]
+
+    init(title: String, fields: [MetadataField]) {
+        self.title = title
+        self.fields = fields
+    }
 }
 
 private struct ContractVersionEnvelope: Decodable {
@@ -181,6 +194,20 @@ public struct NormalizedMeasurement: Sendable {
     public let warnings: [String]
     public let supportStatus: String
     public let provenance: [String: String]
+
+    init(source: SourceIdentity, instrument: InstrumentIdentity, applicationMode: String?, view: MeasurementView,
+         channels: [MeasurementChannel], metadataSections: [MetadataSection], warnings: [String],
+         supportStatus: String, provenance: [String: String]) {
+        self.source = source
+        self.instrument = instrument
+        self.applicationMode = applicationMode
+        self.view = view
+        self.channels = channels
+        self.metadataSections = metadataSections
+        self.warnings = warnings
+        self.supportStatus = supportStatus
+        self.provenance = provenance
+    }
 
     public func channel(named name: String) -> MeasurementChannel? {
         channels.first { $0.name == name }

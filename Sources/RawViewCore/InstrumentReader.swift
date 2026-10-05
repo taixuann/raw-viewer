@@ -33,9 +33,11 @@ public enum InstrumentReader {
     public static func inspectMany(
         _ sources: [RawSource],
         project: ProjectContext,
+        cache: MeasurementCache? = nil,
         onProgress: (@Sendable ([SourceInspectionResult], Int) async -> Void)? = nil
     ) async -> ReaderInspectionReport {
         let catalog = ProfileCatalog.load(project: project)
+        let catalogFingerprint = catalog.fingerprint
         var results: [SourceInspectionResult] = []
         results.reserveCapacity(sources.count)
         var index = 0
@@ -52,6 +54,26 @@ public enum InstrumentReader {
             for source in sources[index..<end] {
                 if Task.isCancelled {
                     batch.append(SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription))
+                } else if let cache {
+                    // Cached inspection path: the seam performs the mandatory
+                    // secured open + exact prefix hash + size check (identity)
+                    // and consults the entry keyed by identity + catalog
+                    // fingerprint. The typed producer resolves deterministic
+                    // outcomes; cancellation and access failures throw and
+                    // are never stored.
+                    let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { () throws -> MeasurementCache.CachedInspection in
+                        try inspectAccess(source, project: project, catalog: catalog)
+                    }
+                    if let cached {
+                        switch cached.outcome {
+                        case .supported(let inspection):
+                            batch.append(SourceInspectionResult(source: source, inspection: inspection, error: nil))
+                        case .blocked(let message):
+                            batch.append(SourceInspectionResult(source: source, inspection: nil, error: message))
+                        }
+                    } else {
+                        batch.append(inspect(source, project: project, catalog: catalog))
+                    }
                 } else {
                     batch.append(inspect(source, project: project, catalog: catalog))
                 }
@@ -74,7 +96,7 @@ public enum InstrumentReader {
         return .sourceOutsideRaw(project.claimedPath(of: source))
     }
 
-    public static func load(_ source: URL, project: ProjectContext) async throws -> NormalizedMeasurement {
+    public static func load(_ source: URL, project: ProjectContext, cache: MeasurementCache? = nil) async throws -> NormalizedMeasurement {
         // Excluded files are rejected from the claimed name alone, before any
         // path resolution or filesystem access touches them.
         guard !ProjectContext.skippedRawExtensions.contains(source.pathExtension.lowercased()) else {
@@ -123,6 +145,29 @@ public enum InstrumentReader {
                 prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
             } catch {
                 throw ReaderError.invalidSource("\(relativePath): could not read the source file: \(error.localizedDescription)")
+            }
+            let prefixDigest = sha256Hex(prefixData)
+            // Descriptor size via stat on the already-pinned descriptor: it
+            // must not move the handle's read offset (seekToEnd would make the
+            // subsequent stream start at EOF).
+            var fileStat = stat()
+            let descriptorSize: Int64
+            if fstat(handle.fileDescriptor, &fileStat) == 0 {
+                descriptorSize = Int64(fileStat.st_size)
+            } else {
+                descriptorSize = 0
+            }
+            // Measurement cache candidate: identity from the descriptor
+            // (relative path, extension, size, exact prefix digest) plus the
+            // complete catalog fingerprint; the entry's recorded full-content
+            // digest is verified inside the cache before decode.
+            if let cache,
+               let cached = try? cache.measurement(
+                   for: RawSource(relativePath: relativePath, url: source, byteSize: descriptorSize),
+                   project: project,
+                   profileFingerprint: catalog.fingerprint) {
+                try? handle.close()
+                return cached
             }
             var hasher = SHA256()
             hasher.update(data: prefixData)
@@ -175,7 +220,7 @@ public enum InstrumentReader {
             let rowCount = extracted.columns.first?.1.count ?? 0
             let gapCount = extracted.columns.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
             let facts = parseFilename(canonical.lastPathComponent)
-            return NormalizedMeasurement(
+            let measurement = NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
                 instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName,
                                                vendor: match.profile.vendor, model: match.profile.model),
@@ -193,6 +238,17 @@ public enum InstrumentReader {
                     "mode": match.mode.id
                 ]
             )
+            // Cache only the successful, deterministic outcome. Cancellation
+            // and transient failures never reach this line (they throw), and
+            // cancellation is re-checked immediately before store.
+            if let cache, !Task.isCancelled {
+                try? cache.store(
+                    measurement: measurement,
+                    profileFingerprint: catalog.fingerprint,
+                    source: RawSource(relativePath: relativePath, url: source, byteSize: descriptorSize),
+                    prefixSHA256: prefixDigest)
+            }
+            return measurement
         } catch is CancellationError {
             throw ReaderError.cancelled
         } catch let error as ReaderError {
@@ -204,67 +260,85 @@ public enum InstrumentReader {
 
     private static func inspect(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) -> SourceInspectionResult {
         do {
-            // Excluded files are rejected from the claimed name alone, before
-            // any path resolution or filesystem access touches them.
-            guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
-                throw ReaderError.invalidSource("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
-            }
-            // No-follow source-link check before any canonicalization: a
-            // symlink source is rejected from its link text alone (readlink
-            // touches only the link). Discovery omits every symlink entry, so
-            // a link here can only come from a forged caller and must fail
-            // closed.
-            if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.url.path) {
-                throw sourceLinkRejection(source.url, project: project, linkTarget: linkTarget)
-            }
-            let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
-            let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
-            guard project.containsSource(source.url), relativePath == source.relativePath else {
-                throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url))
-            }
-            // A supported claimed name that resolves to an excluded file stays
-            // rejected as well.
-            guard !ProjectContext.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) else {
-                throw ReaderError.invalidSource("\(relativePath): RawView skips .spe and .affm files.")
-            }
-            let fileExtension = "." + canonical.pathExtension.lowercased()
-            let handle: FileHandle
-            let prefixData: Data
-            do {
-                handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
-                prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
-            } catch let error as SecureOpenError {
-                throw error.readerError(display: relativePath)
-            } catch {
-                throw ReaderError.invalidSource("\(relativePath): could not read the source file: \(error.localizedDescription)")
-            }
-            let sample: String
-            if !catalog.hasValidClaim(for: fileExtension) {
-                sample = ""
-            } else if let selection = selectEncoding(prefixData, catalog: catalog, extension: fileExtension) {
-                sample = selection.text
-            } else if catalog.hasBrokenClaim(for: fileExtension) {
-                sample = ""
-            } else {
-                throw ReaderError.invalidSource("\(relativePath): the file header could not be decoded with any accepted profile encoding.")
-            }
-            switch catalog.resolve(extension: fileExtension, headerSample: sample, basename: canonical.lastPathComponent) {
-            case .failed(let message):
-                return SourceInspectionResult(source: source, inspection: nil, error: message)
-            case .matched(let match):
-                let facts = parseFilename(canonical.lastPathComponent)
-                let inspection = SourceInspection(
-                    source: relativePath, size: source.byteSize,
-                    instrumentID: match.profile.instrumentID, instrumentName: match.profile.instrumentName,
-                    applicationMode: match.mode.id, timestamp: facts.timestamp, deviceID: facts.deviceID, category: facts.category,
-                    supportStatus: "supported",
-                    validationState: "profile valid; source not loaded",
-                    readerVersion: version, profileID: match.profile.instrumentID, profileHash: match.profile.sha256, error: nil
-                )
+            switch try inspectAccess(source, project: project, catalog: catalog) {
+            case .supported(let inspection):
                 return SourceInspectionResult(source: source, inspection: inspection, error: nil)
+            case .blocked(let message):
+                return SourceInspectionResult(source: source, inspection: nil, error: message)
             }
         } catch {
             return SourceInspectionResult(source: source, inspection: nil, error: error.localizedDescription)
+        }
+    }
+
+    /// Typed inspection resolution. Returns deterministic outcomes — the
+    /// supported inspection or the exact profile/header/mode diagnostic — and
+    /// THROWS for anything non-deterministic: cancellation, access/security
+    /// failures (missing, unreadable, symlinked, escaped), and open/read
+    /// errors. Only returned values may reach the inspection cache.
+    static func inspectAccess(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) throws -> MeasurementCache.CachedInspection {
+        // Excluded files are rejected from the claimed name alone, before
+        // any path resolution or filesystem access touches them.
+        guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
+            return .blocked("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
+        }
+        try Task.checkCancellation()
+        // No-follow source-link check before any canonicalization: a
+        // symlink source is rejected from its link text alone (readlink
+        // touches only the link). Discovery omits every symlink entry, so
+        // a link here can only come from a forged caller and must fail
+        // closed.
+        if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.url.path) {
+            throw sourceLinkRejection(source.url, project: project, linkTarget: linkTarget)
+        }
+        let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
+        let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
+        guard project.containsSource(source.url), relativePath == source.relativePath else {
+            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url))
+        }
+        // A supported claimed name that resolves to an excluded file stays
+        // rejected as well (path-dependent; never cached).
+        guard !ProjectContext.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) else {
+            throw ReaderError.invalidSource("\(relativePath): RawView skips .spe and .affm files.")
+        }
+        let fileExtension = "." + canonical.pathExtension.lowercased()
+        let handle: FileHandle
+        let prefixData: Data
+        do {
+            handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
+            prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
+        } catch let error as SecureOpenError {
+            throw error.readerError(display: relativePath)
+        } catch {
+            throw ReaderError.invalidSource("\(relativePath): could not read the source file: \(error.localizedDescription)")
+        }
+        try? handle.close()
+        try Task.checkCancellation()
+        let sample: String
+        if !catalog.hasValidClaim(for: fileExtension) {
+            sample = ""
+        } else if let selection = selectEncoding(prefixData, catalog: catalog, extension: fileExtension) {
+            sample = selection.text
+        } else if catalog.hasBrokenClaim(for: fileExtension) {
+            sample = ""
+        } else {
+            return .blocked("\(relativePath): the file header could not be decoded with any accepted profile encoding.")
+        }
+        try Task.checkCancellation()
+        switch catalog.resolve(extension: fileExtension, headerSample: sample, basename: canonical.lastPathComponent) {
+        case .failed(let message):
+            return .blocked(message)
+        case .matched(let match):
+            let facts = parseFilename(canonical.lastPathComponent)
+            let inspection = SourceInspection(
+                source: relativePath, size: source.byteSize,
+                instrumentID: match.profile.instrumentID, instrumentName: match.profile.instrumentName,
+                applicationMode: match.mode.id, timestamp: facts.timestamp, deviceID: facts.deviceID, category: facts.category,
+                supportStatus: "supported",
+                validationState: "profile valid; source not loaded",
+                readerVersion: version, profileID: match.profile.instrumentID, profileHash: match.profile.sha256, error: nil
+            )
+            return .supported(inspection)
         }
     }
 

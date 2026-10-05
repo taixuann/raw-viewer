@@ -171,10 +171,13 @@ locally against the selected project and are not included in shared docs.
 
 ## Tabular extraction (row-block layouts)
 
-The row-block layout covers the Keysight B1500A I-V tabular CSV export and,
-under schema v2, the Keithley LVM and legacy Horiba semicolon tables (empty
-`data_prefix`, tab/`;` delimiters). The headerless Horiba comment TSV uses the
-`comment-tsv` positional layout with the same gap contract.
+The row-block layout covers the Keysight B1500A I-V, dual-sweep, list-sweep,
+and WGFMU tabular CSV profiles and, under schema v2, the Keithley LVM and
+legacy Horiba semicolon tables (empty `data_prefix`, tab/`;` delimiters). The
+headerless Horiba comment TSV uses the `comment-tsv` positional layout with the
+same gap contract. The approved list-sweep profile plots current exactly as
+stored; no legacy sign transform is applied. WGFMU plots channel 1 and keeps
+its declared unit status, so an unspecified unit remains ineligible for overlay.
 
 - The file is decoded with the profile's ordered encodings, trying only
   encodings from formats that declare the source extension. A leading
@@ -238,6 +241,36 @@ Filename facts follow the existing project convention (read-only): a leading
 equated with scientific study membership. Study migration remains out of scope.
 Unknown or calendrically impossible facts stay unknown and display as Unknown.
 
+## Overlay comparison (exact-manifest + quantities/units)
+
+- Overlay membership comes only from an existing project YAML manifest with a
+  top-level `study_id` and a `sources` list of `{path}` objects. Filename
+  category tokens, group labels, and display names never establish membership.
+- Every selected source must resolve through exactly one manifest, and all
+  selected sources must share one identical manifest file (canonical
+  project-relative manifest path). Equal Study IDs in different files remain
+  different identities. Missing, ambiguous, or different manifest membership
+  blocks the whole comparison; when blocked and the focused measurement is
+  valid, the focused single-source plot stays visible with the blocking reason.
+  The viewer never picks the largest compatible subgroup and never omits the
+  focused source.
+- All selected measurements must declare matching X and Y quantities with exact
+  matching units. Missing or placeholder (`unspecified` / `unknown`) units
+  block. Units are never converted.
+- Every eligible series draws its full arrays in acquisition order with gaps
+  preserved: no sorting, interpolation, averaging, normalization, downsampling,
+  or transforms. Series visibility and line width change presentation only.
+- Manifest source paths resolve project-relative or manifest-relative safely
+  inside the selected project (no-follow opens, containment-checked); absolute,
+  outside-project, malformed, or ambiguous mappings fail closed naming the
+  manifest path. Manifests are capped at 1 MiB like profiles; `.spe`/`.affm`
+  handling is unchanged.
+- The plot sits on a floating central card with surrounding whitespace and
+  resize-safe axes; the right inspector exposes Data, Style, Series, and Axes.
+  Series keep distinct labels/colors with per-series visibility toggles that
+  remain keyboard and assistive-technology accessible. Plot/Data access and
+  per-source errors persist during multi-selection.
+
 ## Failures, progress, and limits
 
 - Failures are isolated per source: one blocked source never suppresses another
@@ -269,3 +302,118 @@ Unknown or calendrically impossible facts stay unknown and display as Unknown.
   64 KiB. Tabular sources stream in bounded chunks with cancellation
   checkpoints, and complete point arrays are retained without downsampling.
 - No arbitrary project code is executed by RawView.
+
+## Content-verified cache (Issues 6 and 7)
+
+Deterministic results are cached per project in a private app-local directory.
+RawView never reads from or writes to a project-controlled cache: project
+contributors can edit project files and must not be able to forge cached
+measurement arrays. The cache root is keyed by a digest of the canonical
+project root, and entry names are digests; no raw path or project identifier
+appears in directory or entry names. The cached measurement payload does
+include the project-relative source path. Application Support is preferred,
+with a private temporary-directory location as fallback. If neither location
+can be secured, caching becomes a no-op and source reads still work.
+
+- **Inspection entries** are keyed by the project-relative source identity,
+  lowercase extension, descriptor size taken from the already secured
+  descriptor, the SHA-256 of the exact bounded 64 KiB prefix read from the
+  no-follow handle, the complete profile-catalog fingerprint (including
+  invalid profile bytes/claims that could affect resolution), the reader
+  version, and the cache schema. Every hit still no-follow opens the source
+  under `data/raw`, reads and hashes that exact prefix, and checks the pinned
+  descriptor size. A same-size, same-timestamp header edit therefore misses;
+  a row-only edit with an unchanged header prefix and size may reuse the
+  inspection. Only deterministic successful and deterministic
+  profile-resolution outcomes are stored: cancellation and transient
+  filesystem/security/open/read errors are never cached.
+- **Measurement entries** store the complete normalized measurement, including
+  path/provenance, instrument/mode/view, every channel name/label/unit/
+  quantity, every finite Double bit pattern, every gap reason and row,
+  acquisition order, metadata fields, warnings, support status, and
+  provenance. A candidate hit is found by hashed project-relative source
+  identity plus the selected profile/catalog fingerprint, reader version, and
+  schema; a hit is then served only after a fresh full-content SHA-256 from
+  the secured source handle equals the digest recorded in the entry. Size and
+  timestamps are never content proof. On a miss the reader keeps its
+  single-pass reader/hash path and stores the result.
+- **Storage** is binary property list per entry with a checksummed metadata
+  sidecar; writes are atomic (temp + rename), so corruption or interruption is
+  an ordinary miss the next store rebuilds. Oversized entries stay usable for
+  the current request but are not stored; each entry is capped at 128 MiB.
+  Storage is bounded by a per-project limit (default 512 MiB) with LRU
+  eviction, configurable in the inspector, with a clear action and usage/limit
+  status. Clearing removes only contained cache entry directories — never
+  project files. Every cache operation is contained to the private app-local
+  cache root and never follows a symlink out of it; inspection/focused/overlay
+  tasks serialize through one cache.
+- The SwiftPM fixture suite contains assertions for the bitwise full-payload
+  round-trip (gaps, metadata), invalidation matrix, corruption recovery,
+  symlink/containment, ignored project-controlled cache entries, limit/LRU/clear,
+  cancellation/transient non-caching, and `.spe`/`.affm` zero-open; fixtures are
+  synthetic and never touch real project data. That suite is **NOT_ASSESSED** on
+  this host: the Command Line Tools SwiftPM environment could not build the
+  test target (compiler/SDK mismatch and unavailable Swift `Testing` module).
+  The dependency-free `Scripts/check_core.sh` self-check passed and
+  directly verifies app-local cache placement, ignored project cache content,
+  inspection reuse, measurement hits and same-size/same-time invalidation,
+  bitwise sample/gap round-trip, and LRU/clear. Do not treat unrun SwiftPM
+  assertions as executed results.
+
+## Cache decision checkpoint (Issues 6 and 7)
+
+The local benchmark on 2026-10-05 used the selected project without copying or
+printing source names, identifiers, or values. The supported inventory
+contained 6,723 files (496,087,152 bytes). Three discovery runs took
+0.550–0.611 s. Three uncached inspection runs took 12.453, 11.450, and
+11.458 s (median 11.458 s): 3,854 inspections matched profiles and 2,869
+returned non-success states. A separate pass securely opened and hashed the
+bounded 64 KiB inspection prefixes for all 6,723 files (81,616,891 bytes) in
+0.228 s. This is about 2% of the uncached inspection median.
+
+A separate cache run recorded 36.990 s for cold population and a 2.539 s warm
+inspection median across 6,723 entries (5,117,196 bytes). That timing path
+includes cache population and is not directly comparable with the uncached
+11.458 s median above. The finished candidate has not been re-benchmarked; its
+repeat-performance result remains **NOT_ASSESSED**.
+
+Three largest matched local sources across the three observed modes totalled
+154,124 bytes. Nine full reader loads (three repetitions per source) retained
+23,562 rows; the median load was 24.3 ms. Full-content SHA-256 verification for
+those sources took a 0.1 ms median. A binary property-list prototype packed
+sample bit patterns and gap codes, occupied 407,301 bytes across the nine
+trials, and round-tripped every value and gap bitwise exactly; it did not yet
+include all metadata fields, so that size is a lower bound. Binary property
+lists are the selected local format because they are native, dependency-free,
+and preserve the exact packed arrays without text-number conversion.
+
+The implementation decision is a 512 MiB default per-project LRU cache,
+configurable in the viewer and clearable by the user. All projects use a
+private app-local cache directory keyed by a digest of the canonical project
+root; RawView never reads a project-writable cache. Inspection entries
+are keyed by project-relative path, extension, descriptor size, SHA-256 of the
+exact bounded header prefix, full profile-catalog fingerprint, reader version,
+and cache schema. Every inspection hit still opens the source without following
+links, reads and hashes that exact prefix, and checks the descriptor size.
+Measurement entries are keyed by source identity and the resolved profile and
+reader/schema versions; a possible hit requires a fresh full-content SHA-256
+from the secured source handle to equal the digest recorded in the entry.
+Neither size nor timestamps establish content identity. Atomic, checksummed
+entries turn corruption or interruption into misses and rebuilds. Cancellation
+and transient filesystem/security failures are not cached. LRU eviction and
+clear operations are contained to the cache root and never modify raw sources
+or instrument profiles.
+
+The acceptance baseline is pinned by Issue #7's live measurement: three-run
+uncached inspection median 7.247 s. The measured acceptance targets are:
+after cache population, three-run median inspection at or below 3.624 s (half
+of the 7.247 s pinned baseline), including prefix verification and cache
+lookup/decode; prefix verification remains at or below 1.449 s (20% of the
+pinned baseline); warm full-measurement loading does not exceed the 24.3 ms
+median on the same representative sources. The separately measured fresh local
+3-run median (11.458 s) is observed evidence about this host at that time, not
+the pinned acceptance baseline. First-open and cache population are reported
+separately, and the 0.228 s full-prefix verification pass is reported
+separately. Repeat measurements remain NOT_ASSESSED until the parent runs the
+benchmark. These are targets, not claimed results; the Issue 8 workflow must
+measure the finished implementation.

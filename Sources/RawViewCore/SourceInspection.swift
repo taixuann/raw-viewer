@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SourceInspection: Identifiable, Sendable {
+public struct SourceInspection: Identifiable, Sendable, Equatable, Codable {
     public var id: String { source }
     public let source: String
     public let size: Int64?
