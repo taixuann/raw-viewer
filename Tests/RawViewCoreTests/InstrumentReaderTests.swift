@@ -4,15 +4,35 @@ import Testing
 @testable import RawViewCore
 
 struct InstrumentReaderTests {
+    @Test func directReaderCallsRejectSPEAndAFFMBeforeOpeningFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let raw = root.appendingPathComponent("data/raw")
+        try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
+        let project = try ProjectContext.open(root)
+        let urls = [raw.appendingPathComponent("missing.sPe"), raw.appendingPathComponent("missing.AFFM")]
+        let sources = urls.map { RawSource(relativePath: "data/raw/\($0.lastPathComponent)", url: $0, byteSize: 0) }
+
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.results.count == 2)
+        #expect(report.results.allSatisfy { $0.error?.contains("RawView skips .spe and .affm") == true })
+
+        for url in urls {
+            await #expect(throws: ReaderError.self) {
+                try await InstrumentReader.load(url, project: project)
+            }
+        }
+    }
+
     @Test func loadsKeysightDualSweepPreservingEveryPointInFileOrder() async throws {
         let profile = Fixtures.keysightProfile
         let csv = Fixtures.dualSweepCSV
-        let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/2026-06-24/dual-sweep.csv": Data(csv.utf8)])
+        let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/fixture-run/dual-sweep.csv": Data(csv.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
 
         let project = try ProjectContext.open(root)
         let sources = try project.discoverSources()
-        #expect(sources.map(\.relativePath) == ["data/raw/2026-06-24/dual-sweep.csv"])
+        #expect(sources.map(\.relativePath) == ["data/raw/fixture-run/dual-sweep.csv"])
 
         let report = await InstrumentReader.inspectMany(sources, project: project)
         #expect(report.profileIssues.isEmpty)
@@ -40,11 +60,13 @@ struct InstrumentReaderTests {
         #expect(measurement.view.x == "voltage")
         #expect(measurement.view.y == ["current"])
         #expect(measurement.view.preserveOrder)
-        #expect(measurement.source.path == "data/raw/2026-06-24/dual-sweep.csv")
+        #expect(measurement.source.path == "data/raw/fixture-run/dual-sweep.csv")
         #expect(measurement.source.sha256 == sha256Hex(Data(csv.utf8)))
         #expect(measurement.provenance["profile_id"] == "keysight-b1500a")
         #expect(measurement.provenance["profile_hash"] == sha256Hex(Data(profile.utf8)))
-        #expect(measurement.provenance["reader_version"] == InstrumentReader.version)
+        #expect(measurement.provenance["reader_version"] == "1.1.0")
+        #expect(measurement.instrument.vendor == "Keysight Technologies")
+        #expect(measurement.instrument.model == "B1500A")
         #expect(measurement.supportStatus == "supported")
     }
 
@@ -141,12 +163,12 @@ struct InstrumentReaderTests {
     }
 
     @Test func unsupportedSchemaVersionIsRejectedWithActionableDiagnostic() async throws {
-        let profile = Fixtures.keysightProfile.replacingOccurrences(of: "schema_version: 1", with: "schema_version: 2")
+        let profile = Fixtures.keysightProfile.replacingOccurrences(of: "schema_version: 1", with: "schema_version: 3")
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
         let report = await InstrumentReader.inspectMany(try ProjectContext.open(root).discoverSources(), project: try ProjectContext.open(root))
         let error = try #require(report.results.first?.error)
-        #expect(error.contains("unsupported schema_version 2"))
+        #expect(error.contains("unsupported schema_version 3"))
         #expect(error.contains("supports schema_version 1"))
     }
 
@@ -338,15 +360,15 @@ struct InstrumentReaderTests {
     @Test func headerAndFilenameMetadataArePreserved() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
-        Dimension1, 61, 61
-        MetaData, TestRecord.RecordTime, 06/24/2026 09:14:25
+        Dimension1, 2, 2
+        MetaData, TestRecord.RecordTime, 12/31/2024 23:59:58
         DataName, V1, I1
-        DataValue, 0, 1E-12
-        DataValue, 0.1, 2E-12
+        DataValue, 0, 1E-3
+        DataValue, 0.1, 2E-3
         """
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
-            sources: ["data/raw/240626-091425_keysight-b1500a.dual-sweep_[cu-c-pda.q5-ito.2_r4-c5]_iv.dual-sweep.csv": Data(csv.utf8)]
+            sources: ["data/raw/241231-235958_keysight-b1500a.dual-sweep_[fixture-device]_iv.dual-sweep.csv": Data(csv.utf8)]
         )
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
@@ -354,17 +376,72 @@ struct InstrumentReaderTests {
         let report = await InstrumentReader.inspectMany(sources, project: project)
         let inspection = try #require(report.results.first?.inspection)
         // Filename-derived identity (read-only convention, unknown stays nil).
-        #expect(inspection.timestamp == "240626-091425")
-        #expect(inspection.deviceID == "cu-c-pda.q5-ito.2_r4-c5")
+        #expect(inspection.timestamp == "241231-235958")
+        #expect(inspection.deviceID == "fixture-device")
         #expect(inspection.category == "iv.dual-sweep")
         let measurement = try await InstrumentReader.load(sources[0].url, project: project)
         let acquisition = measurement.metadataSections.first { $0.title == "Acquisition" }
         #expect(acquisition?.fields.contains { $0.key == "SetupTitle" && $0.value.displayText.contains("2-terminal dual Vsweep") } == true)
         #expect(acquisition?.fields.contains { $0.key == "Dimension1" } == true)
-        #expect(acquisition?.fields.contains { $0.value.displayText.contains("06/24/2026") } == true)
+        #expect(acquisition?.fields.contains { $0.value.displayText.contains("12/31/2024") } == true)
         let identity = measurement.metadataSections.first { $0.title == "Identity" }
         #expect(identity?.fields.contains { $0.key == "device_id" } == true)
         #expect(measurement.metadataSections.first { $0.title == "Data" } != nil)
+    }
+
+    @Test func filenameTimestampAcceptsValidLeapDay() async throws {
+        let csv = """
+        SetupTitle, 2-terminal dual Vsweep
+        DataName, V1, I1
+        DataValue, 0, 1E-12
+        """
+        // 29 Feb 2024 is a real Gregorian leap day (years pivot to 2000–2099).
+        let name = "290224-120000_keysight-b1500a.dual-sweep_[dev1]_iv.dual-sweep.csv"
+        let root = try makeProject(
+            profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
+            sources: ["data/raw/\(name)": Data(csv.utf8)]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let inspection = try #require(report.results.first?.inspection)
+        #expect(inspection.timestamp == "290224-120000")
+        #expect(inspection.deviceID == "dev1")
+        #expect(inspection.category == "iv.dual-sweep")
+    }
+
+    @Test func filenameTimestampRejectsImpossibleDatesAndTimes() async throws {
+        let csv = """
+        SetupTitle, 2-terminal dual Vsweep
+        DataName, V1, I1
+        DataValue, 0, 1E-12
+        """
+        // 2025 is not a leap year; hour 25 and month 13 are invalid. Each
+        // token stays unknown while device, category, and filename survive.
+        for (token, device) in [
+            ("290225-120000", "dev-nonleap"),
+            ("241231-250000", "dev-badtime"),
+            ("321306-120000", "dev-badmonth"),
+        ] {
+            let name = "\(token)_keysight-b1500a.dual-sweep_[\(device)]_iv.dual-sweep.csv"
+            let root = try makeProject(
+                profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
+                sources: ["data/raw/\(name)": Data(csv.utf8)]
+            )
+            defer { try? FileManager.default.removeItem(at: root) }
+            let project = try ProjectContext.open(root)
+            let sources = try project.discoverSources()
+            let report = await InstrumentReader.inspectMany(sources, project: project)
+            let inspection = try #require(report.results.first?.inspection)
+            #expect(inspection.timestamp == nil, "token \(token) should stay unknown")
+            #expect(inspection.deviceID == device)
+            #expect(inspection.category == "iv.dual-sweep")
+            let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+            let identity = try #require(measurement.metadataSections.first { $0.title == "Identity" })
+            #expect(identity.fields.contains { $0.key == "timestamp" } == false)
+            #expect(identity.fields.contains { $0.key == "filename" && $0.value.displayText == name } == true)
+        }
     }
 
     @Test func validSourceStaysUsableBesideInvalidProfileWithSameExtension() async throws {
@@ -776,7 +853,7 @@ struct InstrumentReaderTests {
     @Test func relocationPreservesExtractionAndProvenance() async throws {
         let rootA = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
-            sources: ["data/raw/2026-06-24/dual-sweep.csv": Data(Fixtures.dualSweepCSV.utf8)]
+            sources: ["data/raw/fixture-run/dual-sweep.csv": Data(Fixtures.dualSweepCSV.utf8)]
         )
         defer { try? FileManager.default.removeItem(at: rootA) }
         let rootB = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-relocated-\(UUID().uuidString)")
@@ -859,6 +936,256 @@ struct InstrumentReaderTests {
         let measurement = try await InstrumentReader.load(source.url, project: project)
         #expect(measurement.channel(named: "current")?.values == [1e-12, 2e-12, 3e-12, 4e-12, 5e-12])
     }
+
+    @Test func nestedRawViewerProfileBlockIsRejected() async throws {
+        // A top-level v2 document carrying a nested raw_viewer block must fail
+        // closed: viewer profiles are standalone top-level documents, and
+        // companion profiles live under data/instruments/rawview/.
+        let profile = Fixtures.keysightV2.replacingOccurrences(
+            of: "modes:\n",
+            with: "raw_viewer:\n  schema_version: 2\n  instrument:\n    id: study-owned\n    name: Study Owned\nmodes:\n"
+        )
+        let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        #expect(report.results.first?.inspection == nil)
+        let error = try #require(report.results.first?.error)
+        #expect(error.contains("data/instruments/keysight-b1500a.yaml"))
+        #expect(error.contains("raw_viewer"))
+        #expect(error.contains("standalone"))
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+        }
+    }
+
+    @Test func keithleyLvmLoadsEveryPairInFileOrder() async throws {
+        let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/sweep.txt": Data(Fixtures.lvmSweep.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.profileIssues.isEmpty)
+        #expect(report.results.first?.inspection?.applicationMode == "dual-sweep")
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        let voltage = try #require(measurement.channel(named: "voltage"))
+        let current = try #require(measurement.channel(named: "current"))
+        // Every row after the X_Value header is kept in file order; the
+        // trailing blank line is skipped, not parsed as a gap row.
+        #expect(voltage.values == [-0.2, 0.15, 0.5, 0.85])
+        #expect(current.values == [1.25e-6, 2.5e-6, -3.75e-6, 5e-6])
+        #expect(voltage.unit == "V")
+        #expect(current.unit == "A")
+        #expect(voltage.quantity == "voltage")
+        #expect(current.quantity == "current")
+        #expect(measurement.view.x == "voltage")
+        #expect(measurement.view.y == ["current"])
+        #expect(measurement.provenance["profile_schema_version"] == "2")
+        #expect(measurement.source.sha256 == sha256Hex(Data(Fixtures.lvmSweep.utf8)))
+        let acquisition = try #require(measurement.metadataSections.first { $0.title == "Acquisition" })
+        #expect(acquisition.fields.contains { $0.key == "Separator" && $0.value.displayText == "Tab" })
+        #expect(acquisition.fields.contains { $0.key == "Channels" })
+        // The optional timestamp channel is present, so its complete
+        // row-aligned values ride along without touching the X/Y arrays.
+        let elapsed = try #require(measurement.channel(named: "timestamp"))
+        #expect(elapsed.values == [1, 2, 3, 4])
+        #expect(elapsed.unit == "s")
+        #expect(elapsed.quantity == "time")
+        #expect(elapsed.label == "Time")
+        #expect(measurement.channels.map(\.name) == ["voltage", "current", "timestamp"])
+    }
+
+    @Test func lvmAbsentOptionalColumnLoadsRequiredChannelsUnchanged() async throws {
+        let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/notime.txt": Data(Fixtures.lvmSweepNoTimestamp.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.profileIssues.isEmpty)
+        #expect(report.results.first?.inspection?.applicationMode == "dual-sweep")
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        // Required channels keep exact values/order/count; nothing is
+        // invented for the absent optional header.
+        #expect(measurement.channel(named: "voltage")?.values == [-2.25, 2.25])
+        #expect(measurement.channel(named: "current")?.values == [11e-6, -11e-6])
+        #expect(measurement.channel(named: "timestamp") == nil)
+        #expect(measurement.channels.map(\.name) == ["voltage", "current"])
+        #expect(measurement.view.x == "voltage")
+        #expect(measurement.view.y == ["current"])
+        #expect(measurement.source.sha256 == sha256Hex(Data(Fixtures.lvmSweepNoTimestamp.utf8)))
+    }
+
+    @Test func lvmMissingRequiredChannelStillBlocksWhenOptionalPresent() async throws {
+        // The required current header is gone while the optional timestamp
+        // header stays: the source must block naming the required channel.
+        let text = Fixtures.lvmSweep.replacingOccurrences(of: "Untitled 1", with: "Bogus")
+        let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/nocurrent.txt": Data(text.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        do {
+            _ = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+            Issue.record("source with missing required channel loaded instead of blocked")
+        } catch {
+            #expect(error.localizedDescription.contains("current"))
+        }
+    }
+
+    @Test func optionalColumnSchemaIsFailClosed() async throws {
+        let nonBoolean = Fixtures.keithleyLvm.replacingOccurrences(
+            of: "required: false", with: "required: maybe")
+        let optionalAxis = Fixtures.keithleyLvm.replacingOccurrences(
+            of: "x: voltage", with: "x: timestamp")
+        for (name, profile, fragment) in [
+            ("nonboolean.yaml", nonBoolean, "columns.timestamp.required"),
+            ("optional-axis.yaml", optionalAxis, "extract.x"),
+        ] {
+            let root = try makeProject(profiles: [name: profile], sources: ["data/raw/sweep.txt": Data(Fixtures.lvmSweep.utf8)])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let project = try ProjectContext.open(root)
+            let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+            let combined = (report.results.first?.error ?? "") + report.profileIssues.joined()
+            #expect(combined.contains(fragment), "profile \(name) should report \(fragment)")
+        }
+    }
+
+    @Test func lvmBlockedStatesAreActionable() async throws {
+        let missingHeader = Fixtures.lvmSweep.replacingOccurrences(of: "X_Value\tUntitled", with: "Nope\tUntitled")
+        let corruptCell = Fixtures.lvmSweep.replacingOccurrences(of: "-3.75E-6", with: "--")
+        for (name, text, fragment) in [
+            ("missing.txt", missingHeader, "no \"X_Value\" header row"),
+            ("corrupt.txt", corruptCell, "--"),
+        ] {
+            let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/\(name)": Data(text.utf8)])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let project = try ProjectContext.open(root)
+            do {
+                _ = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+                Issue.record("\(name) loaded instead of blocked")
+            } catch {
+                #expect(error.localizedDescription.contains(fragment), "\(name) should report \(fragment)")
+            }
+        }
+    }
+
+    @Test func lvmShortRowIsABlankGapNotCorrupt() async throws {
+        let short = Fixtures.lvmSweep.replacingOccurrences(of: "\t0.5\t-3.75E-6\t3", with: "\t0.5")
+        let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/short.txt": Data(short.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let measurement = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+        let current = try #require(measurement.channel(named: "current"))
+        #expect(current.values.count == 4)
+        #expect(current.values[2] == nil)
+        #expect(current.gapReasons[2] == .blank)
+    }
+
+    @Test func decimalCommaConflictingWithCommaDelimiterIsRejected() async throws {
+        let profile = Fixtures.keysightV2.replacingOccurrences(
+            of: "    delimiter: \",\"\n", with: "    delimiter: \",\"\n    decimal: \",\"\n")
+        let root = try makeProject(profiles: ["nested.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        #expect(report.results.first?.error?.contains("decimal") == true)
+    }
+
+    @Test func horibaLabramLoadsBothLayoutsInFileOrder() async throws {
+        let root = try makeProject(
+            profiles: ["horiba-labram.yaml": Fixtures.horibaLabram],
+            sources: [
+                "data/raw/sers.txt": Data(Fixtures.ramanTsv.utf8),
+                "data/raw/characterization.txt": Data(Fixtures.ramanSemicolon.utf8),
+            ]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.profileIssues.isEmpty)
+        // Same ".txt" extension, two formats: each file matches exactly one mode.
+        #expect(report.results.first { $0.source.relativePath.hasSuffix("sers.txt") }?.inspection?.applicationMode == "raman-tsv")
+        #expect(report.results.first { $0.source.relativePath.hasSuffix("characterization.txt") }?.inspection?.applicationMode == "raman-semicolon")
+        for source in sources {
+            let measurement = try await InstrumentReader.load(source.url, project: project)
+            let x = try #require(measurement.channel(named: "wavenumber"))
+            let y = try #require(measurement.channel(named: "intensity"))
+            #expect(x.unit == "cm-1")
+            #expect(y.unit == "counts")
+            #expect(measurement.view.x == "wavenumber")
+            #expect(measurement.view.y == ["intensity"])
+            #expect(measurement.view.preserveOrder)
+            #expect(measurement.provenance["profile_schema_version"] == "2")
+            if source.relativePath.hasSuffix("sers.txt") {
+                #expect(x.values == [125.5, 126.75, 128.0])
+                #expect(y.values[0] == 3.25)
+                #expect(y.values[1] == 4.5)
+                #expect(y.values[2] == nil)
+                #expect(y.gapReasons[2] == .nan)
+                let acquisition = try #require(measurement.metadataSections.first { $0.title == "Acquisition" })
+                #expect(acquisition.fields.contains { $0.key == "Laser" && $0.value.displayText == "532nm" })
+            } else {
+                #expect(x.values == [201.25, 202.5, 203.75])
+                #expect(y.values == [3.5, 4.75, -2.25])
+            }
+        }
+    }
+
+    @Test func ramanTsvSurvivesLatin1CommentBytes() async throws {
+        var bytes = Data("#Instrument=\tLabRAM HR Evol\n#Range (cm-".utf8)
+        bytes.append(0xB9) // latin-1-only byte: not valid UTF-8
+        bytes.append(contentsOf: Data(")=\t100...300\n#Laser=\t532nm\n125,500\t3,25\n".utf8))
+        let root = try makeProject(profiles: ["horiba-labram.yaml": Fixtures.horibaLabram], sources: ["data/raw/latin1.txt": bytes])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let measurement = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+        #expect(measurement.channel(named: "wavenumber")?.values == [125.5])
+        #expect(measurement.channel(named: "intensity")?.values == [3.25])
+    }
+
+    @Test func ramanBlockedStatesAreActionable() async throws {
+        // Comment-only TSV has no data rows; a semicolon file with corrupt
+        // text blocks naming file, line, column, and value.
+        let empty = "#Instrument=\tLabRAM HR Evol\n#Laser=\t532nm\n\n"
+        let corrupt = Fixtures.ramanSemicolon.replacingOccurrences(of: "4.75", with: "bad")
+        for (name, text, fragment) in [
+            ("empty.txt", empty, "no data rows"),
+            ("corrupt.txt", corrupt, "bad"),
+        ] {
+            let root = try makeProject(profiles: ["horiba-labram.yaml": Fixtures.horibaLabram], sources: ["data/raw/\(name)": Data(text.utf8)])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let project = try ProjectContext.open(root)
+            do {
+                _ = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+                Issue.record("\(name) loaded instead of blocked")
+            } catch {
+                #expect(error.localizedDescription.contains(fragment), "\(name) should report \(fragment)")
+            }
+        }
+    }
+
+    @Test func commentTsvSchemaIsFailClosed() async throws {
+        let rowsAdded = Fixtures.horibaLabram.replacingOccurrences(
+            of: "    kind: comment-tsv", with: "    kind: comment-tsv\n    rows:\n      names_prefix: \"X\"")
+        let headerColumn = Fixtures.horibaLabram.replacingOccurrences(
+            of: "        column_index: 0", with: "        header: \"X\"")
+        let duplicateIndex = Fixtures.horibaLabram.replacingOccurrences(
+            of: "        column_index: 1", with: "        column_index: 0")
+        let unknownKind = Fixtures.horibaLabram.replacingOccurrences(
+            of: "    kind: comment-tsv", with: "    kind: native")
+        for (name, profile, fragment) in [
+            ("rows.yaml", rowsAdded, "formats[0].rows"),
+            ("header.yaml", headerColumn, "formats[0].columns.wavenumber.header"),
+            ("dupindex.yaml", duplicateIndex, "same source column"),
+            ("kind.yaml", unknownKind, "kind \"native\""),
+        ] {
+            let root = try makeProject(profiles: [name: profile], sources: ["data/raw/sers.txt": Data(Fixtures.ramanTsv.utf8)])
+            defer { try? FileManager.default.removeItem(at: root) }
+            let project = try ProjectContext.open(root)
+            let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+            let combined = (report.results.first?.error ?? "") + report.profileIssues.joined()
+            #expect(combined.contains(fragment), "profile \(name) should report \(fragment)")
+        }
+    }
 }
 
 private actor ProgressRecorder {
@@ -873,6 +1200,153 @@ private actor CancellationHandle {
 }
 
 enum Fixtures {
+    /// Standalone viewer profile schema v2: the only supported document
+    /// shape for viewer profiles. Study metadata is not part of it.
+    static let keysightV2 = """
+    schema_version: 2
+    instrument:
+      id: keysight-b1500a
+      name: Keysight B1500A Semiconductor Device Parameter Analyzer
+    formats:
+      - id: csv
+        kind: tabular
+        extensions: [".csv"]
+        delimiter: ","
+        rows:
+          names_prefix: "DataName"
+          data_prefix: "DataValue"
+        columns:
+          voltage:
+            header: "V1"
+            quantity: voltage
+            unit: "V"
+          current:
+            header: "I1"
+            quantity: current
+            unit: "A"
+    modes:
+      - id: dual-sweep
+        format: csv
+        detect: ["2-terminal dual Vsweep"]
+        extract:
+          x: voltage
+          y: [current]
+    """
+
+    /// Keithley 2400 LVM layout as a standalone v2 profile: tab-separated,
+    /// two `***End_of_Header***` blocks, an `X_Value` names row, and data
+    /// rows with an empty leading cell (empty `data_prefix` matches every
+    /// non-blank line after the header).
+    static let keithleyLvm = """
+    schema_version: 2
+    instrument:
+      id: keithley-2400
+      name: Keithley 2400 SourceMeter
+    formats:
+      - id: lvm
+        kind: tabular
+        extensions: [".txt", ".lvm"]
+        delimiter: "\\t"
+        rows:
+          names_prefix: "X_Value"
+          data_prefix: ""
+        columns:
+          voltage:
+            header: "Untitled"
+            quantity: voltage
+            unit: "V"
+            label: "Voltage"
+          current:
+            header: "Untitled 1"
+            quantity: current
+            unit: "A"
+            label: "Current"
+          timestamp:
+            header: "Untitled 2"
+            quantity: time
+            unit: "s"
+            label: "Time"
+            required: false
+    modes:
+      - id: dual-sweep
+        format: lvm
+        detect: ["LabVIEW Measurement"]
+        extract:
+          x: voltage
+          y: [current]
+    """
+
+    /// Keithley LVM sweep without the optional `Untitled 2` time column:
+    /// required voltage/current headers resolve; the absent optional header
+    /// is skipped without inventing values.
+    static let lvmSweepNoTimestamp = "LabVIEW Measurement\t\n***End_of_Header***\t\n***End_of_Header***\t\t\t\nX_Value\tUntitled\tUntitled 1\tComment\n\t-2.25\t11E-6\n\t2.25\t-11E-6\n\n"
+
+    static let lvmSweep = "LabVIEW Measurement\t\nWriter_Version\t2\nSeparator\tTab\n***End_of_Header***\t\nChannels\t3\nSamples\t4\t4\t4\n***End_of_Header***\t\t\t\nX_Value\tUntitled\tUntitled 1\tUntitled 2\tComment\n\t-0.2\t1.25E-6\t1\n\t0.15\t2.5E-6\t2\n\t0.5\t-3.75E-6\t3\n\t0.85\t5E-6\t4\n\n"
+
+    /// Horiba LabRAM Raman as a standalone v2 profile in both existing
+    /// layouts: a comment-header TSV with a European decimal comma, and a
+    /// legacy semicolon table with period decimals. Both share one ".txt"
+    /// extension and are told apart by their detect signatures.
+    static let horibaLabram = """
+    schema_version: 2
+    instrument:
+      id: horiba-labram
+      name: Horiba LabRAM HR Evolution Raman Spectrometer
+    formats:
+      - id: tab_comma
+        kind: comment-tsv
+        extensions: [".txt"]
+        delimiter: "\\t"
+        decimal: ","
+        encoding: [utf-8, windows-1252, iso-8859-1]
+        columns:
+          wavenumber:
+            column_index: 0
+            quantity: wavenumber
+            unit: "cm-1"
+            label: "Raman shift"
+          intensity:
+            column_index: 1
+            quantity: intensity
+            unit: "counts"
+            label: "Intensity"
+      - id: header_semicolon
+        kind: tabular
+        extensions: [".txt"]
+        delimiter: ";"
+        rows:
+          names_prefix: "raman_shift"
+          data_prefix: ""
+        columns:
+          wavenumber:
+            header: "raman_shift"
+            quantity: wavenumber
+            unit: "cm-1"
+            label: "Raman shift"
+          intensity:
+            header: "intensity"
+            quantity: intensity
+            unit: "counts"
+            label: "Intensity"
+    modes:
+      - id: raman-tsv
+        format: tab_comma
+        detect: ["#Laser="]
+        extract:
+          x: wavenumber
+          y: [intensity]
+      - id: raman-semicolon
+        format: header_semicolon
+        detect: ["raman_shift;intensity"]
+        extract:
+          x: wavenumber
+          y: [intensity]
+    """
+
+    static let ramanTsv = "#Instrument=\tLabRAM HR Evol\n#Laser=\t532nm\n#Acq. time (s)=\t5\n125,500\t3,25\n126,750\t4,5\n128,000\tNaN\n\n"
+
+    static let ramanSemicolon = "raman_shift;intensity\n201.25;3.5\n202.5;4.75\n203.75;-2.25\n\n"
+
     static let keysightProfile = """
     schema_version: 1
     instrument:

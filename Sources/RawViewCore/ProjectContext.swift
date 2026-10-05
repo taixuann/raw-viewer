@@ -1,6 +1,8 @@
 import Foundation
 
 public struct ProjectContext: Sendable {
+    static let skippedRawExtensions: Set<String> = ["spe", "affm"]
+
     public let root: URL
     public let rawRoot: URL
 
@@ -20,6 +22,27 @@ public struct ProjectContext: Sendable {
         // mislabeled as outside data/raw.
         let canonical = source.resolvingSymlinksInPath().standardizedFileURL
         return canonical.path.hasPrefix(rawRoot.path + "/")
+    }
+
+    /// No-follow classification of a source symlink from its link text alone:
+    /// `readlink` touches only the link, and only the target's parent
+    /// directory is kernel-canonicalized so containment compares in one path
+    /// space. The target leaf itself is never resolved, stat-ed, opened, or
+    /// read. Returns whether the link text lexically stays inside `data/raw`;
+    /// an unclassifiable link counts as inside so the caller fails closed
+    /// with the symlink diagnostic instead of claiming an outside path.
+    func symlinkTargetResolvesInsideRaw(source: URL, linkTarget: String) -> Bool {
+        let joined = linkTarget.hasPrefix("/")
+            ? URL(fileURLWithPath: linkTarget)
+            : source.deletingLastPathComponent().appendingPathComponent(linkTarget)
+        let standardized = joined.standardizedFileURL
+        let canonicalDir = SecureFile.kernelCanonical(standardized.deletingLastPathComponent().path)
+        let canonicalTarget = URL(fileURLWithPath: canonicalDir)
+            .appendingPathComponent(standardized.lastPathComponent).standardizedFileURL
+        let rawRootCanonical = SecureFile.kernelCanonical(rawRoot.path)
+        return [rawRoot.path, rawRootCanonical].contains { root in
+            canonicalTarget.path == root || canonicalTarget.path.hasPrefix(root + "/")
+        }
     }
 
     /// Source-local display path for diagnostics: the claimed project-relative
@@ -70,11 +93,14 @@ public struct ProjectContext: Sendable {
 
         // Incremental traversal: the enumerator yields entries lazily instead
         // of loading whole directory arrays, so cancellation lands promptly
-        // even inside a single very wide directory.
+        // even inside a single very wide directory. No resource keys are
+        // prefetched: traversal decisions come from the directory read
+        // itself, and per-entry metadata is requested below only for entries
+        // that pass the excluded-suffix name filter.
         var enumerationError: Error?
         guard let enumerator = FileManager.default.enumerator(
             at: rawRoot,
-            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .isSymbolicLinkKey],
+            includingPropertiesForKeys: nil,
             options: [],
             errorHandler: { _, error in enumerationError = error; return false }
         ) else {
@@ -84,9 +110,33 @@ public struct ProjectContext: Sendable {
         visitedDirectories.insert(rawRoot.path)
         onVisitDirectory?(rawRoot)
         for case let url as URL in enumerator {
+            // Excluded suffixes are decided from the claimed name alone,
+            // before any per-entry metadata request or symlink
+            // canonicalization: an entry named *.spe/*.affm is skipped with
+            // no classification at all. The viewer never opens, parses,
+            // hashes, stats, copies, or transmits those names. A directory
+            // carrying such a suffix is still traversed and its children are
+            // filtered individually: blind `skipDescendants()` here would
+            // also over-prune supported siblings (the prefetch-less
+            // enumerator stops descending directories after a skipped file),
+            // so the conservative choice is zero access plus normal
+            // traversal rather than a name-based subtree prune.
+            if Self.skippedRawExtensions.contains(url.pathExtension.lowercased()) {
+                continue
+            }
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .isSymbolicLinkKey])
             guard let values else { continue }
+            // Symlinks are never followed for the inventory: their metadata
+            // describes the link, so a link never inventoried a supported
+            // source before either, and canonicalizing one could touch an
+            // excluded target. They are conservatively excluded without any
+            // target access.
+            if values.isSymbolicLink == true { continue }
             let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+            // A supported name whose canonical path carries an excluded
+            // extension stays out of the inventory (fail-closed catch for
+            // symlinked ancestors).
+            if Self.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) { continue }
             guard canonical.path.hasPrefix(rawRoot.path + "/") else {
                 if values.isDirectory == true { enumerator.skipDescendants() }
                 continue

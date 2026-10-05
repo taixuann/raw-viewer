@@ -35,14 +35,14 @@ struct SourceGroupingTests {
 
     @Test func parsesRealFilenameTimestampConventionForDateBatch() {
         // Real convention DDMMYY-HHMMSS validates as a calendar date.
-        #expect(SourceGrouping.date(from: "240626-091425") == "2026-06-24")
+        #expect(SourceGrouping.date(from: "311224-235958") == "2024-12-31")
         #expect(SourceGrouping.date(from: "010100-000000") == "2000-01-01")
-        #expect(SourceGrouping.date(from: "240626") == "2026-06-24")
+        #expect(SourceGrouping.date(from: "311224") == "2024-12-31")
         // Impossible calendar values stay unknown instead of grouping.
         #expect(SourceGrouping.date(from: "999999-999999") == nil)
-        #expect(SourceGrouping.date(from: "320626-091425") == nil)
-        #expect(SourceGrouping.date(from: "241326-091425") == nil)
-        #expect(SourceGrouping.date(from: "240626-246060") == nil)
+        #expect(SourceGrouping.date(from: "321224-235958") == nil)
+        #expect(SourceGrouping.date(from: "311324-235958") == nil)
+        #expect(SourceGrouping.date(from: "311224-246060") == nil)
     }
 
     @Test func rejectsNonDigitDateComponents() {

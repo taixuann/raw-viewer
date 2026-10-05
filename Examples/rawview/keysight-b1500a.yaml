@@ -1,10 +1,11 @@
-# RawView instrument profile schema v1 — example
-# Copy into a project's data/instruments/ directory and adjust to the instrument.
-# RawView validates this file and reports the profile path and field for every problem.
-# RawView never rewrites profiles and never executes project code.
-# Gap semantics: blank, NaN, and Infinity source cells are preserved as null gaps
-# (plot breaks, table shows the gap marker); other corrupt text blocks the source.
-# Schema v1 has no transforms mechanism: do not add a transforms field.
+# RawView companion instrument profile schema v1 — example
+# Copy into a project's data/instruments/rawview/ companion directory and
+# adjust to the instrument. When that companion directory exists, RawView
+# reads profiles only from it. RawView never rewrites profiles and never
+# executes project code.
+# Gap semantics: blank, NaN, and Infinity source cells are preserved as null
+# gaps (plot breaks, table shows the gap marker); other corrupt text blocks
+# the source. Schema v1 has no transforms mechanism: do not add one.
 schema_version: 1
 
 instrument:

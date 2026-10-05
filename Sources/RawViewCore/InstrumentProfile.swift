@@ -3,21 +3,29 @@ import Foundation
 
 struct ProfileColumn: Sendable, Equatable {
     let key: String
-    let header: String
+    let header: String?
     let aliases: [String]
     let quantity: String
     let unit: String
     let label: String
+    /// Positional source column for headerless layouts; nil for header-name layouts.
+    let index: Int?
+    /// Schema v2 tabular only: a `false` channel resolves when its header is
+    /// present and is skipped when absent. Required channels always resolve.
+    let required: Bool
 }
 
 struct ProfileFormat: Sendable, Equatable {
     let id: String
+    let kind: String
     let extensions: [String]
     let delimiter: Character
     let encodings: [String.Encoding]
     let encodingNames: [String]
-    let namesPrefix: String
-    let dataPrefix: String
+    let decimalSeparator: Character
+    /// Row-block markers for `tabular` layouts; nil otherwise.
+    let namesPrefix: String?
+    let dataPrefix: String?
     let columns: [ProfileColumn]
 
     func column(named key: String) -> ProfileColumn? { columns.first { $0.key == key } }
@@ -40,6 +48,7 @@ struct InstrumentProfile: Sendable, Equatable {
     let modes: [ProfileMode]
     let relativePath: String
     let sha256: String
+    let schemaVersion: Int
 }
 
 struct ProfileMatch: Sendable {
@@ -77,7 +86,7 @@ struct ProfileLoadOutcome: Sendable {
 }
 
 struct ProfileCatalog: Sendable {
-    static let schemaVersion = 1
+    static let supportedSchemaVersions = [1, 2]
     static let maximumProfileBytes = 1 << 20
 
     let profiles: [InstrumentProfile]
@@ -96,19 +105,51 @@ struct ProfileCatalog: Sendable {
             return ProfileCatalog(profiles: [], issues: [], brokenClaims: [])
         }
 
+        // The companion directory is authoritative when the entry exists at
+        // all: an empty, unreadable, or escaping one fails closed instead of
+        // silently falling back to the Study-owned parent profiles.
+        let companionEntry = instrumentsRoot.appendingPathComponent("rawview", isDirectory: true)
+        var companionStat = stat()
+        let lstatResult = lstat(companionEntry.path, &companionStat)
+        if lstatResult == 0 {
+            let companionRoot = companionEntry.resolvingSymlinksInPath().standardizedFileURL
+            guard companionRoot.path.hasPrefix(instrumentsRoot.path + "/") else {
+                return ProfileCatalog(profiles: [], issues: ["data/instruments/rawview resolves outside data/instruments. No profiles were loaded."], brokenClaims: [])
+            }
+            var companionIsDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: companionRoot.path, isDirectory: &companionIsDirectory), companionIsDirectory.boolValue,
+                  FileManager.default.isReadableFile(atPath: companionRoot.path) else {
+                return ProfileCatalog(profiles: [], issues: ["data/instruments/rawview is not a readable directory. No profiles were loaded."], brokenClaims: [])
+            }
+            return loadProfiles(from: companionRoot, displayRoot: "data/instruments/rawview", project: project)
+        }
+        // Only a proven-absent entry (ENOENT) falls back to the parent
+        // directory. Any other lstat failure (for example a search-permission
+        // error on data/instruments) gives no evidence either way, so the
+        // catalog fails closed with a diagnostic instead of guessing.
+        guard errno == ENOENT else {
+            let reason = String(cString: strerror(errno))
+            return ProfileCatalog(profiles: [], issues: [
+                "data/instruments/rawview could not be examined (\(reason)); no profiles were loaded."
+            ], brokenClaims: [])
+        }
+        return loadProfiles(from: instrumentsRoot, displayRoot: "data/instruments", project: project)
+    }
+
+    private static func loadProfiles(from root: URL, displayRoot: String, project: ProjectContext) -> ProfileCatalog {
         var profiles: [InstrumentProfile] = []
         var issues: [String] = []
         var brokenClaims: [BrokenClaim] = []
         let entries = (try? FileManager.default.contentsOfDirectory(
-            at: instrumentsRoot, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
+            at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
         )) ?? []
 
         for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let fileExtension = entry.pathExtension.lowercased()
             guard fileExtension == "yaml" || fileExtension == "yml" else { continue }
             let canonical = entry.resolvingSymlinksInPath().standardizedFileURL
-            guard canonical.path.hasPrefix(instrumentsRoot.path + "/") else {
-                issues.append("data/instruments/\(entry.lastPathComponent): profile resolves outside data/instruments; skipped.")
+            guard canonical.path.hasPrefix(root.path + "/") else {
+                issues.append("\(displayRoot)/\(entry.lastPathComponent): profile resolves outside \(displayRoot); skipped.")
                 continue
             }
             let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
@@ -245,6 +286,15 @@ private enum ProfileSchema {
         guard root.mapEntries != nil else {
             return ProfileLoadOutcome(profile: nil, issues: ["\(relativePath): the profile document must be a mapping."], extensions: [], signatures: [])
         }
+        // A nested raw_viewer block is no longer supported: a viewer profile
+        // must be a standalone top-level document. The diagnostic stays
+        // fail-closed with the profile path and the migration target.
+        if root.value(for: "raw_viewer") != nil {
+            let selectors = lenientSelectors(root)
+            return ProfileLoadOutcome(profile: nil, issues: [
+                "\(relativePath): raw_viewer profile blocks are not supported; move the versioned profile to a standalone top-level document (companion profiles live in data/instruments/rawview/) (see CONTRACT.md)."
+            ], extensions: selectors.extensions, signatures: selectors.signatures)
+        }
         let selectors = lenientSelectors(root)
         guard let versionText = root.value(for: "schema_version")?.scalarValue else {
             return ProfileLoadOutcome(profile: nil, issues: [
@@ -256,12 +306,12 @@ private enum ProfileSchema {
                 "\(relativePath): schema_version must be an integer; found \"\(versionText)\"."
             ], extensions: selectors.extensions, signatures: selectors.signatures)
         }
-        guard version == ProfileCatalog.schemaVersion else {
+        guard ProfileCatalog.supportedSchemaVersions.contains(version) else {
             return ProfileLoadOutcome(profile: nil, issues: [
-                "\(relativePath): unsupported schema_version \(version); this viewer supports schema_version \(ProfileCatalog.schemaVersion)."
+                "\(relativePath): unsupported schema_version \(version); this viewer supports schema_version 1 and 2."
             ], extensions: selectors.extensions, signatures: selectors.signatures)
         }
-        return validate(root, relativePath: relativePath, sha256: sha256, selectors: selectors)
+        return validate(root, relativePath: relativePath, sha256: sha256, selectors: selectors, version: version)
     }
 
     /// Conservative declarative evidence from a syntactically parseable profile,
@@ -302,7 +352,7 @@ private enum ProfileSchema {
         return (Array(Set(extensions)).sorted(), Array(Set(signatures)).sorted())
     }
 
-    private static func validate(_ root: YAMLNode, relativePath: String, sha256: String, selectors: (extensions: [String], signatures: [String])) -> ProfileLoadOutcome {
+    private static func validate(_ root: YAMLNode, relativePath: String, sha256: String, selectors: (extensions: [String], signatures: [String]), version: Int) -> ProfileLoadOutcome {
         let extensions = selectors.extensions
         var errors: [String] = []
         func fail(_ message: String) { errors.append("\(relativePath): \(message)") }
@@ -317,9 +367,9 @@ private enum ProfileSchema {
             guard let entries = node?.mapEntries else { return }
             for entry in entries where !allowed.contains(entry.key) && !skipped.contains(entry.key) {
                 if scope.isEmpty {
-                    fail("unknown key \"\(entry.key)\" is not part of schema v1.")
+                    fail("unknown key \"\(entry.key)\" is not part of schema v\(version).")
                 } else {
-                    fail("\(scope).\(entry.key) is not part of schema v1 (unknown key).")
+                    fail("\(scope).\(entry.key) is not part of schema v\(version) (unknown key).")
                 }
             }
         }
@@ -342,7 +392,7 @@ private enum ProfileSchema {
         // transforms field, regardless of YAML node shape, blocks the profile
         // with an actionable diagnostic instead of being silently ignored.
         if root.value(for: "transforms") != nil {
-            fail("transforms are not part of schema v1; remove the transforms field or migrate the profile (see CONTRACT.md).")
+            fail("transforms are not part of schema v\(version); remove the transforms field or migrate the profile (see CONTRACT.md).")
         }
         rejectUnknown(root, allowed: ["schema_version", "instrument", "formats", "modes"], scope: "")
 
@@ -366,14 +416,25 @@ private enum ProfileSchema {
             guard let id = string(node.value(for: "id"), "\(field).id") else { continue }
             if !formatIDs.insert(id).inserted { fail("\(field).id \"\(id)\" is duplicated.") }
             if node.value(for: "transforms") != nil {
-                fail("\(field).transforms are not part of schema v1; remove the field (see CONTRACT.md).")
+                fail("\(field).transforms are not part of schema v\(version); remove the field (see CONTRACT.md).")
             }
-            rejectUnknown(node, allowed: ["id", "kind", "extensions", "delimiter", "encoding", "rows", "columns"], scope: field, skipping: ["transforms"])
-            if let kind = node.value(for: "kind")?.scalarValue, kind != "tabular" {
-                fail("\(field).kind \"\(kind)\" is not supported; this viewer supports \"tabular\".")
+            // Schema v1 supports row-block `tabular`; schema v2 adds the
+            // headerless positional `comment-tsv` layout.
+            let supportedKinds = version >= 2 ? ["tabular", "comment-tsv"] : ["tabular"]
+            let kind: String
+            if let found = node.value(for: "kind")?.scalarValue, supportedKinds.contains(found) {
+                kind = found
             } else if node.value(for: "kind")?.scalarValue == nil {
-                fail("\(field).kind is required and must be \"tabular\".")
+                fail("\(field).kind is required and must be \(supportedKinds.map { "\"\($0)\"" }.joined(separator: ", ")).")
+                continue
+            } else {
+                fail("\(field).kind \"\(node.value(for: "kind")?.scalarValue ?? "")\" is not supported; this viewer supports \(supportedKinds.map { "\"\($0)\"" }.joined(separator: ", ")).")
+                continue
             }
+            let allowedKeys: Set<String> = kind == "comment-tsv"
+                ? ["id", "kind", "extensions", "delimiter", "encoding", "columns", "decimal"]
+                : ["id", "kind", "extensions", "delimiter", "encoding", "rows", "columns", "decimal"]
+            rejectUnknown(node, allowed: allowedKeys, scope: field, skipping: ["transforms"])
             guard let extensionValues = stringList(node.value(for: "extensions"), "\(field).extensions") else {
                 if node.value(for: "extensions") == nil { fail("\(field).extensions must list at least one file extension such as \".csv\".") }
                 continue
@@ -384,6 +445,25 @@ private enum ProfileSchema {
             }
             guard let delimiterText = string(node.value(for: "delimiter"), "\(field).delimiter"), delimiterText.count == 1 else {
                 if node.value(for: "delimiter")?.scalarValue != nil { fail("\(field).delimiter must be a single character.") }
+                continue
+            }
+            // Schema v1 has no decimal mechanism: the field is rejected there
+            // rather than silently accepted. A comma decimal needs a non-comma
+            // delimiter, otherwise cells cannot be split unambiguously.
+            var decimalSeparator: Character = "."
+            if let decimalNode = node.value(for: "decimal") {
+                guard version >= 2 else {
+                    fail("\(field).decimal is not part of schema v1 (no decimal mechanism; see CONTRACT.md).")
+                    continue
+                }
+                guard let text = decimalNode.scalarValue, text.count == 1, text == "." || text == "," else {
+                    fail("\(field).decimal must be \".\" or \",\".")
+                    continue
+                }
+                decimalSeparator = Character(text)
+            }
+            if delimiterText == "," && decimalSeparator == "," {
+                fail("\(field).decimal \",\" conflicts with delimiter \",\"; European decimals require a non-comma delimiter.")
                 continue
             }
             let encodingNames: [String]
@@ -401,21 +481,71 @@ private enum ProfileSchema {
                 }
                 encodings.append(encoding)
             }
-            guard let rows = node.value(for: "rows"), rows.mapEntries != nil else {
-                fail("\(field).rows mapping is required.")
-                continue
+            let namesPrefix: String?
+            let dataPrefix: String?
+            if kind == "comment-tsv" {
+                if node.value(for: "rows") != nil {
+                    fail("\(field).rows is not part of kind \"comment-tsv\" (headerless positional layout); remove the rows mapping.")
+                    continue
+                }
+                namesPrefix = nil
+                dataPrefix = nil
+            } else {
+                guard let rows = node.value(for: "rows"), rows.mapEntries != nil else {
+                    fail("\(field).rows mapping is required.")
+                    continue
+                }
+                rejectUnknown(rows, allowed: ["names_prefix", "data_prefix"], scope: "\(field).rows")
+                namesPrefix = string(rows.value(for: "names_prefix"), "\(field).rows.names_prefix")
+                // An empty v2 data_prefix matches every non-blank line after the
+                // header row (Keithley LVM rows carry an empty leading cell).
+                // Schema v1 still requires a non-empty marker.
+                if version >= 2, let marker = rows.value(for: "data_prefix") {
+                    guard case .scalar(let text) = marker else {
+                        fail("\(field).rows.data_prefix must be a string.")
+                        continue
+                    }
+                    dataPrefix = text
+                } else {
+                    dataPrefix = string(rows.value(for: "data_prefix"), "\(field).rows.data_prefix")
+                }
             }
-            rejectUnknown(rows, allowed: ["names_prefix", "data_prefix"], scope: "\(field).rows")
-            let namesPrefix = string(rows.value(for: "names_prefix"), "\(field).rows.names_prefix")
-            let dataPrefix = string(rows.value(for: "data_prefix"), "\(field).rows.data_prefix")
             var columns: [ProfileColumn] = []
             var columnKeys = Set<String>()
+            // Positional layouts resolve columns by source index; two channels
+            // sharing one source column is ambiguous and blocked here.
+            var indexOwners: [Int: String] = [:]
             let columnEntries = node.value(for: "columns")?.mapEntries ?? []
             if columnEntries.isEmpty { fail("\(field).columns must declare at least one column.") }
             for entry in columnEntries {
                 let columnField = "\(field).columns.\(entry.key)"
                 guard entry.value.mapEntries != nil else { fail("\(columnField) must be a mapping."); continue }
-                rejectUnknown(entry.value, allowed: ["header", "aliases", "quantity", "unit", "label"], scope: columnField)
+                if kind == "comment-tsv" {
+                    rejectUnknown(entry.value, allowed: ["column_index", "quantity", "unit", "label"], scope: columnField)
+                    if !columnKeys.insert(entry.key).inserted { fail("\(columnField) is duplicated.") }
+                    guard let indexText = entry.value.value(for: "column_index")?.scalarValue,
+                          let columnIndex = Int(indexText), columnIndex >= 0 else {
+                        fail("\(columnField).column_index must be a non-negative integer.")
+                        continue
+                    }
+                    if let owner = indexOwners[columnIndex] {
+                        fail("\(field).columns.\(owner) and \(columnField) resolve to the same source column \(columnIndex + 1).")
+                        continue
+                    }
+                    indexOwners[columnIndex] = entry.key
+                    let quantity = string(entry.value.value(for: "quantity"), "\(columnField).quantity")
+                    let unit = string(entry.value.value(for: "unit"), "\(columnField).unit")
+                    let label = entry.value.value(for: "label")?.scalarValue ?? humanized(entry.key)
+                    guard let quantity, let unit else { continue }
+                    columns.append(ProfileColumn(key: entry.key, header: nil, aliases: [], quantity: quantity, unit: unit, label: label, index: columnIndex, required: true))
+                    continue
+                }
+                // Schema v2 tabular columns may declare an optional channel
+                // (`required: false`); schema v1 and headerless layouts reject
+                // the key as unknown, unchanged.
+                var columnAllowed: Set<String> = ["header", "aliases", "quantity", "unit", "label"]
+                if version >= 2 { columnAllowed.insert("required") }
+                rejectUnknown(entry.value, allowed: columnAllowed, scope: columnField)
                 if !columnKeys.insert(entry.key).inserted { fail("\(columnField) is duplicated.") }
                 let header = string(entry.value.value(for: "header"), "\(columnField).header")
                 let quantity = string(entry.value.value(for: "quantity"), "\(columnField).quantity")
@@ -429,12 +559,23 @@ private enum ProfileSchema {
                     aliases = []
                 }
                 guard let header, let quantity, let unit else { continue }
-                columns.append(ProfileColumn(key: entry.key, header: header, aliases: aliases, quantity: quantity, unit: unit, label: label))
+                var isRequired = true
+                if version >= 2, let requiredNode = entry.value.value(for: "required") {
+                    guard let text = requiredNode.scalarValue, text == "true" || text == "false" else {
+                        fail("\(columnField).required must be \"true\" or \"false\".")
+                        continue
+                    }
+                    isRequired = text == "true"
+                }
+                columns.append(ProfileColumn(key: entry.key, header: header, aliases: aliases, quantity: quantity, unit: unit, label: label, index: nil, required: isRequired))
             }
-            guard let namesPrefix, let dataPrefix else { continue }
-            formats.append(ProfileFormat(id: id, extensions: extensionValues.map { $0.lowercased() },
+            if kind == "tabular" {
+                guard namesPrefix != nil, dataPrefix != nil else { continue }
+            }
+            formats.append(ProfileFormat(id: id, kind: kind, extensions: extensionValues.map { $0.lowercased() },
                                          delimiter: Character(delimiterText), encodings: encodings,
-                                         encodingNames: encodingNames, namesPrefix: namesPrefix, dataPrefix: dataPrefix,
+                                         encodingNames: encodingNames, decimalSeparator: decimalSeparator,
+                                         namesPrefix: namesPrefix, dataPrefix: dataPrefix,
                                          columns: columns))
         }
 
@@ -451,7 +592,7 @@ private enum ProfileSchema {
             let format = formats.first { $0.id == formatID }
             if format == nil { fail("\(field).format \"\(formatID)\" does not match any format id.") }
             if node.value(for: "transforms") != nil {
-                fail("\(field).transforms are not part of schema v1; remove the field (see CONTRACT.md).")
+                fail("\(field).transforms are not part of schema v\(version); remove the field (see CONTRACT.md).")
             }
             rejectUnknown(node, allowed: ["id", "format", "detect", "extract"], scope: field, skipping: ["transforms"])
             let detect: [String]
@@ -467,7 +608,7 @@ private enum ProfileSchema {
                 continue
             }
             for entry in extractEntries where entry.key != "x" && entry.key != "y" {
-                fail("\(field).extract.\(entry.key) is not part of schema v1; only x and y are supported (see CONTRACT.md).")
+                fail("\(field).extract.\(entry.key) is not part of schema v\(version); only x and y are supported (see CONTRACT.md).")
             }
             guard let x = string(extract.value(for: "x"), "\(field).extract.x") else { continue }
             let y: [String]
@@ -484,6 +625,16 @@ private enum ProfileSchema {
                 for key in y where format.column(named: key) == nil {
                     fail("\(field).extract.y \"\(key)\" is not a column of format \"\(format.id)\".")
                 }
+                // Plot axes need guaranteed values: an optional channel may be
+                // absent from a source, so it cannot drive x or y.
+                if let xColumn = format.column(named: x), !xColumn.required {
+                    fail("\(field).extract.x \"\(x)\" is an optional column; plot axes must reference required columns.")
+                }
+                for key in y {
+                    if let yColumn = format.column(named: key), !yColumn.required {
+                        fail("\(field).extract.y \"\(key)\" is an optional column; plot axes must reference required columns.")
+                    }
+                }
             }
             if y.contains(x) { fail("\(field).extract.x \"\(x)\" must not also appear in extract.y.") }
             modes.append(ProfileMode(id: id, formatID: formatID, detect: detect, x: x, y: y))
@@ -494,7 +645,7 @@ private enum ProfileSchema {
         }
         let profile = InstrumentProfile(instrumentID: instrumentID, instrumentName: instrumentName,
                                         vendor: vendor, model: model, formats: formats, modes: modes,
-                                        relativePath: relativePath, sha256: sha256)
+                                        relativePath: relativePath, sha256: sha256, schemaVersion: version)
         return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, signatures: [])
     }
 

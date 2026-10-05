@@ -1,0 +1,65 @@
+# RawView companion instrument profile schema v2 — example
+# Copy into a project's data/instruments/rawview/ companion directory and
+# adjust to the instrument. When that companion directory exists, RawView
+# reads profiles only from it. RawView never rewrites profiles and never
+# executes project code.
+# Both Horiba LabRAM text layouts share the ".txt" extension and are told
+# apart by their detect signatures. The comment-header TSV declares a comma
+# decimal (a lexical property, not a transform); the legacy semicolon table
+# uses period decimals. There is no transforms mechanism.
+schema_version: 2
+
+instrument:
+  id: horiba-labram
+  name: Horiba LabRAM HR Evolution Raman Spectrometer
+
+formats:
+  - id: tab_comma
+    kind: comment-tsv
+    extensions: [".txt"]
+    delimiter: "\t"
+    decimal: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      wavenumber:
+        column_index: 0
+        quantity: wavenumber
+        unit: "cm-1"
+        label: "Raman shift"
+      intensity:
+        column_index: 1
+        quantity: intensity
+        unit: "counts"
+        label: "Intensity"
+  - id: header_semicolon
+    kind: tabular
+    extensions: [".txt"]
+    delimiter: ";"
+    rows:
+      names_prefix: "raman_shift"
+      data_prefix: ""
+    columns:
+      wavenumber:
+        header: "raman_shift"
+        quantity: wavenumber
+        unit: "cm-1"
+        label: "Raman shift"
+      intensity:
+        header: "intensity"
+        quantity: intensity
+        unit: "counts"
+        label: "Intensity"
+
+modes:
+  - id: raman-tsv
+    format: tab_comma
+    detect: ["#Laser="]
+    extract:
+      x: wavenumber
+      y: [intensity]
+  - id: raman-semicolon
+    format: header_semicolon
+    detect: ["raman_shift;intensity"]
+    extract:
+      x: wavenumber
+      y: [intensity]

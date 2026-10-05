@@ -26,7 +26,7 @@ public struct ReaderInspectionReport: Sendable {
 /// code: profiles are data, the extraction runs in-process, and every failure is
 /// reported on the affected source without blocking unrelated sources.
 public enum InstrumentReader {
-    public static let version = "1.0.0"
+    public static let version = "1.1.0"
     static let progressBatchSize = 64
     static let headerSampleBytes = 64 * 1024
 
@@ -63,7 +63,30 @@ public enum InstrumentReader {
         return ReaderInspectionReport(results: results, profileIssues: catalog.issues)
     }
 
+    /// Rejection for a symlink source, classified from the link text alone:
+    /// a lexically inside-`data/raw` link fails closed with the symlink
+    /// diagnostic, and only a lexically outside link reports the outside
+    /// diagnostic. The target is never resolved, stat-ed, opened, or read.
+    private static func sourceLinkRejection(_ source: URL, project: ProjectContext, linkTarget: String) -> ReaderError {
+        if project.symlinkTargetResolvesInsideRaw(source: source, linkTarget: linkTarget) {
+            return .invalidSource("\(project.claimedPath(of: source)): source file is a symlink or was replaced by one during open; symlinks are never followed.")
+        }
+        return .sourceOutsideRaw(project.claimedPath(of: source))
+    }
+
     public static func load(_ source: URL, project: ProjectContext) async throws -> NormalizedMeasurement {
+        // Excluded files are rejected from the claimed name alone, before any
+        // path resolution or filesystem access touches them.
+        guard !ProjectContext.skippedRawExtensions.contains(source.pathExtension.lowercased()) else {
+            throw ReaderError.invalidSource("\(project.claimedPath(of: source)): RawView skips .spe and .affm files.")
+        }
+        // No-follow source-link check before any canonicalization: a symlink
+        // source is rejected from its link text alone (readlink touches only
+        // the link). Discovery omits every symlink entry, so a link here can
+        // only come from a direct caller and must fail closed.
+        if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.path) {
+            throw sourceLinkRejection(source, project: project, linkTarget: linkTarget)
+        }
         let canonical = source.resolvingSymlinksInPath().standardizedFileURL
         // Containment first, without any readability requirement: an escaped
         // path gets the source-local outside diagnostic, while a missing or
@@ -74,6 +97,11 @@ public enum InstrumentReader {
         let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
         guard !relativePath.isEmpty, !relativePath.hasPrefix("/") else {
             throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source))
+        }
+        // A supported claimed name that resolves to an excluded file stays
+        // rejected as well.
+        guard !ProjectContext.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) else {
+            throw ReaderError.invalidSource("\(relativePath): RawView skips .spe and .affm files.")
         }
         do {
             try Task.checkCancellation()
@@ -126,11 +154,20 @@ public enum InstrumentReader {
                 // Unreachable: a valid match requires a successful selection above.
                 throw ReaderError.invalidSource("\(relativePath): no decoding was selected for this source.")
             }
-            let extracted = try TabularExtractor.extractStreaming(
-                relativePath: relativePath, format: match.format, mode: match.mode,
-                encoding: encoding, initialText: sample, initialPending: pending,
-                handle: handle, hasher: hasher
-            )
+            let extracted: TabularExtraction
+            if match.format.kind == "comment-tsv" {
+                extracted = try CommentTsvExtractor.extractStreaming(
+                    relativePath: relativePath, format: match.format, mode: match.mode,
+                    encoding: encoding, initialText: sample, initialPending: pending,
+                    handle: handle, hasher: hasher
+                )
+            } else {
+                extracted = try TabularExtractor.extractStreaming(
+                    relativePath: relativePath, format: match.format, mode: match.mode,
+                    encoding: encoding, initialText: sample, initialPending: pending,
+                    handle: handle, hasher: hasher
+                )
+            }
             try Task.checkCancellation()
             let channels = zip(extracted.columns, extracted.reasons).map { column, reasons in
                 MeasurementChannel(name: column.0.key, label: column.0.label, unit: column.0.unit, quantity: column.0.quantity, values: column.1, gapReasons: reasons)
@@ -140,7 +177,8 @@ public enum InstrumentReader {
             let facts = parseFilename(canonical.lastPathComponent)
             return NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
-                instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName),
+                instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName,
+                                               vendor: match.profile.vendor, model: match.profile.model),
                 applicationMode: match.mode.id,
                 view: MeasurementView(kind: "xy", x: match.mode.x, y: match.mode.y, preserveOrder: true),
                 channels: channels,
@@ -151,7 +189,7 @@ public enum InstrumentReader {
                     "reader_version": version,
                     "profile_id": match.profile.instrumentID,
                     "profile_hash": match.profile.sha256,
-                    "profile_schema_version": String(ProfileCatalog.schemaVersion),
+                    "profile_schema_version": String(match.profile.schemaVersion),
                     "mode": match.mode.id
                 ]
             )
@@ -166,15 +204,34 @@ public enum InstrumentReader {
 
     private static func inspect(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) -> SourceInspectionResult {
         do {
+            // Excluded files are rejected from the claimed name alone, before
+            // any path resolution or filesystem access touches them.
+            guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
+                throw ReaderError.invalidSource("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
+            }
+            // No-follow source-link check before any canonicalization: a
+            // symlink source is rejected from its link text alone (readlink
+            // touches only the link). Discovery omits every symlink entry, so
+            // a link here can only come from a forged caller and must fail
+            // closed.
+            if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.url.path) {
+                throw sourceLinkRejection(source.url, project: project, linkTarget: linkTarget)
+            }
             let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
             let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
             guard project.containsSource(source.url), relativePath == source.relativePath else {
                 throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url))
             }
+            // A supported claimed name that resolves to an excluded file stays
+            // rejected as well.
+            guard !ProjectContext.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) else {
+                throw ReaderError.invalidSource("\(relativePath): RawView skips .spe and .affm files.")
+            }
             let fileExtension = "." + canonical.pathExtension.lowercased()
+            let handle: FileHandle
             let prefixData: Data
             do {
-                let handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
+                handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
                 prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
             } catch let error as SecureOpenError {
                 throw error.readerError(display: relativePath)
@@ -200,7 +257,8 @@ public enum InstrumentReader {
                     source: relativePath, size: source.byteSize,
                     instrumentID: match.profile.instrumentID, instrumentName: match.profile.instrumentName,
                     applicationMode: match.mode.id, timestamp: facts.timestamp, deviceID: facts.deviceID, category: facts.category,
-                    supportStatus: "supported", validationState: "profile valid; source not loaded",
+                    supportStatus: "supported",
+                    validationState: "profile valid; source not loaded",
                     readerVersion: version, profileID: match.profile.instrumentID, profileHash: match.profile.sha256, error: nil
                 )
                 return SourceInspectionResult(source: source, inspection: inspection, error: nil)
@@ -253,7 +311,12 @@ public enum InstrumentReader {
     static func parseFilename(_ filename: String) -> (timestamp: String?, deviceID: String?, category: String?) {
         var timestamp: String?
         if let match = filename.range(of: #"^\d{6}(?:-\d{6})?"#, options: .regularExpression) {
-            timestamp = String(filename[match])
+            let token = String(filename[match])
+            // The contract promises calendar validation: impossible dates and
+            // invalid times stay unknown instead of entering Identity.
+            if isValidFilenameTimestamp(token) {
+                timestamp = token
+            }
         }
         var deviceID: String?
         var category: String?
@@ -273,6 +336,30 @@ public enum InstrumentReader {
             }
         }
         return (timestamp, deviceID, category)
+    }
+
+    /// Validates a filename timestamp token (`DDMMYY` with optional `-HHMMSS`)
+    /// as a Gregorian calendar date with 24-hour time. Two-digit years pivot
+    /// to 2000–2099. Pure integer logic: no locale or timezone surface, and
+    /// the token text itself is preserved unchanged when valid.
+    private static func isValidFilenameTimestamp(_ token: String) -> Bool {
+        let digits = Array(token)
+        guard digits.count == 6 || digits.count == 13 else { return false }
+        if digits.count == 13, digits[6] != "-" { return false }
+        func number(_ from: Int, _ to: Int) -> Int? {
+            Int(String(digits[from..<to]))
+        }
+        guard let day = number(0, 2), let month = number(2, 4), let yearSuffix = number(4, 6) else { return false }
+        guard (1...12).contains(month) else { return false }
+        let year = 2000 + yearSuffix
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+        let monthLengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        guard day >= 1 && day <= monthLengths[month - 1] else { return false }
+        if digits.count == 13 {
+            guard let hour = number(7, 9), let minute = number(9, 11), let second = number(11, 13) else { return false }
+            guard (0...23).contains(hour), (0...59).contains(minute), (0...59).contains(second) else { return false }
+        }
+        return true
     }
 
     private static func metadataSections(headerFields: [(key: String, value: String)], filename: String, facts: (timestamp: String?, deviceID: String?, category: String?), channelCount: Int, rowCount: Int, gapCount: Int) -> [MetadataSection] {
@@ -315,6 +402,58 @@ struct TabularExtraction: Sendable {
     let headerFields: [(key: String, value: String)]
     /// SHA-256 hex of exactly the bytes parsed from the secured handle.
     let sha256: String
+}
+
+/// Row-aligned gap ledger shared by every positional extractor, so blank,
+/// NaN, infinity, and saturation cells keep one classification and one
+/// warning shape no matter which layout produced them.
+struct CellLedger: Sendable {
+    var values: [[Double?]]
+    var reasons: [[GapReason?]]
+    var warnings: [String] = []
+    var gapTotal = 0
+
+    init(count: Int) {
+        values = [[Double?]](repeating: [], count: count)
+        reasons = [[GapReason?]](repeating: [], count: count)
+    }
+
+    mutating func record(column: Int, reason: GapReason, message: String) {
+        values[column].append(nil)
+        reasons[column].append(reason)
+        gapTotal += 1
+        if warnings.count < 32 { warnings.append(message) }
+    }
+
+    func summarize(relativePath: String) -> [String] {
+        var warnings = warnings
+        if gapTotal > warnings.count {
+            warnings.append("\(relativePath): ... and \(gapTotal - warnings.count) more gap cells shown as gaps.")
+        }
+        return warnings
+    }
+}
+
+enum CellParser {
+    /// Classifies one trimmed source cell with the shared gap contract: blank
+    /// and recorded NaN/infinity spellings are gaps, numeric overflow that
+    /// parses to a non-finite value is saturation, and any other non-numeric
+    /// text blocks the source naming file, line, column, and value.
+    static func append(raw: String, column: Int, key: String, lineNumber: Int, relativePath: String, decimal: Character, ledger: inout CellLedger) throws {
+        if let reason = TabularExtractor.gapReason(for: raw) {
+            let kind = reason == .blank ? "is blank" : "records \(reason == .nan ? "NaN" : "infinity")"
+            ledger.record(column: column, reason: reason, message: "\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" \(kind); shown as a gap.")
+        } else if let value = Double(TabularExtractor.decimalNumber(raw, decimal: decimal)) {
+            if value.isFinite {
+                ledger.values[column].append(value)
+                ledger.reasons[column].append(nil)
+            } else {
+                ledger.record(column: column, reason: .saturated, message: "\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" overflowed to a non-finite value (saturation); shown as a gap.")
+            }
+        } else {
+            throw ReaderError.invalidSource("\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" is not a finite number.")
+        }
+    }
 }
 
 /// Incremental line source over one secured file handle: 64 KiB raw chunks
@@ -466,9 +605,8 @@ enum TabularExtractor {
     /// Classifies a trimmed source cell. An empty cell is a blank gap;
     /// case-insensitive NaN/Infinity spellings are recorded gaps. Anything else
     /// returns nil and is either parsed as a number or rejected as corrupt:
-    /// arbitrary text is never silently turned into data. (No vendor-specific
-    /// saturation spellings were observed in 1.5M real data rows; numeric
-    /// overflow that parses to a non-finite value is recorded as `.saturated`.)
+    /// arbitrary text is never silently turned into data. Numeric overflow
+    /// that parses to a non-finite value is recorded as `.saturated`.
     static func gapReason(for raw: String) -> GapReason? {
         if raw.isEmpty { return .blank }
         switch raw.lowercased() {
@@ -476,6 +614,14 @@ enum TabularExtractor {
         case "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity": return .infinite
         default: return nil
         }
+    }
+
+    /// Declared decimal separator as a lexical property (not a transform):
+    /// a comma decimal rewrites `12,345` to `12.345` before parsing. The
+    /// schema guarantees the delimiter is never a comma in that case, so no
+    /// thousands separator can hide inside a cell.
+    static func decimalNumber(_ raw: String, decimal: Character) -> String {
+        decimal == "," ? raw.replacingOccurrences(of: ",", with: ".") : raw
     }
 
     static func extractStreaming(
@@ -493,6 +639,9 @@ enum TabularExtractor {
         // file-size or point cap is imposed.
         var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding, relativePath: relativePath, pendingBytes: initialPending)
         puller.stageText(initialText, final: false)
+        guard let namesPrefix = format.namesPrefix, let dataPrefix = format.dataPrefix else {
+            throw ReaderError.invalidSource("\(relativePath): format \"\(format.id)\" has no row-block markers for kind \"\(format.kind)\".")
+        }
         // Phase 1: header rows up to the names row.
         var headerLineTexts: [String] = []
         var headers: [String]? = nil
@@ -500,11 +649,11 @@ enum TabularExtractor {
         while let line = try puller.nextLine() {
             lineNumber += 1
             let fields = try split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
-            if fields.first == format.namesPrefix { headers = fields; break }
+            if fields.first == namesPrefix { headers = fields; break }
             headerLineTexts.append(line)
         }
         guard let headers else {
-            throw ReaderError.invalidSource("\(relativePath): no \"\(format.namesPrefix)\" header row was found.")
+            throw ReaderError.invalidSource("\(relativePath): no \"\(namesPrefix)\" header row was found.")
         }
 
         // Every format-declared channel resolves by exact primary header first,
@@ -512,11 +661,12 @@ enum TabularExtractor {
         // the mode's x/y channels drive the plot.
         var columns: [(ProfileColumn, Int)] = []
         for column in format.columns {
+            let want = column.header ?? column.key
             let primary = headers.indices.filter {
-                headers[$0].compare(column.header, options: .caseInsensitive) == .orderedSame
+                headers[$0].compare(want, options: .caseInsensitive) == .orderedSame
             }
             if primary.count > 1 {
-                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(column.header)) matches more than one cell in the \(format.namesPrefix) row [\(headers.joined(separator: ", "))].")
+                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) matches more than one cell in the \(namesPrefix) row [\(headers.joined(separator: ", "))].")
             }
             if let hit = primary.first {
                 columns.append((column, hit))
@@ -526,10 +676,14 @@ enum TabularExtractor {
                 column.aliases.contains { headers[index].compare($0, options: .caseInsensitive) == .orderedSame }
             }
             if fallback.count > 1 {
-                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(column.header)) matches more than one cell via aliases [\(column.aliases.joined(separator: ", "))] in the \(format.namesPrefix) row [\(headers.joined(separator: ", "))].")
+                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) matches more than one cell via aliases [\(column.aliases.joined(separator: ", "))] in the \(namesPrefix) row [\(headers.joined(separator: ", "))].")
             }
             guard let hit = fallback.first else {
-                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(column.header)) was not found in the \(format.namesPrefix) row [\(headers.joined(separator: ", "))].")
+                // An optional channel resolves when its header is present and
+                // is skipped when absent: no values are invented for it, and
+                // the required channels load unchanged.
+                if !column.required { continue }
+                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) was not found in the \(namesPrefix) row [\(headers.joined(separator: ", "))].")
             }
             columns.append((column, hit))
         }
@@ -547,51 +701,36 @@ enum TabularExtractor {
         }
 
         // Phase 2: data rows in file order.
-        var values = [[Double?]](repeating: [], count: columns.count)
-        var reasons = [[GapReason?]](repeating: [], count: columns.count)
-        var warnings: [String] = []
-        var gapTotal = 0
+        var ledger = CellLedger(count: columns.count)
         var rowCount = 0
-        func recordGap(column: Int, reason: GapReason, message: String) {
-            values[column].append(nil)
-            reasons[column].append(reason)
-            gapTotal += 1
-            if warnings.count < 32 { warnings.append(message) }
-        }
         while let line = try puller.nextLine() {
             lineNumber += 1
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
             let fields = try split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
-            guard fields.first == format.dataPrefix else { continue }
+            // An empty data_prefix matches every non-blank line after the
+            // header row; otherwise only the marked rows are data.
+            if !dataPrefix.isEmpty {
+                guard fields.first == dataPrefix else { continue }
+            }
             for (columnIndex, column) in columns.enumerated() {
                 let cellIndex = column.1
-                let raw = cellIndex < fields.count ? fields[cellIndex] : ""
                 if cellIndex >= fields.count {
-                    recordGap(column: columnIndex, reason: .blank, message: "\(relativePath) line \(lineNumber): column \"\(column.0.key)\" has no cell \(cellIndex + 1); shown as a gap.")
-                } else if let reason = gapReason(for: raw) {
-                    let kind = reason == .blank ? "is blank" : "records \(reason == .nan ? "NaN" : "infinity")"
-                    recordGap(column: columnIndex, reason: reason, message: "\(relativePath) line \(lineNumber): column \"\(column.0.key)\" value \"\(raw)\" \(kind); shown as a gap.")
-                } else if let value = Double(raw) {
-                    if value.isFinite {
-                        values[columnIndex].append(value)
-                        reasons[columnIndex].append(nil)
-                    } else {
-                        recordGap(column: columnIndex, reason: .saturated, message: "\(relativePath) line \(lineNumber): column \"\(column.0.key)\" value \"\(raw)\" overflowed to a non-finite value (saturation); shown as a gap.")
-                    }
+                    ledger.record(column: columnIndex, reason: .blank, message: "\(relativePath) line \(lineNumber): column \"\(column.0.key)\" has no cell \(cellIndex + 1); shown as a gap.")
                 } else {
-                    throw ReaderError.invalidSource("\(relativePath) line \(lineNumber): column \"\(column.0.key)\" value \"\(raw)\" is not a finite number.")
+                    try CellParser.append(raw: fields[cellIndex], column: columnIndex, key: column.0.key, lineNumber: lineNumber, relativePath: relativePath, decimal: format.decimalSeparator, ledger: &ledger)
                 }
             }
             rowCount += 1
             if rowCount.isMultiple(of: 4096) { try Task.checkCancellation() }
         }
         guard rowCount > 0 else {
-            throw ReaderError.invalidSource("\(relativePath): no \"\(format.dataPrefix)\" data rows were found after the header.")
-        }
-        if gapTotal > warnings.count {
-            warnings.append("\(relativePath): ... and \(gapTotal - warnings.count) more gap cells shown as gaps.")
+            if dataPrefix.isEmpty {
+                throw ReaderError.invalidSource("\(relativePath): no data rows were found after the header.")
+            }
+            throw ReaderError.invalidSource("\(relativePath): no \"\(dataPrefix)\" data rows were found after the header.")
         }
         let headerFields = try headerMetadata(lines: headerLineTexts, delimiter: format.delimiter, relativePath: relativePath)
-        return TabularExtraction(columns: columns.enumerated().map { ($0.element.0, values[$0.offset]) }, reasons: reasons, warnings: warnings, headerFields: headerFields, sha256: puller.digestHex())
+        return TabularExtraction(columns: columns.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: headerFields, sha256: puller.digestHex())
     }
 
     /// Ordered header fields from lines before the names row. Lines are split on
@@ -648,7 +787,7 @@ enum TabularExtractor {
     /// ends it. Cells are trimmed; a trimmed cell wrapped in quotes unquotes,
     /// while any other `"` is malformed and fails with the caller's file/line
     /// context instead of shifting columns silently.
-    private static func split(_ line: String, delimiter: Character, context: String) throws -> [String] {
+    static func split(_ line: String, delimiter: Character, context: String) throws -> [String] {
         var rawCells: [String] = []
         var current = ""
         var inQuotes = false
@@ -689,5 +828,77 @@ enum TabularExtractor {
             }
             return trimmed
         }
+    }
+}
+
+/// Headerless positional layout for comment-header tables (Horiba LabRAM
+/// TSV): `#` lines are Acquisition metadata (`key=value`), every other
+/// non-blank line is one acquisition row, and columns resolve by declared
+/// source index. Cell classification reuses the shared gap contract, so
+/// values stay bitwise exact and in file order with no transforms.
+enum CommentTsvExtractor {
+    static func extractStreaming(
+        relativePath: String,
+        format: ProfileFormat,
+        mode: ProfileMode,
+        encoding: String.Encoding,
+        initialText: String,
+        initialPending: Data,
+        handle: FileHandle,
+        hasher: SHA256
+    ) throws -> TabularExtraction {
+        var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding, relativePath: relativePath, pendingBytes: initialPending)
+        puller.stageText(initialText, final: false)
+        var indexed: [(ProfileColumn, Int)] = []
+        for column in format.columns {
+            guard let position = column.index else {
+                throw ReaderError.invalidSource("\(relativePath): column \"\(column.key)\" has no column_index for kind \"comment-tsv\".")
+            }
+            indexed.append((column, position))
+        }
+        guard indexed.contains(where: { $0.0.key == mode.x }),
+              mode.y.allSatisfy({ y in indexed.contains(where: { $0.0.key == y }) }) else {
+            throw ReaderError.invalidSource("\(relativePath): profile mode \"\(mode.id)\" references a column missing from format \"\(format.id)\".")
+        }
+        var comments: [(key: String, value: String)] = []
+        var usedKeys = Set<String>()
+        var ledger = CellLedger(count: indexed.count)
+        var lineNumber = 0
+        var rowCount = 0
+        while let line = try puller.nextLine() {
+            lineNumber += 1
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            if trimmed.hasPrefix("#") {
+                let body = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+                guard let separator = body.firstIndex(of: "=") else { continue }
+                let key = String(body[..<separator]).trimmingCharacters(in: .whitespaces)
+                let value = String(body[body.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.isEmpty, !value.isEmpty, comments.count < 256 else { continue }
+                var unique = key
+                var suffix = 2
+                while usedKeys.contains(unique) {
+                    unique = "\(key) #\(suffix)"
+                    suffix += 1
+                }
+                usedKeys.insert(unique)
+                comments.append((unique, value.count > 512 ? String(value.prefix(509)) + "..." : value))
+                continue
+            }
+            let fields = try TabularExtractor.split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
+            for (columnIndex, column) in indexed.enumerated() {
+                if column.1 >= fields.count {
+                    ledger.record(column: columnIndex, reason: .blank, message: "\(relativePath) line \(lineNumber): column \"\(column.0.key)\" has no cell \(column.1 + 1); shown as a gap.")
+                } else {
+                    try CellParser.append(raw: fields[column.1], column: columnIndex, key: column.0.key, lineNumber: lineNumber, relativePath: relativePath, decimal: format.decimalSeparator, ledger: &ledger)
+                }
+            }
+            rowCount += 1
+            if rowCount.isMultiple(of: 4096) { try Task.checkCancellation() }
+        }
+        guard rowCount > 0 else {
+            throw ReaderError.invalidSource("\(relativePath): no data rows were found after the comment header.")
+        }
+        return TabularExtraction(columns: indexed.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: comments, sha256: puller.digestHex())
     }
 }

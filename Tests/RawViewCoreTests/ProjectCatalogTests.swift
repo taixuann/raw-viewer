@@ -93,6 +93,20 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.map(\.relativePath) == ["data/raw/source.csv"])
 }
 
+@Test func discoverySkipsSPEAndAFFMFilesCaseInsensitively() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let raw = root.appendingPathComponent("data/raw")
+    try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
+    try Data("shown".utf8).write(to: raw.appendingPathComponent("shown.csv"))
+    try Data("not viewed".utf8).write(to: raw.appendingPathComponent("skip.SPE"))
+    try Data("not viewed".utf8).write(to: raw.appendingPathComponent("skip.AfFm"))
+
+    let sources = try ProjectContext.open(root).discoverSources()
+
+    #expect(sources.map(\.relativePath) == ["data/raw/shown.csv"])
+}
+
 @Test func rejectsDiscoveredSymlinksThatEscapeRawRoot() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

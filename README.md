@@ -1,18 +1,25 @@
 # RawView
 
 RawView is a native macOS viewer for raw research measurements. Opening a project
-inventories exactly the regular files under the selected project's `data/raw`
-directory: nested project folders are never discovered as additional roots, and
-a missing raw directory offers a clear diagnostic so another folder can be
-selected.
+inventories supported regular files under the selected project's `data/raw`
+directory: `.spe` and `.affm` files are skipped without being opened, nested
+project folders are never discovered as additional roots, and a missing raw
+directory offers a clear diagnostic so another folder can be selected.
 
 Instrument profiles are declarative YAML under the existing plural
-`data/instruments/` directory. RawView owns the readers: the first supported
-format is the Keysight B1500A I-V tabular CSV (`DataName`/`DataValue` rows with
-`V1`/`I1` or `I2` columns). Profiles must declare `schema_version: 1`; existing
-unversioned profiles stay visible with an explicit upgrade diagnostic, block
-only the sources they claim, and are never rewritten. RawView never executes
-project code.
+`data/instruments/` directory, or under its `rawview/` companion directory
+when it exists: companion profiles then override the parent directory, and an
+empty or unusable companion directory never falls back to it. RawView owns the
+readers: supported layouts are the Keysight B1500A I-V tabular CSV
+(`DataName`/`DataValue` rows), the Keithley 2400 dual-sweep LVM tab file, both
+Horiba LabRAM Raman tables (comment-header TSV with European decimal comma,
+legacy semicolon table). Viewer profiles are standalone, versioned top-level
+YAML (`schema_version: 1` or `2`); nested `raw_viewer` blocks are rejected.
+Existing unversioned profiles stay visible
+with an explicit upgrade diagnostic, block only the sources they claim, and
+are never rewritten. RawView never executes project code. Keysight
+list-sweep/WGFMU, GTIIT XPS, Autolab/IOP, and Oxford MFP layouts are
+explicitly out of scope (see CONTRACT.md).
 
 The center switches between project-wide Plot and Data tabs. Each supported
 source keeps a matching figure and an ordered, untransformed table: every
@@ -41,8 +48,8 @@ open /tmp/RawView.app   # developer build output (local)
 ```
 
 The reader contract and instrument profile schema are documented in
-[CONTRACT.md](CONTRACT.md); a working profile is in
-[Examples/keysight-b1500a.yaml](Examples/keysight-b1500a.yaml). Discovery,
+[CONTRACT.md](CONTRACT.md); working standalone profiles are in
+[Examples/rawview/](Examples/rawview/). Discovery,
 inspection, and loading run off the main thread on independent cancellation
 identities in bounded batches with per-source failures, progress,
 cancellation, resume, and retry. Sources stream with cancellation checkpoints
@@ -74,7 +81,6 @@ Donor disposition:
 No donor source code or package was copied into this app.
 
 Fixture-based checks verify the app path; they do not establish scientific
-validation for any real source. The first format's semantics were derived
-read-only from the res_volatile-polydopamine instrument profiles and a real
-dual-sweep CSV; migrating that project's profiles is a separate, project-owned
-change.
+validation for any real source. Supported layout semantics were derived from
+project-local instrument profiles; migrating a project's profiles is a
+separate, owner-approved change.

@@ -13,6 +13,16 @@ public struct SourceIdentity: Decodable, Sendable {
 public struct InstrumentIdentity: Decodable, Sendable {
     public let id: String
     public let name: String
+    /// Descriptive identity from the selected profile; nil when not declared.
+    public let vendor: String?
+    public let model: String?
+
+    init(id: String, name: String, vendor: String? = nil, model: String? = nil) {
+        self.id = id
+        self.name = name
+        self.vendor = vendor
+        self.model = model
+    }
 }
 
 public struct MeasurementView: Decodable, Sendable {
@@ -189,7 +199,7 @@ public struct NormalizedMeasurement: Sendable {
         guard !envelope.source.path.isEmpty, validSHA else {
             throw ContractError.invalid("Source path or SHA-256 is missing or malformed")
         }
-        guard ["xy", "timeseries", "spectrum", "regions", "table", "metadata-only"].contains(envelope.view.kind) else {
+        guard ["xy", "timeseries", "spectrum", "table", "metadata-only"].contains(envelope.view.kind) else {
             throw ContractError.invalid("Unknown view kind \(envelope.view.kind)")
         }
         guard Set(envelope.channels.map(\.name)).count == envelope.channels.count else {

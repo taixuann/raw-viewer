@@ -52,6 +52,31 @@ struct ReaderTrustTests {
         }
     }
 
+    @Test func inRootSymlinkToExcludedTargetIsRejectedWithoutFollowing() async throws {
+        // A .csv symlink naming a .spe target is rejected from the link text
+        // alone: the prohibited target is never resolved, stat-ed, opened, or
+        // read. Direct and forged callers both fail closed.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write("data/raw/more/hidden.spe", Data("prohibited target".utf8), under: root)
+        let sneaky = root.appendingPathComponent("data/raw/sneaky.csv")
+        try FileManager.default.createSymbolicLink(atPath: sneaky.path, withDestinationPath: "more/hidden.spe")
+
+        let project = try ProjectContext.open(root)
+        let forged = RawSource(relativePath: "data/raw/sneaky.csv", url: sneaky, byteSize: 1)
+        let report = await InstrumentReader.inspectMany([forged], project: project)
+        #expect(report.results.first?.inspection == nil)
+        #expect(report.results.first?.error?.contains("data/raw/sneaky.csv") == true)
+        #expect(report.results.first?.error?.contains("symlink") == true)
+        do {
+            _ = try await InstrumentReader.load(sneaky, project: project)
+            Issue.record("symlink source loaded instead of rejected")
+        } catch {
+            #expect(error.localizedDescription.contains("data/raw/sneaky.csv"))
+            #expect(error.localizedDescription.contains("symlink"))
+        }
+    }
+
     @Test func externalInstrumentsRootFailsClosedWithoutUsingOutsideProfiles() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
         let outsideInstruments = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-outside-\(UUID().uuidString)")
