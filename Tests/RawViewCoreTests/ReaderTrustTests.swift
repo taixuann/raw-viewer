@@ -34,12 +34,19 @@ struct ReaderTrustTests {
         try FileManager.default.createSymbolicLink(at: escapedLink, withDestinationURL: outside)
 
         let project = try ProjectContext.open(root)
-        #expect(try project.discoverSources().map(\.relativePath) == ["data/raw/inside.csv"])
+        // Symlink entries are listed lexically with zero claimed target size;
+        // the target is never followed or read.
+        let discovered = try project.discoverSources()
+        #expect(discovered.map(\.relativePath) == ["data/raw/escape.csv", "data/raw/inside.csv"])
+        #expect(discovered.first(where: { $0.relativePath == "data/raw/escape.csv" })?.byteSize == 0)
+        let discoveredEscape = try #require(discovered.first { $0.relativePath == "data/raw/escape.csv" })
         let forged = RawSource(relativePath: "data/raw/escape.csv", url: escapedLink, byteSize: 1)
-        let report = await InstrumentReader.inspectMany([forged], project: project)
-        #expect(report.results.first?.inspection == nil)
-        #expect(report.results.first?.error?.contains("data/raw/escape.csv") == true)
-        #expect(report.results.first?.error?.contains("outside") == true)
+        for source in [discoveredEscape, forged] {
+            let report = await InstrumentReader.inspectMany([source], project: project)
+            #expect(report.results.first?.inspection == nil)
+            #expect(report.results.first?.error?.contains("data/raw/escape.csv") == true)
+            #expect(report.results.first?.error?.contains("outside") == true)
+        }
         await #expect(throws: ReaderError.self) {
             try await InstrumentReader.load(escapedLink, project: project)
         }
@@ -123,7 +130,7 @@ struct ReaderTrustTests {
 
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
-        #expect(report.profileIssues.contains { $0.contains("data/instruments/escaped.yaml") && $0.contains("resolves outside data/instruments") })
+        #expect(report.profileIssues.contains { $0.contains("data/instruments/escaped.yaml") && $0.contains("symlink") && $0.contains("never followed") })
         #expect(report.results.first?.inspection == nil)
         #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
     }

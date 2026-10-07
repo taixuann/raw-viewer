@@ -49,7 +49,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.allSatisfy { $0.url == $0.url.resolvingSymlinksInPath().standardizedFileURL })
 }
 
-@Test func doesNotDiscoverDescendantProjectRoots() throws {
+@Test func doesNotDiscoverDescendantProjectRoots() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -61,9 +61,18 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     try Data("id: nested".utf8).write(to: root.appendingPathComponent("studies/nested/project.yaml"))
     try FileManager.default.createSymbolicLink(at: raw.appendingPathComponent("nested-project"), withDestinationURL: root.appendingPathComponent("studies/nested"))
 
-    let sources = try ProjectContext.open(root).discoverSources()
+    let project = try ProjectContext.open(root)
+    let sources = try project.discoverSources()
 
-    #expect(sources.map(\.relativePath) == ["data/raw/selected.csv"])
+    // Symlink entries are listed lexically with zero claimed target size and
+    // never followed: the linked subtree is not traversed, so the descendant
+    // project file stays out while the link itself stays listed.
+    #expect(sources.map(\.relativePath) == ["data/raw/nested-project", "data/raw/selected.csv"])
+    #expect(sources.first(where: { $0.relativePath == "data/raw/nested-project" })?.byteSize == 0)
+    let nestedLink = try #require(sources.first { $0.relativePath == "data/raw/nested-project" })
+    let report = await InstrumentReader.inspectMany([nestedLink], project: project)
+    #expect(report.results.first?.inspection == nil)
+    #expect(report.results.first?.error?.contains("outside") == true)
 }
 
 @Test func doesNotRecurseIntoNestedProjectData() throws {

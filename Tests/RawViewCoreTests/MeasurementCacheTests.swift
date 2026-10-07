@@ -663,13 +663,26 @@ struct MeasurementCacheTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: prefixURL.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: prefixURL.path) }
         // A pre-existing permissive RawView-owned directory fails closed: no
-        // chmod repair, no lookup hit; usage still accounts the entry on disk.
+        // chmod repair and no lookup hit.
+        // Reuse the same fingerprint so this key remains under the modified
+        // prefix. Snapshot its existing entry to prove the failed store does
+        // not rewrite files, add entries, or repair directory permissions.
         #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-1") == nil)
         let perms = (try FileManager.default.attributesOfItem(atPath: prefixURL.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0
         #expect(perms & 0o077 != 0)
-        try storeViaDescriptor(cache, measurement: measurement, source: source, project: project, fingerprint: "fp-2")
-        #expect((try FileManager.default.attributesOfItem(atPath: prefixURL.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0 & 0o077 != 0)
-        #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-2") == nil)
+        let prefixEntries = try FileManager.default.contentsOfDirectory(atPath: prefixURL.path).sorted()
+        let entryName = try #require(prefixEntries.first)
+        let entryDirectory = prefixURL.appendingPathComponent(entryName, isDirectory: true)
+        let payloadBefore = try Data(contentsOf: entryDirectory.appendingPathComponent("payload"))
+        let metaBefore = try Data(contentsOf: entryDirectory.appendingPathComponent("meta"))
+        try storeViaDescriptor(cache, measurement: measurement, source: source, project: project, fingerprint: "fp-1")
+        let permsAfter = (try FileManager.default.attributesOfItem(atPath: prefixURL.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        #expect(permsAfter == perms)
+        #expect((permsAfter & 0o077) != 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: prefixURL.path).sorted() == prefixEntries)
+        #expect(try Data(contentsOf: entryDirectory.appendingPathComponent("payload")) == payloadBefore)
+        #expect(try Data(contentsOf: entryDirectory.appendingPathComponent("meta")) == metaBefore)
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-1") == nil)
     }
 
     @Test func symlinkedPayloadIsNotFollowed() async throws {
@@ -796,9 +809,18 @@ struct MeasurementCacheTests {
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
         let source = try #require(try project.discoverSources().first)
         let measurement = try await loadMeasurement(source, project: project)
-        let minimumPackedBytes = measurement.channels.reduce(Int64(0)) { $0 + Int64($1.values.count) * 9 }
-        let encodedBytes = try MeasurementCache.encode(measurement: measurement).count
-        #expect(Int64(encodedBytes) >= minimumPackedBytes)
+        // Serialized plist size is not a per-channel byte lower bound. Check
+        // the packed arrays directly and prove their total exceeds this cap.
+        let payload = MeasurementCache.MeasurementPayload(measurement: measurement)
+        #expect(payload.channelValueBytes.count == measurement.channels.count)
+        #expect(payload.channelGapCodes.count == measurement.channels.count)
+        for (channel, packed) in zip(measurement.channels, zip(payload.channelValueBytes, payload.channelGapCodes)) {
+            #expect(packed.0.count == channel.values.count * 8)
+            #expect(packed.1.count == channel.values.count)
+        }
+        let packedBytes = zip(payload.channelValueBytes, payload.channelGapCodes)
+            .reduce(Int64(0)) { $0 + Int64($1.0.count) + Int64($1.1.count) }
+        #expect(packedBytes > 100)
         let info = try securedPrefixInfo(source, project: project)
         let probe = RawSource(relativePath: source.relativePath, url: source.url, byteSize: info.size)
         try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256, preflightCap: 100)

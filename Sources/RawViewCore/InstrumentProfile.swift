@@ -435,7 +435,7 @@ private enum ProfileSchema {
         }
         let root: YAMLNode
         do {
-            root = try YAMLParser.parse(text)
+            root = try YAMLParser.parse(text, allowIndentlessSequences: false)
         } catch let error as YAMLParseError {
             // Malformed YAML supplies no trustworthy selectors: the global issue
             // stays visible and nothing is guessed from the broken content.

@@ -30,7 +30,9 @@ enum YAMLParser {
         return backslashes % 2 == 1
     }
 
-    static func parse(_ text: String) throws -> YAMLNode {
+    /// The StudyManifest reader keeps YAML's indentless-sequence form; instrument
+    /// profiles disable it because their documented subset rejects parent-indent lists.
+    static func parse(_ text: String, allowIndentlessSequences: Bool = true) throws -> YAMLNode {
         var lines: [Line] = []
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         for (offset, raw) in normalized.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
@@ -51,7 +53,7 @@ enum YAMLParser {
             guard !content.isEmpty else { continue }
             lines.append(Line(number: number, indent: indent, content: content))
         }
-        var parser = Body(lines: lines)
+        var parser = Body(lines: lines, allowIndentlessSequences: allowIndentlessSequences)
         guard parser.peek != nil else { return .map([]) }
         let node = try parser.parse(depth: 0)
         if let trailing = parser.peek {
@@ -68,6 +70,7 @@ enum YAMLParser {
 
     private struct Body {
         var lines: [Line]
+        let allowIndentlessSequences: Bool
         var index = 0
 
         var peek: Line? { index < lines.count ? lines[index] : nil }
@@ -119,9 +122,9 @@ enum YAMLParser {
                 }
                 index += 1
                 if valueText.isEmpty {
-                    let nextIsIndentlessList = peek.map {
+                    let nextIsIndentlessList = allowIndentlessSequences && (peek.map {
                         $0.indent == indent && ($0.content == "-" || $0.content.hasPrefix("- "))
-                    } ?? false
+                    } ?? false)
                     if let next = peek, next.indent > indent || nextIsIndentlessList {
                         entries.append((key, try parse(depth: depth + 1)))
                     } else {

@@ -166,7 +166,7 @@ struct ProfileOwnershipTests {
         )
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
-        #expect(report.profileIssues.contains { $0.contains("data/instruments/rawview") && $0.contains("resolves outside") })
+        #expect(report.profileIssues.contains { $0.contains("data/instruments/rawview") && $0.contains("symlink") && $0.contains("regular entries") })
         #expect(report.results.first?.inspection == nil)
         #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
     }
@@ -187,7 +187,7 @@ struct ProfileOwnershipTests {
         )
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
-        #expect(report.profileIssues.contains { $0.contains("data/instruments/rawview/escaped.yaml") && $0.contains("resolves outside") })
+        #expect(report.profileIssues.contains { $0.contains("data/instruments/rawview/escaped.yaml") && $0.contains("symlink") && $0.contains("never followed") })
         #expect(report.results.first?.inspection == nil)
         #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
     }
