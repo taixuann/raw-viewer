@@ -19,6 +19,17 @@ struct YAMLParseError: Error, Equatable {
 enum YAMLParser {
     private static let maximumDepth = 32
 
+    /// Backslash parity for an appended closing double quote (shared with the
+    /// flow-list scanner): odd backslashes escape, even do not.
+    static func isEscapedDoubleQuote(_ tokenWithQuote: String) -> Bool {
+        var backslashes = 0
+        for character in tokenWithQuote.dropLast().reversed() {
+            guard character == "\\" else { break }
+            backslashes += 1
+        }
+        return backslashes % 2 == 1
+    }
+
     static func parse(_ text: String) throws -> YAMLNode {
         var lines: [Line] = []
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -159,6 +170,7 @@ enum YAMLParser {
                 throw YAMLParseError(line: line, message: "flow list is missing its closing \"]\"")
             }
             let inner = content.dropFirst().dropLast()
+            let innerIsBlank = inner.trimmingCharacters(in: .whitespaces).isEmpty
             var items: [YAMLNode] = []
             var token = ""
             var quote: Character?
@@ -166,7 +178,13 @@ enum YAMLParser {
             func finishToken() throws {
                 let trimmed = token.trimmingCharacters(in: .whitespaces)
                 token = ""
-                guard !trimmed.isEmpty else { return }
+                guard !trimmed.isEmpty else {
+                    // Empty lists ("[]" / "[ ]") have no elements; any other
+                    // empty element (consecutive, leading, or trailing comma)
+                    // is malformed and fails closed.
+                    if innerIsBlank { return }
+                    throw YAMLParseError(line: line, message: "empty element in flow list")
+                }
                 if trimmed.hasPrefix("[") || trimmed.hasPrefix("{") {
                     throw YAMLParseError(line: line, message: "nested flow collections are not supported")
                 }
@@ -180,7 +198,7 @@ enum YAMLParser {
                 let character = inner[index]
                 if let active = quote {
                     token.append(character)
-                    if character == active && (active == "'" || !token.hasSuffix("\\\"")) { quote = nil }
+                    if character == active && (active == "'" || !YAMLParser.isEscapedDoubleQuote(token)) { quote = nil }
                     if active == "'" && token.hasSuffix("''") { quote = "'" }
                 } else if character == "\"" || character == "'" {
                     quote = character
@@ -244,7 +262,7 @@ enum YAMLParser {
                 result.append(character)
                 if active == "'" {
                     if character == "'" { quote = nil }
-                } else if character == "\"" && !result.hasSuffix("\\\"") {
+                } else if character == "\"" && !Self.isEscapedDoubleQuote(result) {
                     quote = nil
                 }
             } else if character == "\"" || character == "'" {

@@ -26,9 +26,14 @@ public struct ReaderInspectionReport: Sendable {
 /// code: profiles are data, the extraction runs in-process, and every failure is
 /// reported on the affected source without blocking unrelated sources.
 public enum InstrumentReader {
-    public static let version = "1.1.0"
+    public static let version = "1.2.0"
     static let progressBatchSize = 64
     static let headerSampleBytes = 64 * 1024
+    /// Malformed-input bounds: one source line and the accumulated header
+    /// section each stay below 1 MiB. Complete value arrays, row counts, and
+    /// valid measurement sizes are never capped.
+    static let maximumSourceLineBytes = 1 << 20
+    static let maximumHeaderBytes = 1 << 20
 
     public static func inspectMany(
         _ sources: [RawSource],
@@ -55,14 +60,13 @@ public enum InstrumentReader {
                 if Task.isCancelled {
                     batch.append(SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription))
                 } else if let cache {
-                    // Cached inspection path: the seam performs the mandatory
-                    // secured open + exact prefix hash + size check (identity)
-                    // and consults the entry keyed by identity + catalog
-                    // fingerprint. The typed producer resolves deterministic
-                    // outcomes; cancellation and access failures throw and
-                    // are never stored.
-                    let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { () throws -> MeasurementCache.CachedInspection in
-                        try inspectAccess(source, project: project, catalog: catalog)
+                    // Cached inspection path: the cache secures the claimed
+                    // path first, then the producer computes the outcome from
+                    // those exact pinned prefix bytes/size without reopening.
+                    // Secure-open failure throws and falls back to the
+                    // ordinary uncached path below; nothing is cached then.
+                    let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+                        try inspectPinned(source: source, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
                     }
                     if let cached {
                         switch cached.outcome {
@@ -97,66 +101,49 @@ public enum InstrumentReader {
     }
 
     public static func load(_ source: URL, project: ProjectContext, cache: MeasurementCache? = nil) async throws -> NormalizedMeasurement {
-        // Excluded files are rejected from the claimed name alone, before any
-        // path resolution or filesystem access touches them.
+        // Excluded files are rejected from the claimed name alone, before any open.
         guard !ProjectContext.skippedRawExtensions.contains(source.pathExtension.lowercased()) else {
             throw ReaderError.invalidSource("\(project.claimedPath(of: source)): RawView skips .spe and .affm files.")
         }
-        // No-follow source-link check before any canonicalization: a symlink
-        // source is rejected from its link text alone (readlink touches only
-        // the link). Discovery omits every symlink entry, so a link here can
-        // only come from a direct caller and must fail closed.
+        // Clear diagnostic for a claimed symlink; the open below is the gate.
         if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.path) {
             throw sourceLinkRejection(source, project: project, linkTarget: linkTarget)
-        }
-        let canonical = source.resolvingSymlinksInPath().standardizedFileURL
-        // Containment first, without any readability requirement: an escaped
-        // path gets the source-local outside diagnostic, while a missing or
-        // unreadable in-root file falls through to the open diagnostics.
-        guard project.containsSource(source) else {
-            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source))
-        }
-        let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
-        guard !relativePath.isEmpty, !relativePath.hasPrefix("/") else {
-            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source))
-        }
-        // A supported claimed name that resolves to an excluded file stays
-        // rejected as well.
-        guard !ProjectContext.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) else {
-            throw ReaderError.invalidSource("\(relativePath): RawView skips .spe and .affm files.")
         }
         do {
             try Task.checkCancellation()
             let catalog = ProfileCatalog.load(project: project)
-            let fileExtension = "." + canonical.pathExtension.lowercased()
-            // The secured handle pins the exact object that path checks
-            // validated. Prefix bytes select the encoding and detect sample;
-            // hashing and row parsing stream the same handle afterwards.
+            guard let relativePath = project.relativePath(of: source), relativePath.hasPrefix("data/raw/") else {
+                throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source))
+            }
+            // The selected path supplies source identity and filename evidence;
+            // the opened descriptor independently proves the bytes stay in raw.
             let handle: FileHandle
             do {
-                handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
+                handle = try SecureFile.openVerified(resolvedPath: source.path, beneath: project.rawRoot.path)
             } catch let error as SecureOpenError {
-                throw error.readerError(display: relativePath)
+                throw error.readerError(display: project.claimedPath(of: source))
             } catch {
-                throw ReaderError.invalidSource("\(relativePath): could not open the source file: \(error.localizedDescription)")
+                throw ReaderError.invalidSource("\(project.claimedPath(of: source)): could not open the source file: \(error.localizedDescription)")
             }
+            let fileExtension = "." + source.pathExtension.lowercased()
+            let basename = source.lastPathComponent
             let prefixData: Data
             do {
                 prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
             } catch {
+                try? handle.close()
                 throw ReaderError.invalidSource("\(relativePath): could not read the source file: \(error.localizedDescription)")
             }
             let prefixDigest = sha256Hex(prefixData)
             // Descriptor size via stat on the already-pinned descriptor: it
             // must not move the handle's read offset (seekToEnd would make the
-            // subsequent stream start at EOF).
+            // subsequent stream start at EOF). A failed fstat fails closed.
             var fileStat = stat()
-            let descriptorSize: Int64
-            if fstat(handle.fileDescriptor, &fileStat) == 0 {
-                descriptorSize = Int64(fileStat.st_size)
-            } else {
-                descriptorSize = 0
+            guard fstat(handle.fileDescriptor, &fileStat) == 0 else {
+                try? handle.close()
+                throw ReaderError.invalidSource("\(relativePath): could not read the source file.")
             }
+            let descriptorSize = Int64(fileStat.st_size)
             // Measurement cache candidate: identity from the descriptor
             // (relative path, extension, size, exact prefix digest) plus the
             // complete catalog fingerprint; the entry's recorded full-content
@@ -171,37 +158,44 @@ public enum InstrumentReader {
             }
             var hasher = SHA256()
             hasher.update(data: prefixData)
-            // Extension gate before decoding: unclaimed extensions report
-            // "No instrument profile supports" without attempting a decode, so an
-            // undecodable header never masks the actionable unsupported diagnostic.
-            let sample: String
-            var selectedEncoding: String.Encoding?
-            var pending = Data()
-            if catalog.hasValidClaim(for: fileExtension) {
-                if let selection = selectEncoding(prefixData, catalog: catalog, extension: fileExtension) {
-                    sample = selection.text
-                    selectedEncoding = selection.encoding
-                    pending = selection.pending
-                } else if catalog.hasBrokenClaim(for: fileExtension) {
-                    sample = ""
-                } else {
-                    throw ReaderError.invalidSource("\(relativePath): the file header could not be decoded with any accepted profile encoding.")
-                }
-            } else {
-                sample = ""
-            }
+            // The selected unique profile/format's declared encoding drives
+            // decoding: candidates are resolved using each candidate's own
+            // encoding, and only one unique profile/format may match.
+            let encoded = resolveEncoded(prefix: prefixData, catalog: catalog, extension: fileExtension, basename: basename)
             let match: ProfileMatch
-            switch catalog.resolve(extension: fileExtension, headerSample: sample, basename: canonical.lastPathComponent) {
-            case .failed(let message): throw ReaderError.invalidSource(message)
-            case .matched(let value): match = value
+            let sample: String
+            let selectedEncoding: String.Encoding?
+            let pending: Data
+            switch encoded.resolution {
+            case .failed(let message):
+                try? handle.close()
+                if message.contains("could not be decoded") {
+                    throw ReaderError.invalidSource("\(relativePath): \(message)")
+                }
+                throw ReaderError.invalidSource(message)
+            case .matched(let value):
+                guard let enc = encoded.encoding, let text = encoded.text, let pend = encoded.pending else {
+                    try? handle.close()
+                    throw ReaderError.invalidSource("\(relativePath): no decoding was selected for this source.")
+                }
+                match = value
+                sample = text
+                selectedEncoding = enc
+                pending = pend
             }
             guard let encoding = selectedEncoding else {
-                // Unreachable: a valid match requires a successful selection above.
+                try? handle.close()
                 throw ReaderError.invalidSource("\(relativePath): no decoding was selected for this source.")
             }
             let extracted: TabularExtraction
             if match.format.kind == "comment-tsv" {
                 extracted = try CommentTsvExtractor.extractStreaming(
+                    relativePath: relativePath, format: match.format, mode: match.mode,
+                    encoding: encoding, initialText: sample, initialPending: pending,
+                    handle: handle, hasher: hasher
+                )
+            } else if match.format.kind == "first-row-header" {
+                extracted = try FirstRowHeaderExtractor.extractStreaming(
                     relativePath: relativePath, format: match.format, mode: match.mode,
                     encoding: encoding, initialText: sample, initialPending: pending,
                     handle: handle, hasher: hasher
@@ -219,7 +213,7 @@ public enum InstrumentReader {
             }
             let rowCount = extracted.columns.first?.1.count ?? 0
             let gapCount = extracted.columns.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
-            let facts = parseFilename(canonical.lastPathComponent)
+            let facts = parseFilename(basename)
             let measurement = NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
                 instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName,
@@ -227,7 +221,7 @@ public enum InstrumentReader {
                 applicationMode: match.mode.id,
                 view: MeasurementView(kind: "xy", x: match.mode.x, y: match.mode.y, preserveOrder: true),
                 channels: channels,
-                metadataSections: metadataSections(headerFields: extracted.headerFields, filename: canonical.lastPathComponent, facts: facts, channelCount: channels.count, rowCount: rowCount, gapCount: gapCount),
+                metadataSections: metadataSections(headerFields: extracted.headerFields, filename: basename, facts: facts, channelCount: channels.count, rowCount: rowCount, gapCount: gapCount),
                 warnings: extracted.warnings,
                 supportStatus: "supported",
                 provenance: [
@@ -254,7 +248,7 @@ public enum InstrumentReader {
         } catch let error as ReaderError {
             throw error
         } catch {
-            throw ReaderError.invalidSource("\(relativePath): could not read the source file: \(error.localizedDescription)")
+            throw ReaderError.invalidSource("\(project.claimedPath(of: source)): could not read the source file: \(error.localizedDescription)")
         }
     }
 
@@ -277,61 +271,71 @@ public enum InstrumentReader {
     /// failures (missing, unreadable, symlinked, escaped), and open/read
     /// errors. Only returned values may reach the inspection cache.
     static func inspectAccess(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) throws -> MeasurementCache.CachedInspection {
-        // Excluded files are rejected from the claimed name alone, before
-        // any path resolution or filesystem access touches them.
+        // Excluded files are rejected from the claimed name alone, before any open.
+        guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
+            return .blocked("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
+        }
+        guard project.relativePath(of: source.url) == source.relativePath,
+              source.relativePath.hasPrefix("data/raw/") else {
+            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url))
+        }
+        try Task.checkCancellation()
+        // Clear diagnostic for a claimed symlink; the open below is the gate.
+        if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.url.path) {
+            throw sourceLinkRejection(source.url, project: project, linkTarget: linkTarget)
+        }
+        let handle: FileHandle
+        do {
+            handle = try SecureFile.openVerified(resolvedPath: source.url.path, beneath: project.rawRoot.path)
+        } catch let error as SecureOpenError {
+            // Display from the claimed path; the descriptor check already failed closed.
+            throw error.readerError(display: project.claimedPath(of: source.url))
+        } catch {
+            throw ReaderError.invalidSource("\(project.claimedPath(of: source.url)): could not read the source file: \(error.localizedDescription)")
+        }
+        let selectedRelative = source.relativePath
+        let prefixData: Data
+        do {
+            prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
+        } catch {
+            try? handle.close()
+            throw ReaderError.invalidSource("\(selectedRelative): could not read the source file: \(error.localizedDescription)")
+        }
+        var fileStat = stat()
+        guard fstat(handle.fileDescriptor, &fileStat) == 0 else {
+            try? handle.close()
+            throw ReaderError.invalidSource("\(selectedRelative): could not read the source file.")
+        }
+        let descriptorSize = Int64(fileStat.st_size)
+        try? handle.close()
+        try Task.checkCancellation()
+        return try inspectPinned(source: source, project: project, catalog: catalog, prefix: prefixData, descriptorSize: descriptorSize, actualURL: source.url)
+    }
+
+    /// Pinned inspection production for the cache seam: computes the outcome
+    /// from the exact prefix bytes, descriptor size, and descriptor canonical
+    /// URL obtained by the cache's secured open, without reopening the path.
+    /// The descriptor URL is not source identity: hardlinks may have another
+    /// F_GETPATH alias, so selectors and diagnostics use the selected source.
+    static func inspectPinned(source: RawSource, project: ProjectContext, catalog: ProfileCatalog, prefix: Data, descriptorSize: Int64, actualURL _: URL) throws -> MeasurementCache.CachedInspection {
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
             return .blocked("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
         }
         try Task.checkCancellation()
-        // No-follow source-link check before any canonicalization: a
-        // symlink source is rejected from its link text alone (readlink
-        // touches only the link). Discovery omits every symlink entry, so
-        // a link here can only come from a forged caller and must fail
-        // closed.
-        if let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: source.url.path) {
-            throw sourceLinkRejection(source.url, project: project, linkTarget: linkTarget)
-        }
-        let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
-        let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
-        guard project.containsSource(source.url), relativePath == source.relativePath else {
-            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url))
-        }
-        // A supported claimed name that resolves to an excluded file stays
-        // rejected as well (path-dependent; never cached).
-        guard !ProjectContext.skippedRawExtensions.contains(canonical.pathExtension.lowercased()) else {
-            throw ReaderError.invalidSource("\(relativePath): RawView skips .spe and .affm files.")
-        }
-        let fileExtension = "." + canonical.pathExtension.lowercased()
-        let handle: FileHandle
-        let prefixData: Data
-        do {
-            handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
-            prefixData = try handle.read(upToCount: headerSampleBytes) ?? Data()
-        } catch let error as SecureOpenError {
-            throw error.readerError(display: relativePath)
-        } catch {
-            throw ReaderError.invalidSource("\(relativePath): could not read the source file: \(error.localizedDescription)")
-        }
-        try? handle.close()
-        try Task.checkCancellation()
-        let sample: String
-        if !catalog.hasValidClaim(for: fileExtension) {
-            sample = ""
-        } else if let selection = selectEncoding(prefixData, catalog: catalog, extension: fileExtension) {
-            sample = selection.text
-        } else if catalog.hasBrokenClaim(for: fileExtension) {
-            sample = ""
-        } else {
-            return .blocked("\(relativePath): the file header could not be decoded with any accepted profile encoding.")
-        }
-        try Task.checkCancellation()
-        switch catalog.resolve(extension: fileExtension, headerSample: sample, basename: canonical.lastPathComponent) {
+        let fileExtension = "." + source.url.pathExtension.lowercased()
+        let basename = source.url.lastPathComponent
+        let relativePath = source.relativePath
+        let encoded = resolveEncoded(prefix: prefix, catalog: catalog, extension: fileExtension, basename: basename)
+        switch encoded.resolution {
         case .failed(let message):
+            if message.contains("could not be decoded") {
+                return .blocked("\(relativePath): \(message)")
+            }
             return .blocked(message)
         case .matched(let match):
-            let facts = parseFilename(canonical.lastPathComponent)
+            let facts = parseFilename(basename)
             let inspection = SourceInspection(
-                source: relativePath, size: source.byteSize,
+                source: relativePath, size: descriptorSize,
                 instrumentID: match.profile.instrumentID, instrumentName: match.profile.instrumentName,
                 applicationMode: match.mode.id, timestamp: facts.timestamp, deviceID: facts.deviceID, category: facts.category,
                 supportStatus: "supported",
@@ -342,25 +346,10 @@ public enum InstrumentReader {
         }
     }
 
-    private static func decodeOptions(catalog: ProfileCatalog, extension fileExtension: String) -> [String.Encoding] {
-        // Only encodings from formats that declare the source extension: no
-        // undeclared fallback may rescue bytes the profile cannot read.
-        var options: [String.Encoding] = []
-        for profile in catalog.profiles {
-            for format in profile.formats where format.extensions.contains(fileExtension) {
-                for encoding in format.encodings where !options.contains(where: { $0 == encoding }) {
-                    options.append(encoding)
-                }
-            }
-        }
-        return options
-    }
-
-    /// Picks the stream encoding from a bounded header prefix, trying only
-    /// declared encodings in profile order. A UTF-8 prefix cut mid-scalar
-    /// backs off to the scalar boundary instead of misdecoding.
-    private static func selectEncoding(_ prefix: Data, catalog: ProfileCatalog, extension fileExtension: String) -> (encoding: String.Encoding, text: String, pending: Data)? {
-        for encoding in decodeOptions(catalog: catalog, extension: fileExtension) {
+    /// Decodes the bounded prefix with one format's declared encodings only.
+    /// A UTF-8 prefix cut mid-scalar backs off to the scalar boundary.
+    private static func decodeWithFormat(_ prefix: Data, format: ProfileFormat) -> (encoding: String.Encoding, text: String, pending: Data)? {
+        for encoding in format.encodings {
             if encoding == .utf8 {
                 var candidate = prefix
                 for _ in 0..<4 {
@@ -375,6 +364,75 @@ public enum InstrumentReader {
             }
         }
         return nil
+    }
+
+    /// Resolves the unique profile/format using each candidate's own declared
+    /// encoding to decode the header. Combining every encoding claimed for the
+    /// extension would let one format's encoding rescue bytes another format
+    /// cannot read; only one unique profile/format/mode may match.
+    private static func resolveEncoded(prefix: Data, catalog: ProfileCatalog, extension fileExtension: String, basename: String) -> (resolution: ProfileResolution, encoding: String.Encoding?, text: String?, pending: Data?) {
+        var candidates: [(profile: InstrumentProfile, format: ProfileFormat)] = []
+        for profile in catalog.profiles {
+            for format in profile.formats where format.extensions.contains(fileExtension) {
+                candidates.append((profile, format))
+            }
+        }
+        guard !candidates.isEmpty else {
+            return (catalog.resolve(extension: fileExtension, headerSample: "", basename: basename), nil, nil, nil)
+        }
+        struct CandidateHit {
+            let match: ProfileMatch
+            let encoding: String.Encoding
+            let text: String
+            let pending: Data
+        }
+        var hits: [CandidateHit] = []
+        var decodedAny = false
+        var firstSample = ""
+        var firstDecoded = false
+        for (profile, format) in candidates {
+            guard let decoded = decodeWithFormat(prefix, format: format) else { continue }
+            if !firstDecoded { firstSample = decoded.text; firstDecoded = true }
+            decodedAny = true
+            let sampleLower = decoded.text.lowercased()
+            let baseLower = basename.lowercased()
+            for mode in profile.modes.filter({ $0.formatID == format.id }) {
+                let filenameOK = mode.filenameContainsAll.map { $0.allSatisfy { baseLower.contains($0.lowercased()) } } ?? true
+                let headerOK = mode.detect.contains { sampleLower.contains($0.lowercased()) }
+                if filenameOK && headerOK {
+                    hits.append(CandidateHit(match: ProfileMatch(profile: profile, format: format, mode: mode), encoding: decoded.encoding, text: decoded.text, pending: decoded.pending))
+                }
+            }
+        }
+        if hits.count == 1 {
+            let unique = hits[0]
+            let blocking = catalog.brokenClaims.filter { $0.blocks(sample: unique.text.lowercased(), basename: basename) }
+            if blocking.isEmpty {
+                return (.matched(unique.match), unique.encoding, unique.text, unique.pending)
+            }
+            let note = "A valid profile (\(unique.match.profile.relativePath) mode \(unique.match.mode.id)) also matches this source; the source stays blocked until the invalid profile is fixed or removed."
+            return (.failed((blocking.flatMap(\.issues) + [note]).joined(separator: "\n")), nil, nil, nil)
+        }
+        if hits.count > 1 {
+            let described = hits.map { "\($0.match.profile.relativePath) mode \($0.match.mode.id)" }.joined(separator: ", ")
+            return (.failed("Ambiguous profile match: \(described). Keep one profile mode per source format."), nil, nil, nil)
+        }
+        guard decodedAny else {
+            if catalog.hasBrokenClaim(for: fileExtension) {
+                return (catalog.resolve(extension: fileExtension, headerSample: "", basename: basename), nil, nil, nil)
+            }
+            return (.failed("the file header could not be decoded with any accepted profile encoding."), nil, nil, nil)
+        }
+        let fallback = catalog.resolve(extension: fileExtension, headerSample: firstSample, basename: basename)
+        switch fallback {
+        case .failed:
+            return (fallback, nil, nil, nil)
+        case .matched(let foreign):
+            // At least one candidate encoding decoded the prefix, but no mode
+            // matched using its own declared encoding. A foreign-encoding match
+            // must never report supported: load would have no selected decoding.
+            return (.failed("No profile mode matched this source using its own declared encoding (basename \"\(basename)\"). A mode (\(foreign.profile.relativePath) mode \(foreign.mode.id)) matches only in another candidate's decoded text and cannot decode this source."), nil, nil, nil)
+        }
     }
 
     /// Filename facts matching the project-local reader convention
@@ -517,15 +575,24 @@ enum CellParser {
         if let reason = TabularExtractor.gapReason(for: raw) {
             let kind = reason == .blank ? "is blank" : "records \(reason == .nan ? "NaN" : "infinity")"
             ledger.record(column: column, reason: reason, message: "\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" \(kind); shown as a gap.")
-        } else if let value = Double(TabularExtractor.decimalNumber(raw, decimal: decimal)) {
-            if value.isFinite {
-                ledger.values[column].append(value)
-                ledger.reasons[column].append(nil)
-            } else {
-                ledger.record(column: column, reason: .saturated, message: "\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" overflowed to a non-finite value (saturation); shown as a gap.")
-            }
         } else {
-            throw ReaderError.invalidSource("\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" is not a finite number.")
+            let normalized = TabularExtractor.decimalNumber(raw, decimal: decimal)
+            // Decimal lexical gate before Double: supported signs, decimal
+            // separators, and exponents pass; Swift-only hex floats (0x1.0p+1)
+            // and other non-decimal spellings fail closed here.
+            guard TabularExtractor.isValidDecimal(normalized) else {
+                throw ReaderError.invalidSource("\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" is not a finite number.")
+            }
+            if let value = Double(normalized) {
+                if value.isFinite {
+                    ledger.values[column].append(value)
+                    ledger.reasons[column].append(nil)
+                } else {
+                    ledger.record(column: column, reason: .saturated, message: "\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" overflowed to a non-finite value (saturation); shown as a gap.")
+                }
+            } else {
+                throw ReaderError.invalidSource("\(relativePath) line \(lineNumber): column \"\(key)\" value \"\(raw)\" is not a finite number.")
+            }
         }
     }
 }
@@ -552,9 +619,9 @@ struct LinePuller {
     // Character, so line splitting must run on normalized text.)
     var pendingCR = false
 
-    mutating func stageText(_ text: String, final: Bool) {
+    mutating func stageText(_ text: String, final: Bool) throws {
         textBuffer += normalizeChunk(text)
-        drainLines(final: final)
+        try drainLines(final: final)
     }
 
     mutating func nextLine() throws -> String? {
@@ -565,6 +632,9 @@ struct LinePuller {
                 if linesEmitted == 1, line.hasPrefix("\u{FEFF}") {
                     line = String(line.dropFirst())
                 }
+                if line.utf8.count > InstrumentReader.maximumSourceLineBytes {
+                    throw ReaderError.invalidSource("\(relativePath): source line \(linesEmitted) exceeds the 1 MiB line limit.")
+                }
                 return line
             }
             if eof {
@@ -572,16 +642,16 @@ struct LinePuller {
                 finalFlushed = true
                 if pendingCR {
                     pendingCR = false
-                    textBuffer += "\r"
+                    textBuffer += "\n"
                 }
                 if !pendingBytes.isEmpty {
                     guard let tail = String(data: pendingBytes, encoding: encoding) else {
                         throw ReaderError.invalidSource("\(relativePath): could not decode the file using the selected encoding.")
                     }
                     pendingBytes = Data()
-                    stageText(tail, final: true)
+                    try stageText(tail, final: true)
                 } else {
-                    drainLines(final: true)
+                    try drainLines(final: true)
                 }
                 continue
             }
@@ -603,12 +673,20 @@ struct LinePuller {
         guard !chunk.isEmpty else { eof = true; return }
         hasher.update(data: chunk)
         try Task.checkCancellation()
-        stageText(try decodeChunk(chunk), final: false)
+        try stageText(try decodeChunk(chunk), final: false)
     }
 
-    private mutating func drainLines(final: Bool) {
+    private mutating func drainLines(final: Bool) throws {
         var parts = textBuffer.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         textBuffer = final ? "" : (parts.popLast() ?? "")
+        // Bound each complete line and the pending incomplete tail so a
+        // malformed file without line breaks cannot grow memory without bound.
+        for part in parts where part.utf8.count > InstrumentReader.maximumSourceLineBytes {
+            throw ReaderError.invalidSource("\(relativePath): source line exceeds the 1 MiB line limit.")
+        }
+        if !final, textBuffer.utf8.count > InstrumentReader.maximumSourceLineBytes {
+            throw ReaderError.invalidSource("\(relativePath): source line exceeds the 1 MiB line limit.")
+        }
         readyLines.append(contentsOf: parts)
     }
 
@@ -698,41 +776,55 @@ enum TabularExtractor {
         decimal == "," ? raw.replacingOccurrences(of: ",", with: ".") : raw
     }
 
-    static func extractStreaming(
-        relativePath: String,
-        format: ProfileFormat,
-        mode: ProfileMode,
-        encoding: String.Encoding,
-        initialText: String,
-        initialPending: Data,
-        handle: FileHandle,
-        hasher: SHA256
-    ) throws -> TabularExtraction {
-        // Bytes stream in 64 KiB chunks: the incremental hash covers exactly
-        // the parsed bytes, complete output arrays are retained, and no
-        // file-size or point cap is imposed.
-        var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding, relativePath: relativePath, pendingBytes: initialPending)
-        puller.stageText(initialText, final: false)
-        guard let namesPrefix = format.namesPrefix, let dataPrefix = format.dataPrefix else {
-            throw ReaderError.invalidSource("\(relativePath): format \"\(format.id)\" has no row-block markers for kind \"\(format.kind)\".")
+    /// Decimal lexical gate: optional sign, digits with at most one dot
+    /// (either side may be empty only with digits on the other side), and an
+    /// optional decimal exponent. Preserves supported signs, separators, and
+    /// exponents; rejects Swift-only hex floats such as `0x1.0p+1`.
+    static func isValidDecimal(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        var index = text.startIndex
+        if text[index] == "+" || text[index] == "-" {
+            index = text.index(after: index)
+            guard index < text.endIndex else { return false }
         }
-        // Phase 1: header rows up to the names row.
-        var headerLineTexts: [String] = []
-        var headers: [String]? = nil
-        var lineNumber = 0
-        while let line = try puller.nextLine() {
-            lineNumber += 1
-            let fields = try split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
-            if fields.first == namesPrefix { headers = fields; break }
-            headerLineTexts.append(line)
+        func isDigit(_ character: Character) -> Bool { character >= "0" && character <= "9" }
+        var intDigits = 0
+        while index < text.endIndex, isDigit(text[index]) {
+            intDigits += 1
+            index = text.index(after: index)
         }
-        guard let headers else {
-            throw ReaderError.invalidSource("\(relativePath): no \"\(namesPrefix)\" header row was found.")
+        var fracDigits = 0
+        if index < text.endIndex, text[index] == "." {
+            index = text.index(after: index)
+            while index < text.endIndex, isDigit(text[index]) {
+                fracDigits += 1
+                index = text.index(after: index)
+            }
         }
+        guard intDigits > 0 || fracDigits > 0 else { return false }
+        if index < text.endIndex, text[index] == "e" || text[index] == "E" {
+            index = text.index(after: index)
+            guard index < text.endIndex else { return false }
+            if text[index] == "+" || text[index] == "-" {
+                index = text.index(after: index)
+                guard index < text.endIndex else { return false }
+            }
+            var expDigits = 0
+            while index < text.endIndex, isDigit(text[index]) {
+                expDigits += 1
+                index = text.index(after: index)
+            }
+            guard expDigits > 0 else { return false }
+        }
+        return index == text.endIndex
+    }
 
-        // Every format-declared channel resolves by exact primary header first,
-        // aliases only as fallback. The ordered table keeps all of them; only
-        // the mode's x/y channels drive the plot.
+    /// Every format-declared channel resolves by exact primary header first,
+    /// aliases only as fallback. The ordered table keeps all of them; only
+    /// the mode's x/y channels drive the plot. Shared by the row-block and
+    /// first-row-header layouts; `rowLabel` names the header row in
+    /// diagnostics (`DataName row` or `header row`).
+    static func resolveColumns(headers: [String], format: ProfileFormat, mode: ProfileMode, relativePath: String, rowLabel: String) throws -> [(ProfileColumn, Int)] {
         var columns: [(ProfileColumn, Int)] = []
         for column in format.columns {
             let want = column.header ?? column.key
@@ -740,7 +832,7 @@ enum TabularExtractor {
                 headers[$0].compare(want, options: .caseInsensitive) == .orderedSame
             }
             if primary.count > 1 {
-                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) matches more than one cell in the \(namesPrefix) row [\(headers.joined(separator: ", "))].")
+                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) matches more than one cell in the \(rowLabel) [\(headers.joined(separator: ", "))].")
             }
             if let hit = primary.first {
                 columns.append((column, hit))
@@ -750,14 +842,14 @@ enum TabularExtractor {
                 column.aliases.contains { headers[index].compare($0, options: .caseInsensitive) == .orderedSame }
             }
             if fallback.count > 1 {
-                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) matches more than one cell via aliases [\(column.aliases.joined(separator: ", "))] in the \(namesPrefix) row [\(headers.joined(separator: ", "))].")
+                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) matches more than one cell via aliases [\(column.aliases.joined(separator: ", "))] in the \(rowLabel) [\(headers.joined(separator: ", "))].")
             }
             guard let hit = fallback.first else {
                 // An optional channel resolves when its header is present and
                 // is skipped when absent: no values are invented for it, and
                 // the required channels load unchanged.
                 if !column.required { continue }
-                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) was not found in the \(namesPrefix) row [\(headers.joined(separator: ", "))].")
+                throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.key)\" (\(want)) was not found in the \(rowLabel) [\(headers.joined(separator: ", "))].")
             }
             columns.append((column, hit))
         }
@@ -773,6 +865,47 @@ enum TabularExtractor {
               mode.y.allSatisfy({ y in columns.contains(where: { $0.0.key == y }) }) else {
             throw ReaderError.invalidSource("\(relativePath): profile mode \"\(mode.id)\" references a column missing from format \"\(format.id)\".")
         }
+        return columns
+    }
+
+    static func extractStreaming(
+        relativePath: String,
+        format: ProfileFormat,
+        mode: ProfileMode,
+        encoding: String.Encoding,
+        initialText: String,
+        initialPending: Data,
+        handle: FileHandle,
+        hasher: SHA256
+    ) throws -> TabularExtraction {
+        // Bytes stream in 64 KiB chunks: the incremental hash covers exactly
+        // the parsed bytes, complete output arrays are retained, and no
+        // file-size or point cap is imposed.
+        var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding, relativePath: relativePath, pendingBytes: initialPending)
+        try puller.stageText(initialText, final: false)
+        guard let namesPrefix = format.namesPrefix, let dataPrefix = format.dataPrefix else {
+            throw ReaderError.invalidSource("\(relativePath): format \"\(format.id)\" has no row-block markers for kind \"\(format.kind)\".")
+        }
+        // Phase 1: header rows up to the names row.
+        var headerLineTexts: [String] = []
+        var headerBytes = 0
+        var headers: [String]? = nil
+        var lineNumber = 0
+        while let line = try puller.nextLine() {
+            lineNumber += 1
+            let fields = try split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
+            if fields.first == namesPrefix { headers = fields; break }
+            headerBytes += line.utf8.count + 1
+            guard headerBytes <= InstrumentReader.maximumHeaderBytes else {
+                throw ReaderError.invalidSource("\(relativePath): header section exceeds the 1 MiB header limit.")
+            }
+            headerLineTexts.append(line)
+        }
+        guard let headers else {
+            throw ReaderError.invalidSource("\(relativePath): no \"\(namesPrefix)\" header row was found.")
+        }
+
+        let columns = try resolveColumns(headers: headers, format: format, mode: mode, relativePath: relativePath, rowLabel: "\(namesPrefix) row")
 
         // Phase 2: data rows in file order.
         var ledger = CellLedger(count: columns.count)
@@ -922,7 +1055,7 @@ enum CommentTsvExtractor {
         hasher: SHA256
     ) throws -> TabularExtraction {
         var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding, relativePath: relativePath, pendingBytes: initialPending)
-        puller.stageText(initialText, final: false)
+        try puller.stageText(initialText, final: false)
         var indexed: [(ProfileColumn, Int)] = []
         for column in format.columns {
             guard let position = column.index else {
@@ -939,11 +1072,17 @@ enum CommentTsvExtractor {
         var ledger = CellLedger(count: indexed.count)
         var lineNumber = 0
         var rowCount = 0
+        var headerBytes = 0
         while let line = try puller.nextLine() {
             lineNumber += 1
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
             if trimmed.hasPrefix("#") {
+                let lineBytes = line.utf8.count + 1
+                guard lineBytes <= InstrumentReader.maximumHeaderBytes - headerBytes else {
+                    throw ReaderError.invalidSource("\(relativePath): comment-tsv header exceeds the 1 MiB limit.")
+                }
+                headerBytes += lineBytes
                 let body = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
                 guard let separator = body.firstIndex(of: "=") else { continue }
                 let key = String(body[..<separator]).trimmingCharacters(in: .whitespaces)
@@ -974,5 +1113,66 @@ enum CommentTsvExtractor {
             throw ReaderError.invalidSource("\(relativePath): no data rows were found after the comment header.")
         }
         return TabularExtraction(columns: indexed.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: comments, sha256: puller.digestHex())
+    }
+}
+
+/// Explicit first-row-header layout (WGFMU pulse tables): the first non-blank
+/// line is the header row and every later non-blank line is one acquisition
+/// row. Column resolution, cell classification, and gap warnings reuse the
+/// shared row-block helpers, so values stay bitwise exact and in file order
+/// with no transforms. Leading blanks before the header are bounded like the
+/// row-block header section.
+enum FirstRowHeaderExtractor {
+    static func extractStreaming(
+        relativePath: String,
+        format: ProfileFormat,
+        mode: ProfileMode,
+        encoding: String.Encoding,
+        initialText: String,
+        initialPending: Data,
+        handle: FileHandle,
+        hasher: SHA256
+    ) throws -> TabularExtraction {
+        var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding, relativePath: relativePath, pendingBytes: initialPending)
+        try puller.stageText(initialText, final: false)
+        var headers: [String]? = nil
+        var skippedBytes = 0
+        var lineNumber = 0
+        while let line = try puller.nextLine() {
+            lineNumber += 1
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                skippedBytes += line.utf8.count + 1
+                guard skippedBytes <= InstrumentReader.maximumHeaderBytes else {
+                    throw ReaderError.invalidSource("\(relativePath): header section exceeds the 1 MiB header limit.")
+                }
+                continue
+            }
+            headers = try TabularExtractor.split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
+            break
+        }
+        guard let headers else {
+            throw ReaderError.invalidSource("\(relativePath): no header row was found.")
+        }
+        let columns = try TabularExtractor.resolveColumns(headers: headers, format: format, mode: mode, relativePath: relativePath, rowLabel: "header row")
+        var ledger = CellLedger(count: columns.count)
+        var rowCount = 0
+        while let line = try puller.nextLine() {
+            lineNumber += 1
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            let fields = try TabularExtractor.split(line, delimiter: format.delimiter, context: "\(relativePath) line \(lineNumber)")
+            for (columnIndex, column) in columns.enumerated() {
+                if column.1 >= fields.count {
+                    ledger.record(column: columnIndex, reason: .blank, message: "\(relativePath) line \(lineNumber): column \"\(column.0.key)\" has no cell \(column.1 + 1); shown as a gap.")
+                } else {
+                    try CellParser.append(raw: fields[column.1], column: columnIndex, key: column.0.key, lineNumber: lineNumber, relativePath: relativePath, decimal: format.decimalSeparator, ledger: &ledger)
+                }
+            }
+            rowCount += 1
+            if rowCount.isMultiple(of: 4096) { try Task.checkCancellation() }
+        }
+        guard rowCount > 0 else {
+            throw ReaderError.invalidSource("\(relativePath): no data rows were found after the header.")
+        }
+        return TabularExtraction(columns: columns.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: [], sha256: puller.digestHex())
     }
 }

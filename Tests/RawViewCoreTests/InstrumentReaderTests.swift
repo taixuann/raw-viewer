@@ -64,7 +64,7 @@ struct InstrumentReaderTests {
         #expect(measurement.source.sha256 == sha256Hex(Data(csv.utf8)))
         #expect(measurement.provenance["profile_id"] == "keysight-b1500a")
         #expect(measurement.provenance["profile_hash"] == sha256Hex(Data(profile.utf8)))
-        #expect(measurement.provenance["reader_version"] == "1.1.0")
+        #expect(measurement.provenance["reader_version"] == "1.2.0")
         #expect(measurement.instrument.vendor == "Keysight Technologies")
         #expect(measurement.instrument.model == "B1500A")
         #expect(measurement.supportStatus == "supported")
@@ -816,6 +816,81 @@ struct InstrumentReaderTests {
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first?.error)
         #expect(error.contains("could not be decoded"))
+    }
+
+    @Test func foreignEncodingMatchNeverReportsSupported() async throws {
+        // One candidate encoding (windows-1252) decodes the prefix while another
+        // candidate's detect signature (café-B, requiring é) appears only in that
+        // decoded text; the ascii candidate cannot decode 0xE9 itself. Inspection
+        // must stay blocked and load must fail closed.
+        let profile = """
+        schema_version: 1
+        instrument:
+          id: enc
+          name: Enc
+        formats:
+          - id: f-win
+            kind: tabular
+            extensions: [".csv"]
+            delimiter: ","
+            encoding: ["windows-1252"]
+            rows:
+              names_prefix: "DataName"
+              data_prefix: "DataValue"
+            columns:
+              voltage:
+                header: "V1"
+                quantity: voltage
+                unit: "V"
+              current:
+                header: "I1"
+                quantity: current
+                unit: "A"
+          - id: f-ascii
+            kind: tabular
+            extensions: [".csv"]
+            delimiter: ","
+            encoding: ["ascii"]
+            rows:
+              names_prefix: "DataName"
+              data_prefix: "DataValue"
+            columns:
+              voltage:
+                header: "V1"
+                quantity: voltage
+                unit: "V"
+              current:
+                header: "I1"
+                quantity: current
+                unit: "A"
+        modes:
+          - id: m-win
+            format: f-win
+            detect: ["MODE-A-ONLY"]
+            extract:
+              x: voltage
+              y: [current]
+          - id: m-ascii
+            format: f-ascii
+            detect: ["café-B"]
+            extract:
+              x: voltage
+              y: [current]
+        """
+        var bytes = Data("SetupTitle, caf".utf8)
+        bytes.append(0xE9)
+        bytes.append(contentsOf: Data("-B\nDataName, V1, I1\nDataValue, 0, 1E-12\n".utf8))
+        let root = try makeProject(profiles: ["enc.yaml": profile], sources: ["data/raw/mixed.csv": bytes])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.results.first?.inspection == nil)
+        let error = try #require(report.results.first?.error)
+        #expect(error.contains("own declared encoding"))
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(sources[0].url, project: project)
+        }
     }
 
     @Test func largeFileStreamsFullyWithoutCaps() async throws {

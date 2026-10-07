@@ -226,7 +226,7 @@ public struct NormalizedMeasurement: Sendable {
         guard !envelope.source.path.isEmpty, validSHA else {
             throw ContractError.invalid("Source path or SHA-256 is missing or malformed")
         }
-        guard ["xy", "timeseries", "spectrum", "table", "metadata-only"].contains(envelope.view.kind) else {
+        guard ["xy", "timeseries", "spectrum", "table", "metadata-only", "regions"].contains(envelope.view.kind) else {
             throw ContractError.invalid("Unknown view kind \(envelope.view.kind)")
         }
         guard Set(envelope.channels.map(\.name)).count == envelope.channels.count else {

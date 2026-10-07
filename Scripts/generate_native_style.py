@@ -5,16 +5,29 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / "figrecipe/presets/nature-single.yaml"
-OUTPUT = ROOT / "tools/raw-viewer/Sources/RawViewApp/Resources/NativePlotStyle.json"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+OUTPUT = PACKAGE_ROOT / "Sources/RawViewApp/Resources/NativePlotStyle.json"
+
+
+def figrecipe_source() -> Path:
+    override = os.environ.get("FIGRECIPE_ROOT")
+    base = Path(override) if override else PACKAGE_ROOT.parent / "figrecipe"
+    return base / "presets/nature-single.yaml"
 
 
 def render() -> str:
-    raw = SOURCE.read_bytes()
+    source = figrecipe_source()
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"FigRecipe Nature preset not found at {source}; "
+            "set FIGRECIPE_ROOT to the figrecipe checkout "
+            "(default is the old sibling ../figrecipe location)."
+        )
+    raw = source.read_bytes()
     text = raw.decode("utf-8")
     fonts = re.search(r"(?ms)^fonts:\n(.*?)(?=^\S|\Z)", text)
     palette = re.search(r"(?ms)^colors:\s*\n\s+palette:\n(.*?)(?=^\s+rgb:|^\S|\Z)", text)
@@ -41,15 +54,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    expected = render()
+    try:
+        expected = render()
+    except FileNotFoundError as error:
+        print(str(error))
+        return 1
     if args.check:
         if not OUTPUT.exists() or OUTPUT.read_text(encoding="utf-8") != expected:
-            print("Native style is stale; run generate_native_style.py")
+            print("Native style is stale; run Scripts/generate_native_style.py")
             return 1
         print("Native style matches the canonical Nature preset")
         return 0
     OUTPUT.write_text(expected, encoding="utf-8")
-    print(f"Wrote {OUTPUT.relative_to(ROOT)}")
+    print(f"Wrote {OUTPUT.relative_to(PACKAGE_ROOT)}")
     return 0
 
 

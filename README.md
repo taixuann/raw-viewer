@@ -12,10 +12,14 @@ when it exists: companion profiles then override the parent directory, and an
 empty or unusable companion directory never falls back to it. RawView owns the
 readers: supported layouts are the Keysight B1500A I-V, dual-sweep,
 list-sweep, and WGFMU tabular CSV profiles (`DataName`/`DataValue` rows), the
+WGFMU pulse first-row-header layouts (`time_s`/`current_a`,
+`index-pulse`/`current_a`, `time_s`/`voltage_v`/`current_v`/`fit`) and WGFMU
+endurance `DataName`/`DataValue` blocks (`raw_cycles`/`raw_ch2`, optional
+`raw_ch1`), the
 Keithley 2400 dual-sweep LVM tab file, and both Horiba LabRAM Raman tables
 (comment-header TSV with European decimal comma, legacy semicolon table).
 List-sweep values are shown exactly as stored, with no legacy sign transform;
-WGFMU plots channel 1 and keeps its profile-declared unit status. Viewer
+WGFMU plots channel 1 and keeps its profile-declared quantity/unit status. Viewer
 profiles are standalone, versioned top-level YAML (`schema_version: 1` or `2`);
 nested `raw_viewer` blocks are rejected.
 Existing unversioned profiles stay visible
@@ -35,9 +39,13 @@ the plot. The sidebar groups by Category (a filename grouping aid, never
 scientific study membership) and supports Shift/Command multi-selection, and a
 cancelled inspection keeps partial results
 with a resume action. Selecting multiple sources compares their original curves
-only when every source lists in one exact shared study manifest (`study_id` +
-`sources: [{path}]`) with matching X/Y quantities and exact units; otherwise the
-comparison stays blocked and the focused source remains shown. The floating
+only when every source is listed in one exact shared study manifest
+(`study_id` + `sources: [{path}]`). Missing, ambiguous, or different manifests
+block the comparison. Within a shared manifest, the focus anchors the cohort:
+RawView plots the focused source and every selection with the same ordered X/Y
+quantity-and-unit signature, and explains excluded selections without changing
+them. If the focus has no compatible peer, its single-source figure remains
+shown with the reason. The floating
 central plot card keeps generous whitespace with distinct per-source
 labels/colors, and the
 right inspector exposes Data, Style, Series, and Axes controls (series
@@ -51,8 +59,11 @@ or ambiguous sources keep their own actionable status and can be retried.
 Build and package locally:
 
 ```sh
-tools/raw-viewer/Scripts/package_app.sh
-open /tmp/RawView.app   # developer build output (local)
+Scripts/package_app.sh
+# Prints the packaged path, e.g. "Packaged and verified <path>/RawView.app".
+# Defaults use one fresh private temporary directory; set RAWVIEW_APP_PATH
+# (also RAWVIEW_BUILD_DIR, CLANG_MODULE_CACHE_PATH) to override. Then:
+open "$RAWVIEW_APP_PATH"   # only when the override is set; otherwise open the printed path
 ```
 
 The reader contract and instrument profile schema are documented in
@@ -83,11 +94,13 @@ by the cache; raw files and instrument profiles are never modified.
 The current package script is a developer build. It is not distribution-ready:
 notarization and distribution packaging remain unimplemented.
 
-The native Canvas style resource is generated from
-`figrecipe/presets/nature-single.yaml`; check for drift with:
+The native Canvas style resource is generated from the sibling FigRecipe
+checkout (`figrecipe/presets/nature-single.yaml`, default `../figrecipe`
+relative to this repository; override with `FIGRECIPE_ROOT`). From the RawView
+repository root, check for drift with:
 
 ```sh
-python3 tools/raw-viewer/Scripts/generate_native_style.py --check
+python3 Scripts/generate_native_style.py --check
 ```
 
 Donor disposition:

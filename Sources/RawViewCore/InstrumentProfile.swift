@@ -202,6 +202,9 @@ struct ProfileCatalog: Sendable {
         var companionStat = stat()
         let lstatResult = lstat(companionEntry.path, &companionStat)
         if lstatResult == 0 {
+            guard (companionStat.st_mode & S_IFMT) != S_IFLNK else {
+                return ProfileCatalog(profiles: [], issues: ["data/instruments/rawview is a symlink; profiles must be regular entries in the companion directory."], brokenClaims: [])
+            }
             let companionRoot = companionEntry.resolvingSymlinksInPath().standardizedFileURL
             guard companionRoot.path.hasPrefix(instrumentsRoot.path + "/") else {
                 return ProfileCatalog(profiles: [], issues: ["data/instruments/rawview resolves outside data/instruments. No profiles were loaded."], brokenClaims: [])
@@ -230,6 +233,7 @@ struct ProfileCatalog: Sendable {
         var profiles: [InstrumentProfile] = []
         var issues: [String] = []
         var brokenClaims: [BrokenClaim] = []
+        let canonicalProfileRoot = SecureFile.kernelCanonical(root.path)
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
         )) ?? []
@@ -237,29 +241,47 @@ struct ProfileCatalog: Sendable {
         for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let fileExtension = entry.pathExtension.lowercased()
             guard fileExtension == "yaml" || fileExtension == "yml" else { continue }
-            let canonical = entry.resolvingSymlinksInPath().standardizedFileURL
-            guard canonical.path.hasPrefix(root.path + "/") else {
-                issues.append("\(displayRoot)/\(entry.lastPathComponent): profile resolves outside \(displayRoot); skipped.")
+            // Clear diagnostic for a claimed symlink; the open below is the gate.
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: entry.path)) != nil {
+                issues.append("\(displayRoot)/\(entry.lastPathComponent): profile is a symlink; symlinks are never followed; skipped.")
                 continue
             }
-            let relativePath = String(canonical.path.dropFirst(project.root.path.count + 1))
-            guard let values = try? canonical.resourceValues(forKeys: [.isRegularFileKey]),
-                  values.isRegularFile == true else {
-                issues.append("\(relativePath): profile is not a readable regular file; skipped.")
+            guard let claimedRelative = project.relativePath(of: entry) else {
+                issues.append("\(displayRoot)/\(entry.lastPathComponent): profile is outside this project; skipped.")
                 continue
             }
-            // The secured handle pins the exact object validated above; the
-            // profile bytes are read and hashed from this same handle.
+            // Open the claimed path itself before any resolution; the
+            // descriptor pins the exact object and its canonical path is
+            // checked before any byte read.
             let handle: FileHandle
             do {
-                handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.root.path)
+                handle = try SecureFile.openVerified(resolvedPath: entry.path, beneath: project.root.path)
             } catch let error as SecureOpenError {
-                issues.append(error.profileIssue(display: relativePath))
+                issues.append(error.profileIssue(display: "\(displayRoot)/\(entry.lastPathComponent)"))
                 continue
             } catch {
-                issues.append("\(relativePath): profile could not be opened: \(error.localizedDescription); skipped.")
+                issues.append("\(claimedRelative): profile could not be opened: \(error.localizedDescription); skipped.")
                 continue
             }
+            guard let actualPath = SecureFile.canonicalPath(of: handle) else {
+                try? handle.close()
+                issues.append("\(claimedRelative): profile is not readable; skipped.")
+                continue
+            }
+            let actualParent = URL(fileURLWithPath: actualPath).deletingLastPathComponent().path
+            guard actualParent == canonicalProfileRoot else {
+                try? handle.close()
+                issues.append("\(claimedRelative): profile resolves outside \(displayRoot); skipped.")
+                continue
+            }
+            var fileStat = stat()
+            guard fstat(handle.fileDescriptor, &fileStat) == 0,
+                  (fileStat.st_mode & S_IFMT) == S_IFREG else {
+                try? handle.close()
+                issues.append("\(claimedRelative): profile is not a readable regular file; skipped.")
+                continue
+            }
+            let relativePath = claimedRelative
             let raw: Data
             do {
                 raw = try handle.read(upToCount: maximumProfileBytes + 1) ?? Data()
@@ -590,8 +612,9 @@ private enum ProfileSchema {
                 fail("\(field).transforms are not part of schema v\(version); remove the field (see CONTRACT.md).")
             }
             // Schema v1 supports row-block `tabular`; schema v2 adds the
-            // headerless positional `comment-tsv` layout.
-            let supportedKinds = version >= 2 ? ["tabular", "comment-tsv"] : ["tabular"]
+            // headerless positional `comment-tsv` layout and the explicit
+            // `first-row-header` layout (first non-blank line is the header).
+            let supportedKinds = version >= 2 ? ["tabular", "comment-tsv", "first-row-header"] : ["tabular"]
             let kind: String
             if let found = node.value(for: "kind")?.scalarValue, supportedKinds.contains(found) {
                 kind = found
@@ -602,9 +625,9 @@ private enum ProfileSchema {
                 fail("\(field).kind \"\(node.value(for: "kind")?.scalarValue ?? "")\" is not supported; this viewer supports \(supportedKinds.map { "\"\($0)\"" }.joined(separator: ", ")).")
                 continue
             }
-            let allowedKeys: Set<String> = kind == "comment-tsv"
-                ? ["id", "kind", "extensions", "delimiter", "encoding", "columns", "decimal"]
-                : ["id", "kind", "extensions", "delimiter", "encoding", "rows", "columns", "decimal"]
+            let allowedKeys: Set<String> = kind == "tabular"
+                ? ["id", "kind", "extensions", "delimiter", "encoding", "rows", "columns", "decimal"]
+                : ["id", "kind", "extensions", "delimiter", "encoding", "columns", "decimal"]
             rejectUnknown(node, allowed: allowedKeys, scope: field, skipping: ["transforms"])
             guard let extensionValues = stringList(node.value(for: "extensions"), "\(field).extensions") else {
                 if node.value(for: "extensions") == nil { fail("\(field).extensions must list at least one file extension such as \".csv\".") }
@@ -654,9 +677,10 @@ private enum ProfileSchema {
             }
             let namesPrefix: String?
             let dataPrefix: String?
-            if kind == "comment-tsv" {
+            if kind == "comment-tsv" || kind == "first-row-header" {
                 if node.value(for: "rows") != nil {
-                    fail("\(field).rows is not part of kind \"comment-tsv\" (headerless positional layout); remove the rows mapping.")
+                    let reason = kind == "comment-tsv" ? "headerless positional layout" : "first row is the header by definition"
+                    fail("\(field).rows is not part of kind \"\(kind)\" (\(reason)); remove the rows mapping.")
                     continue
                 }
                 namesPrefix = nil
@@ -711,9 +735,9 @@ private enum ProfileSchema {
                     columns.append(ProfileColumn(key: entry.key, header: nil, aliases: [], quantity: quantity, unit: unit, label: label, index: columnIndex, required: true))
                     continue
                 }
-                // Schema v2 tabular columns may declare an optional channel
-                // (`required: false`); schema v1 and headerless layouts reject
-                // the key as unknown, unchanged.
+                // Schema v2 tabular and first-row-header columns may declare an
+                // optional channel (`required: false`); schema v1 and headerless
+                // layouts reject the key as unknown, unchanged.
                 var columnAllowed: Set<String> = ["header", "aliases", "quantity", "unit", "label"]
                 if version >= 2 { columnAllowed.insert("required") }
                 rejectUnknown(entry.value, allowed: columnAllowed, scope: columnField)

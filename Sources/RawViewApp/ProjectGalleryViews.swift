@@ -276,9 +276,15 @@ struct ProjectGallery: View {
     private var overlayLabel: String {
         switch overlay {
         case .eligible(let path): " · shared \(URL(fileURLWithPath: path).lastPathComponent)"
+        case .partial(let group): " · focused cohort \(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)"
         case .blocked: " · comparison blocked"
         case nil: ""
         }
+    }
+
+    private func exclusionSummary(_ group: FocusedOverlayGroup) -> String {
+        let names = group.excluded.map { URL(fileURLWithPath: $0.path).lastPathComponent }.joined(separator: ", ")
+        return "Shared \(URL(fileURLWithPath: group.manifestPath).lastPathComponent): plotting the focused cohort (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)); excluded \(names). See the inspector for reasons. Selection unchanged."
     }
 
     @ViewBuilder
@@ -341,6 +347,37 @@ struct ProjectGallery: View {
                     .textSelection(.enabled)
                     .accessibilityLabel("Comparison blocked: \(reason)")
                 focusedSinglePlot(focused)
+            }
+        case .partial(let group):
+            let plottedIDs = Set(group.plottedPaths)
+            let cohort = selectedIDs.sorted().compactMap { states[$0]?.measurement }
+                .filter { plottedIDs.contains($0.source.path) }
+            let visible = cohort.filter { !hidden.contains($0.source.path) }
+            VStack(spacing: 0) {
+                let summary = exclusionSummary(group)
+                Label(summary, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.5))
+                    .textSelection(.enabled)
+                    .accessibilityLabel("Comparison exclusions: \(summary)")
+                if visible.isEmpty {
+                    ContentUnavailableView("All Series Hidden", systemImage: "eye.slash",
+                        description: Text("Every selected series is hidden. Show at least one series in the inspector."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            floatingCard {
+                                OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
+                                            focused: visible.first(where: { $0.source.path == focused.id }),
+                                            lineWidth: lineWidth,
+                                            xAbsolute: xAbsolute, yAbsolute: yAbsolute,
+                                            xScale: xScale, yScale: yScale)
+                            }
+                        }.padding(20)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         case nil:
             focusedSinglePlot(focused)
@@ -527,15 +564,14 @@ struct OverlayPlot: View {
                     .accessibilityLabel("Overlay plot with \(data.2.count) series")
                     .accessibilityValue(accessibleSummary)
                 VStack(alignment: .leading, spacing: 4) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 14) {
-                            ForEach(data.2) { item in
-                                Label(item.label, systemImage: "line.diagonal")
-                                    .foregroundStyle(palette(item.sourcePath, order: sourceOrder))
-                                    .font(.caption).lineLimit(1).truncationMode(.middle)
-                            }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], alignment: .leading, spacing: 4) {
+                        ForEach(data.2) { item in
+                            Label(item.label, systemImage: "line.diagonal")
+                                .foregroundStyle(palette(item.sourcePath, order: sourceOrder))
+                                .font(.caption).fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(pointCount(data.2)) points across visible series · \(gapCount(data.2)) gaps")
                         .font(.caption2).foregroundStyle(.secondary)
                 }

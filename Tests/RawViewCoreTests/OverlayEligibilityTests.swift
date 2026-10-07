@@ -22,6 +22,45 @@ struct OverlayEligibilityTests {
         #expect(index.manifests.first?.members == ["data/raw/a.csv"])
     }
 
+    @Test func studyManifestResolvesExplicitRawAliasesAndIgnoresFoldedRationale() async throws {
+        let csv = Data(syntheticCSV(values: [(0, 1e-12), (0.1, 2e-12)]).utf8)
+        let root = try makeOverlayProject(
+            profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
+            sources: ["data/raw/a.csv": csv, "data/raw/b.csv": csv],
+            manifests: ["studies/synthetic/inputs.yaml": """
+                schema_version: "2.0"
+                study_id: synthetic.study
+                selection_rationale: >
+                  These details are not membership data.
+                  The reader should ignore this folded scalar.
+                sources:
+                  - path: inputs/a.csv
+                    label: A
+                  - path: inputs/b.csv
+                    label: B
+                """]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inputs = root.appendingPathComponent("studies/synthetic/inputs")
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        for name in ["a.csv", "b.csv"] {
+            try FileManager.default.createSymbolicLink(
+                at: inputs.appendingPathComponent(name),
+                withDestinationURL: root.appendingPathComponent("data/raw/\(name)")
+            )
+        }
+
+        let project = try ProjectContext.open(root)
+        let index = ManifestIndex.load(project: project)
+        #expect(index.issues.isEmpty)
+        #expect(index.manifests.count == 1)
+        #expect(index.manifests.first?.relativePath == "studies/synthetic/inputs.yaml")
+        #expect(index.manifests.first?.members == ["data/raw/a.csv", "data/raw/b.csv"])
+
+        let measurements = try await loadAll(project.discoverSources(), project: project)
+        #expect(ifEligible(OverlayEvaluator.evaluate(measurements: measurements, manifests: index.manifests)))
+    }
+
     @Test func manifestDiscoveryIgnoresDerivedCacheYAML() async throws {
         let source = Data(syntheticCSV(values: [(0, 1e-12)]).utf8)
         let root = try makeOverlayProject(
@@ -254,6 +293,89 @@ struct OverlayEligibilityTests {
         #expect(measurements.count == 2)
         let result = OverlayEvaluator.evaluate(measurements: measurements, manifests: ManifestIndex.load(project: project).manifests)
         #expect(ifBlocked(result))
+    }
+
+    @Test func wgfmuUnknownQuantityBlocksOverlay() {
+        // Synthetic WGFMU shape: X time is declared, Y channels carry unknown
+        // quantity/unspecified unit. Displayable singly, never overlayable.
+        func wgfmuLike(path: String) -> NormalizedMeasurement {
+            NormalizedMeasurement(
+                source: SourceIdentity(path: path, sha256: String(repeating: "d", count: 64)),
+                instrument: InstrumentIdentity(id: "keysight-b1500a", name: "Keysight B1500A"),
+                applicationMode: "wgfmu",
+                view: MeasurementView(kind: "xy", x: "time", y: ["signal_1"], preserveOrder: true),
+                channels: [
+                    MeasurementChannel(name: "time", label: "Time", unit: "s", quantity: "time", values: [0, 1e-9]),
+                    MeasurementChannel(name: "signal_1", label: "Channel 1", unit: "unspecified", quantity: "unknown", values: [0, 0.5]),
+                    MeasurementChannel(name: "signal_2", label: "Channel 2", unit: "unspecified", quantity: "unknown", values: [1e-12, 2e-12]),
+                ],
+                metadataSections: [], warnings: [], supportStatus: "supported", provenance: [:]
+            )
+        }
+        let result = OverlayEvaluator.evaluate(
+            measurements: [wgfmuLike(path: "data/raw/w1.csv"), wgfmuLike(path: "data/raw/w2.csv")],
+            manifests: [StudyManifest(relativePath: "study.yaml", studyID: "synth-study-1",
+                                      members: ["data/raw/w1.csv", "data/raw/w2.csv"])]
+        )
+        guard case .blocked(let reason) = result else {
+            Issue.record("WGFMU unknown declarations accepted for overlay")
+            return
+        }
+        #expect(reason.lowercased().contains("quantity") || reason.lowercased().contains("unspecified") || reason.lowercased().contains("unit"))
+    }
+
+    @Test func focusedCohortAnchorsToFocusRatherThanLargestSubgroup() {
+        // Focus group {f, p1} (unit A) is smaller than {p2, p3, p4} (unit mV).
+        let members = ["data/raw/f.csv", "data/raw/p1.csv", "data/raw/p2.csv", "data/raw/p3.csv", "data/raw/p4.csv"]
+        let manifest = StudyManifest(relativePath: "study.yaml", studyID: "s", members: Set(members))
+        let measurements = [
+            syntheticMeasurement(path: "data/raw/f.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
+            syntheticMeasurement(path: "data/raw/p1.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
+            syntheticMeasurement(path: "data/raw/p2.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "mV"),
+            syntheticMeasurement(path: "data/raw/p3.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "mV"),
+            syntheticMeasurement(path: "data/raw/p4.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "mV"),
+        ]
+        let result = OverlayEvaluator.evaluateFocused(
+            measurements: measurements, manifests: [manifest], focusedSourceID: "data/raw/f.csv")
+        guard case .partial(let group) = result else {
+            Issue.record("focus-anchored cohort was not partial: \(result)")
+            return
+        }
+        #expect(group.manifestPath == "study.yaml")
+        #expect(Set(group.plottedPaths) == ["data/raw/f.csv", "data/raw/p1.csv"])
+        #expect(group.plottedPaths.contains("data/raw/f.csv"))
+        #expect(Set(group.excluded.map(\.path)) == ["data/raw/p2.csv", "data/raw/p3.csv", "data/raw/p4.csv"])
+        #expect(group.excluded.allSatisfy { !$0.reason.isEmpty })
+    }
+
+    @Test func focusedCohortManifestMismatchStaysFullyBlocked() {
+        let measurements = [
+            syntheticMeasurement(path: "data/raw/f.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
+            syntheticMeasurement(path: "data/raw/p1.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
+            syntheticMeasurement(path: "data/raw/p2.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "mV"),
+        ]
+        let split = [
+            StudyManifest(relativePath: "one.yaml", studyID: "s", members: ["data/raw/f.csv", "data/raw/p1.csv"]),
+            StudyManifest(relativePath: "two.yaml", studyID: "s", members: ["data/raw/p2.csv"]),
+        ]
+        #expect(ifBlocked(OverlayEvaluator.evaluateFocused(
+            measurements: measurements, manifests: split, focusedSourceID: "data/raw/f.csv")))
+    }
+
+    @Test func focusedCohortWithoutCompatiblePeerIsBlocked() {
+        let manifest = StudyManifest(relativePath: "study.yaml", studyID: "s",
+                                     members: ["data/raw/f.csv", "data/raw/p2.csv"])
+        let result = OverlayEvaluator.evaluateFocused(
+            measurements: [
+                syntheticMeasurement(path: "data/raw/f.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
+                syntheticMeasurement(path: "data/raw/p2.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "mV"),
+            ],
+            manifests: [manifest], focusedSourceID: "data/raw/f.csv")
+        guard case .blocked(let reason) = result else {
+            Issue.record("lone focus was not blocked: \(result)")
+            return
+        }
+        #expect(reason.contains("data/raw/p2.csv"))
     }
 }
 

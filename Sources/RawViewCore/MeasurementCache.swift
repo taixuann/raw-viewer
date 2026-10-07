@@ -16,7 +16,7 @@ import Foundation
 /// request but are not stored.
 public struct MeasurementCache: Sendable {
     /// Cache schema version; bumping it invalidates every existing entry.
-    static let schema = 2
+    static let schema = 3
     /// Default per-project disk budget (the app exposes Off/larger presets).
     public static let defaultLimitBytes: Int64 = 512 * 1024 * 1024
     /// Keep one decoded entry below a bounded memory ceiling even when the
@@ -87,7 +87,9 @@ public struct MeasurementCache: Sendable {
         let digest = SHA256.hash(data: Data(canonicalRoot.utf8)).map { String(format: "%02x", $0) }.joined()
         func prepare(_ base: URL, components: [String]) -> URL? {
             let canonicalBase = URL(fileURLWithPath: SecureFile.kernelCanonical(base.standardizedFileURL.path), isDirectory: true)
-            guard Self.isPrivateBase(canonicalBase) else { return nil }
+            // System-owned parents (Application Support, /tmp) are never
+            // required to be owner-only; only RawView-owned directories below
+            // the base must be private.
             var appDir = canonicalBase
             for component in components {
                 appDir.appendPathComponent(component, isDirectory: true)
@@ -96,11 +98,11 @@ public struct MeasurementCache: Sendable {
             return appDir
         }
         if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-           let prepared = prepare(support, components: ["RawView", "cache", "projects", digest, "rawview"]) {
+           let prepared = prepare(support, components: ["RawView-v\(schema)", "cache", "projects", digest, "rawview"]) {
             return (prepared, URL(fileURLWithPath: SecureFile.kernelCanonical(support.path), isDirectory: true))
         }
         let temporary = URL(fileURLWithPath: SecureFile.kernelCanonical(FileManager.default.temporaryDirectory.path), isDirectory: true)
-        let components = ["RawViewCache", "RawView", "cache", "projects", digest, "rawview"]
+        let components = ["RawViewCache-v\(schema)", "RawView", "cache", "projects", digest, "rawview"]
         if let prepared = prepare(temporary, components: components) { return (prepared, temporary) }
         return (components.reduce(temporary) { $0.appendingPathComponent($1, isDirectory: true) }, temporary)
     }
@@ -116,26 +118,82 @@ public struct MeasurementCache: Sendable {
         return lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR
     }
 
-    private static func isPrivateBase(_ url: URL) -> Bool {
+    private static func isPrivateOwnedDir(_ url: URL) -> Bool {
         var info = stat()
         return lstat(url.path, &info) == 0
             && (info.st_mode & S_IFMT) == S_IFDIR
             && info.st_uid == getuid()
-            && (info.st_mode & 0o022) == 0
+            && (info.st_mode & 0o077) == 0
+    }
+
+    private static func isPrivateOwnedFile(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0
+            && (info.st_mode & S_IFMT) == S_IFREG
+            && info.st_uid == getuid()
+            && (info.st_mode & 0o077) == 0
     }
 
     private static func makePrivateDirectory(_ url: URL) -> Bool {
+        // Fail-closed private creation: mkdir 0700 is already owner-only when
+        // we create it (umask only clears bits, never adds group/other bits).
+        // A pre-existing permissive directory is never repaired via a
+        // path-based chmod (check-then-use symlink race); it fails closed.
+        // Validation opens without following a swapped symlink.
+        if mkdir(url.path, 0o700) != 0 && errno != EEXIST { return false }
+        let fd = Darwin.open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
         var info = stat()
-        if lstat(url.path, &info) != 0 {
-            guard errno == ENOENT else { return false }
-            if mkdir(url.path, 0o700) != 0 && errno != EEXIST { return false }
-            guard lstat(url.path, &info) == 0 else { return false }
-        }
-        return (info.st_mode & S_IFMT) == S_IFDIR && info.st_uid == getuid() && (info.st_mode & 0o022) == 0
-            && lstat(url.path, &info) == 0
-            && (info.st_mode & S_IFMT) == S_IFDIR
+        guard fstat(fd, &info) == 0 else { return false }
+        return (info.st_mode & S_IFMT) == S_IFDIR && info.st_uid == getuid() && (info.st_mode & 0o077) == 0
+    }
+
+    /// Owner-only file validation without following a swapped symlink.
+    private static func isPrivateOwnedFileDescriptorPinned(_ path: String) -> Bool {
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { return false }
+        return (info.st_mode & S_IFMT) == S_IFREG
             && info.st_uid == getuid()
-            && (info.st_mode & 0o022) == 0
+            && (info.st_mode & 0o077) == 0
+    }
+
+    /// Creates an owner-only regular file without following a pre-existing
+    /// symlink (O_EXCL|O_NOFOLLOW): 0600 at creation stays owner-only under
+    /// any umask, so no path-based chmod is needed.
+    private static func writeFileNoFollow(_ data: Data, to url: URL) -> Bool {
+        let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+        var written = 0
+        while written < data.count {
+            let result: Int = data.withUnsafeBytes { body in
+                guard let base = body.baseAddress?.advanced(by: written) else { return -1 }
+                return Darwin.write(fd, base, data.count - written)
+            }
+            if result < 0 {
+                if errno == EINTR { continue }
+                Darwin.unlink(url.path)
+                return false
+            }
+            if result == 0 {
+                Darwin.unlink(url.path)
+                return false
+            }
+            written += result
+        }
+        var info = stat()
+        guard fstat(fd, &info) == 0,
+              (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_uid == getuid(),
+              (info.st_mode & 0o077) == 0 else {
+            Darwin.unlink(url.path)
+            return false
+        }
+        return true
     }
 
     var rootPath: String {
@@ -144,21 +202,21 @@ public struct MeasurementCache: Sendable {
         }
     }
 
-    /// Containment gate for every cache operation: the app-local namespace
-    /// beneath its private base must be a chain of real, owner-only directories
-    /// with no symlink swap. Failure becomes a miss/no-op, so no lookup,
-    /// accounting, write, eviction, or clear can escape the verified root.
+    /// Containment gate for every cache operation: the RawView-owned namespace
+    /// beneath its base must be a chain of real, owner-only directories
+    /// with no symlink swap. System-owned parents (Application Support, /tmp)
+    /// are never required to be owner-only. Failure becomes a miss/no-op, so
+    /// no lookup, accounting, write, eviction, or clear can escape the
+    /// verified root.
     private func namespaceIntact() -> Bool {
         let root = URL(fileURLWithPath: rootPath, isDirectory: true)
         guard case .appLocal(_, let basePath) = rootResolution else { return false }
         let base = URL(fileURLWithPath: basePath, isDirectory: true)
-        guard Self.isPrivateBase(base), root.path.hasPrefix(base.path + "/") else { return false }
+        guard root.path.hasPrefix(base.path + "/") else { return false }
         var current = root
         while current.path != base.path {
             guard Self.isRealDirectory(current), !Self.isSymlink(at: current.path) else { return false }
-            var info = stat()
-            guard lstat(current.path, &info) == 0,
-                  info.st_uid == getuid(), (info.st_mode & 0o022) == 0 else { return false }
+            guard Self.isPrivateOwnedDir(current) else { return false }
             current.deleteLastPathComponent()
         }
         return true
@@ -167,10 +225,21 @@ public struct MeasurementCache: Sendable {
     // MARK: measurement payload codec (binary plist, full fidelity)
 
     /// Serializes the complete normalized measurement for storage. Binary
-    /// property lists preserve every Double bit pattern exactly (packed IEEE-754
-    /// via the Swift runtime's plist bridge) and every gap reason, metadata
-    /// field, and provenance entry.
+    /// property lists preserve the packed sample arrays exactly (eight
+    /// little-endian bytes per sample plus one gap-code byte; gap slots use
+    /// zero bytes) and every gap reason, metadata field, and provenance entry.
     static func encode(measurement: NormalizedMeasurement) throws -> Data {
+        for channel in measurement.channels {
+            guard channel.values.count == channel.gapReasons.count else {
+                throw ContractError.invalid("Malformed cache payload: channel value and gap reason counts differ.")
+            }
+            guard zip(channel.values, channel.gapReasons).allSatisfy({ value, reason in value == nil || reason == nil }) else {
+                throw ContractError.invalid("Malformed cache payload: a present sample has a gap reason.")
+            }
+            guard channel.values.allSatisfy({ $0 == nil || $0!.isFinite }) else {
+                throw ContractError.invalid("Malformed cache payload: a present sample is not finite.")
+            }
+        }
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         return try encoder.encode(MeasurementPayload(measurement: measurement))
@@ -206,8 +275,8 @@ public struct MeasurementCache: Sendable {
         var channelUnits: [String]
         var channelQuantities: [String]
         var channelHasQuantity: [Bool]
-        var channelValueBits: [[String]]
-        var channelGapReasons: [[String]]
+        var channelValueBytes: [Data]
+        var channelGapCodes: [Data]
         var sectionTitles: [String]
         var sectionFieldKeys: [[String]]
         var sectionFieldLabels: [[String]]
@@ -241,11 +310,30 @@ public struct MeasurementCache: Sendable {
             channelUnits = measurement.channels.map(\.unit)
             channelQuantities = measurement.channels.map { $0.quantity ?? "" }
             channelHasQuantity = measurement.channels.map { $0.quantity != nil }
-            channelValueBits = measurement.channels.map { channel in
-                channel.values.map { $0.map { String($0.bitPattern, radix: 16) } ?? "" }
+            channelValueBytes = measurement.channels.map { channel in
+                var bytes = Data(capacity: channel.values.count * 8)
+                for value in channel.values {
+                    if let value {
+                        let bits = value.bitPattern
+                        for shift in stride(from: 0, to: 64, by: 8) {
+                            bytes.append(UInt8((bits >> shift) & 0xFF))
+                        }
+                    } else {
+                        bytes.append(contentsOf: [UInt8](repeating: 0, count: 8))
+                    }
+                }
+                return bytes
             }
-            channelGapReasons = measurement.channels.map { channel in
-                channel.gapReasons.map { $0?.rawValue ?? "" }
+            channelGapCodes = measurement.channels.map { channel in
+                var codes = Data(capacity: channel.values.count)
+                for (value, reason) in zip(channel.values, channel.gapReasons) {
+                    if value != nil {
+                        codes.append(0)
+                    } else {
+                        codes.append(MeasurementPayload.gapCode(reason))
+                    }
+                }
+                return codes
             }
             sectionTitles = measurement.metadataSections.map(\.title)
             sectionFieldKeys = measurement.metadataSections.map { $0.fields.map(\.key) }
@@ -257,6 +345,33 @@ public struct MeasurementCache: Sendable {
             warnings = measurement.warnings
             supportStatus = measurement.supportStatus
             provenance = measurement.provenance
+        }
+
+        static func gapCode(_ reason: GapReason?) -> UInt8 {
+            switch reason {
+            case nil: return 6
+            case .blank: return 1
+            case .nan: return 2
+            case .infinite: return 3
+            case .saturated: return 4
+            case .unknown: return 5
+            }
+        }
+
+        /// Decodes one gap byte: `.success((isPresent, reason))`, or nil for an
+        /// unknown code. Code 0 is value-present; 1–5 are typed gaps; 6 is a
+        /// nil gap reason with a nil value (distinct from `.unknown`).
+        static func decodedGap(_ code: UInt8) -> (isPresent: Bool, reason: GapReason?)? {
+            switch code {
+            case 0: return (true, nil)
+            case 1: return (false, .blank)
+            case 2: return (false, .nan)
+            case 3: return (false, .infinite)
+            case 4: return (false, .saturated)
+            case 5: return (false, .unknown)
+            case 6: return (false, nil)
+            default: return nil
+            }
         }
 
         static func storage(_ value: JSONValue) -> [String] {
@@ -293,8 +408,8 @@ public struct MeasurementCache: Sendable {
                 && channelLabels.count == channelUnits.count
                 && channelUnits.count == channelQuantities.count
                 && channelQuantities.count == channelHasQuantity.count
-                && channelHasQuantity.count == channelValueBits.count
-                && channelValueBits.count == channelGapReasons.count
+                && channelHasQuantity.count == channelValueBytes.count
+                && channelValueBytes.count == channelGapCodes.count
             let sectionsAligned = sectionTitles.count == sectionFieldKeys.count
                 && sectionFieldKeys.count == sectionFieldLabels.count
                 && sectionFieldLabels.count == sectionFieldValues.count
@@ -305,27 +420,30 @@ public struct MeasurementCache: Sendable {
             var channels: [MeasurementChannel] = []
             channels.reserveCapacity(channelNames.count)
             for index in channelNames.indices {
-                let bits = channelValueBits[index]
-                let reasons = channelGapReasons[index]
-                guard bits.count == reasons.count else { return nil }
+                let valueBytes = channelValueBytes[index]
+                let gapCodes = channelGapCodes[index]
+                guard valueBytes.count % 8 == 0, gapCodes.count == valueBytes.count / 8 else { return nil }
                 var values: [Double?] = []
                 var gapReasons: [GapReason?] = []
-                values.reserveCapacity(bits.count)
-                gapReasons.reserveCapacity(bits.count)
-                for sample in bits.indices {
-                    if bits[sample].isEmpty {
-                        values.append(nil)
-                    } else if let value = UInt64(bits[sample], radix: 16) {
-                        values.append(Double(bitPattern: value))
-                    } else {
-                        return nil
+                values.reserveCapacity(gapCodes.count)
+                gapReasons.reserveCapacity(gapCodes.count)
+                for sample in 0..<gapCodes.count {
+                    guard let gap = MeasurementPayload.decodedGap(gapCodes[sample]) else { return nil }
+                    let start = sample * 8
+                    guard start + 8 <= valueBytes.count else { return nil }
+                    var bits: UInt64 = 0
+                    for offset in 0..<8 {
+                        bits |= UInt64(valueBytes[start + offset]) << (offset * 8)
                     }
-                    if reasons[sample].isEmpty {
+                    if gap.isPresent {
+                        let value = Double(bitPattern: bits)
+                        guard value.isFinite else { return nil }
+                        values.append(value)
                         gapReasons.append(nil)
-                    } else if let reason = GapReason(rawValue: reasons[sample]) {
-                        gapReasons.append(reason)
                     } else {
-                        return nil
+                        guard bits == 0 else { return nil }
+                        values.append(nil)
+                        gapReasons.append(gap.reason)
                     }
                 }
                 let quantity = channelHasQuantity[index] ? channelQuantities[index] : nil
@@ -395,14 +513,41 @@ public struct MeasurementCache: Sendable {
 
     // MARK: secured source access (shared by lookup and verification)
 
-    /// No-follow open beneath `data/raw` plus the exact bounded prefix read.
-    /// Reused by every cache path so identity and verification can never
-    /// diverge from what the reader itself opens.
-    static func openSecuredPrefix(source: RawSource, project: ProjectContext) throws -> (handle: FileHandle, prefix: Data) {
-        let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
-        let handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
-        let prefix = try handle.read(upToCount: InstrumentReader.headerSampleBytes) ?? Data()
-        return (handle, prefix)
+    /// Claimed-path open with descriptor-pinned verification. Opens the
+    /// claimed path itself with `O_NOFOLLOW` before any path resolution, then
+    /// checks that selected-path identity is in data/raw and the opened
+    /// descriptor remains beneath that root before reading bytes. The
+    /// descriptor's F_GETPATH alias is not identity for hardlinked sources.
+    static func openSecuredPrefix(source: RawSource, project: ProjectContext) throws -> (handle: FileHandle, prefix: Data, selectedURL: URL, descriptorSize: Int64) {
+        // Excluded suffixes are rejected from the claimed name alone, before
+        // any path resolution or filesystem access touches them.
+        guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
+            throw SecureOpenError.unreadable(path: source.url.path)
+        }
+        guard project.relativePath(of: source.url) == source.relativePath,
+              source.relativePath.hasPrefix("data/raw/") else {
+            throw SecureOpenError.escaped(path: source.url.path)
+        }
+        // Clear diagnostic for a claimed symlink; the open below remains the
+        // security gate.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: source.url.path)) != nil {
+            throw SecureOpenError.symlink(path: source.url.path)
+        }
+        let handle = try SecureFile.openVerified(resolvedPath: source.url.path, beneath: project.rawRoot.path)
+        var fileStat = stat()
+        guard fstat(handle.fileDescriptor, &fileStat) == 0 else {
+            try? handle.close()
+            throw SecureOpenError.unreadable(path: source.url.path)
+        }
+        let descriptorSize = Int64(fileStat.st_size)
+        let prefix: Data
+        do {
+            prefix = try handle.read(upToCount: InstrumentReader.headerSampleBytes) ?? Data()
+        } catch {
+            try? handle.close()
+            throw SecureOpenError.unreadable(path: source.url.path)
+        }
+        return (handle, prefix, source.url, descriptorSize)
     }
 
     // MARK: inspection cache
@@ -418,51 +563,41 @@ public struct MeasurementCache: Sendable {
         case blocked(String)
     }
 
-    /// Deterministic inspection cache. The caller supplies a typed producer
-    /// that throws for cancellation and transient filesystem/security/open/
-    /// read failures (never cached) and returns a `CachedInspection` for
-    /// deterministic outcomes after the contained open and exact-prefix read.
-    /// The seam performs the mandatory secured open + exact-prefix hash + size
-    /// check first (identity), consults the entry, and only falls back to the
-    /// producer on a miss.
+    /// Deterministic inspection cache. The producer consumes the exact pinned
+    /// prefix bytes, descriptor size, and descriptor canonical URL from the
+    /// cache's secured open and must not reopen the path. If secure opening
+    /// fails, this throws and the caller takes the ordinary uncached path;
+    /// nothing is cached or manufactured here.
     public func inspection(
         for source: RawSource,
         project: ProjectContext,
         catalogFingerprint: String,
-        producer: @Sendable () async throws -> CachedInspection
+        producer: @Sendable (Data, Int64, URL) async throws -> CachedInspection
     ) async throws -> (outcome: CachedInspection, fromCache: Bool) {
-        // Excluded suffixes never reach any source access or cache key.
+        // Claimed excluded suffixes never reach any source access or cache key.
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
-            let outcome = try await producer()
-            return (outcome, false)
+            throw SecureOpenError.unreadable(path: source.url.path)
         }
-        guard let secured = try? MeasurementCache.openSecuredPrefix(source: source, project: project) else {
-            // Unreadable/missing/symlinked/escaped source: the producer decides
-            // (and throws for non-deterministic access failures); nothing is cached.
-            let outcome = try await producer()
-            return (outcome, false)
-        }
-        let size: Int64
-        // stat the pinned descriptor instead of seekToEnd: seekToEnd would move
-        // the read offset and truncate any subsequent stream reusing the handle.
-        var fileStat = stat()
-        if fstat(secured.handle.fileDescriptor, &fileStat) == 0 {
-            size = Int64(fileStat.st_size)
-        } else {
-            size = source.byteSize
-        }
-        // The handle is not needed across the entry read and producer await:
-        // close it now.
-        try? secured.handle.close()
+        let secured = try MeasurementCache.openSecuredPrefix(source: source, project: project)
+        let size = secured.descriptorSize
         let prefixDigest = sha256Hex(secured.prefix)
-        let identity = MeasurementCache.inspectionIdentity(source: RawSource(relativePath: source.relativePath, url: source.url, byteSize: size), prefixSHA256: prefixDigest, catalogFingerprint: catalogFingerprint)
+        let selectedURL = secured.selectedURL
+        // Identity follows the selected source name, not a non-unique
+        // descriptor alias, plus pinned size/prefix and the catalog fingerprint.
+        let identity = MeasurementCache.inspectionIdentity(source: RawSource(relativePath: source.relativePath, url: selectedURL, byteSize: size), prefixSHA256: prefixDigest, catalogFingerprint: catalogFingerprint)
         if let (payload, _) = try? readEntry(key: identity.key, kind: "inspection"),
            let cached = try? PropertyListDecoder().decode(CachedInspection.self, from: payload) {
-                        touch(key: identity.key)
+            try? secured.handle.close()
+            touch(key: identity.key)
             return (cached, true)
             // Corrupt entry falls through to the producer and is rebuilt.
         }
-                let outcome = try await producer()
+        // The handle's prefix/size are already pinned; the producer must not
+        // reopen the path. Close before the await to avoid holding a
+        // descriptor across suspension; identity already captures pinned bytes.
+        let pinnedPrefix = secured.prefix
+        try? secured.handle.close()
+        let outcome = try await producer(pinnedPrefix, size, selectedURL)
         // Check task cancellation immediately before store: cancelled tasks
         // must never create an entry.
         guard !Task.isCancelled else { return (outcome, false) }
@@ -478,41 +613,40 @@ public struct MeasurementCache: Sendable {
     /// equal the digest recorded in the entry before decode. Size and mtime
     /// are never content proof.
     public func measurement(for source: RawSource, project: ProjectContext, profileFingerprint: String) throws -> NormalizedMeasurement? {
+        try Task.checkCancellation()
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else { return nil }
-        // Identity needs the secured descriptor: no-follow open under data/raw,
-        // exact bounded prefix, descriptor size.
-        let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
-        let prefix: Data
-        let size: Int64
+        // Reuse the claimed-path secured open; keep that same descriptor open
+        // through the full digest. No close/reopen between prefix identity and
+        // verification. A failed fstat already fails closed inside the open.
+        let secured: (handle: FileHandle, prefix: Data, selectedURL: URL, descriptorSize: Int64)
         do {
-            let handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
-            prefix = try handle.read(upToCount: InstrumentReader.headerSampleBytes) ?? Data()
-            var fileStat = stat()
-            if fstat(handle.fileDescriptor, &fileStat) == 0 {
-                size = Int64(fileStat.st_size)
-            } else {
-                size = source.byteSize
-            }
-            try? handle.close()
+            secured = try MeasurementCache.openSecuredPrefix(source: source, project: project)
+        } catch let error as CancellationError {
+            throw error
         } catch {
             return nil
         }
-        let probe = RawSource(relativePath: source.relativePath, url: source.url, byteSize: size)
+        let handle = secured.handle
+        defer { try? handle.close() }
+        let prefix = secured.prefix
+        let size = secured.descriptorSize
+        let selectedURL = secured.selectedURL
+        let probe = RawSource(relativePath: source.relativePath, url: selectedURL, byteSize: size)
         let identity = MeasurementCache.measurementIdentity(source: probe, prefixSHA256: sha256Hex(prefix), catalogFingerprint: profileFingerprint)
         guard let (payload, meta) = try? readEntry(key: identity.key, kind: "measurement"),
               let recorded = meta?["full_sha256"] as? String else { return nil }
-        // Full-content verification before decode/use: a fresh digest of the
-        // whole source must equal the digest recorded in the entry.
-        let freshDigest: String?
+        // Full-content verification on the same descriptor: its read offset
+        // already sits after the prefix, so every byte is hashed once without
+        // reopening the path.
+        let freshDigest: String
         do {
-            let handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
-            defer { try? handle.close() }
-            let freshPrefix = try handle.read(upToCount: InstrumentReader.headerSampleBytes) ?? Data()
-            freshDigest = try MeasurementCache.fullDigest(handle: handle, prefix: freshPrefix)
+            freshDigest = try MeasurementCache.fullDigest(handle: handle, prefix: prefix)
+        } catch let error as CancellationError {
+            throw error
         } catch {
             return nil
         }
-        guard let freshDigest, freshDigest == recorded else { return nil }
+        guard freshDigest == recorded else { return nil }
         touch(key: identity.key)
         return try? MeasurementCache.decode(measurement: payload)
     }
@@ -525,6 +659,9 @@ public struct MeasurementCache: Sendable {
         var hasher = SHA256()
         hasher.update(data: prefix)
         while true {
+            // Honor cancellation during the digest: a cancelled task must not
+            // produce (or store) a partial digest entry.
+            try Task.checkCancellation()
             let chunk = try handle.read(upToCount: 1 << 20) ?? Data()
             if chunk.isEmpty { break }
             hasher.update(data: chunk)
@@ -571,11 +708,11 @@ public struct MeasurementCache: Sendable {
         let fm = FileManager.default
         // Neither the level-1 prefix directory nor the entry directory may be
         // a symlink: nothing is ever written through a link out of the root.
+        // Fail-closed private creation (mkdir 0700 + O_NOFOLLOW validation);
+        // no path-based chmod, so a swapped symlink cannot divert permissions.
         let prefixURL = directory.deletingLastPathComponent()
         if Self.isSymlink(at: prefixURL.path) || Self.isSymlink(at: directory.path) { return }
-        do {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        } catch { return }
+        guard Self.makePrivateDirectory(prefixURL), Self.makePrivateDirectory(directory) else { return }
         let payloadURL = directory.appendingPathComponent("payload")
         let metaURL = directory.appendingPathComponent("meta")
         let oldSize = directorySize(directory)
@@ -588,20 +725,27 @@ public struct MeasurementCache: Sendable {
         guard let metaData = try? PropertyListEncoder().encode(meta) else { return }
         let total = Int64(payload.count + metaData.count)
         guard total <= limitBytes, total <= Self.maximumEntryBytes else { return } // oversized: not stored
-        // Atomic replace: temp files inside the entry directory, then rename.
+        // Atomic replace: owner-only temp files inside the entry directory,
+        // then a single rename that never follows a pre-existing destination
+        // symlink (rename replaces the link itself, never its target).
         let payloadTemp = directory.appendingPathComponent("payload.tmp-\(UUID().uuidString)")
         let metaTemp = directory.appendingPathComponent("meta.tmp-\(UUID().uuidString)")
-        guard (try? payload.write(to: payloadTemp, options: .atomic)) != nil else { return }
-        guard (try? metaData.write(to: metaTemp, options: .atomic)) != nil else {
+        guard Self.writeFileNoFollow(payload, to: payloadTemp) else { return }
+        guard Self.writeFileNoFollow(metaData, to: metaTemp) else {
             try? fm.removeItem(at: payloadTemp)
             return
         }
-        do {
-            try Self.replaceOrMove(payloadTemp, at: payloadURL)
-            try Self.replaceOrMove(metaTemp, at: metaURL)
-        } catch {
+        guard Darwin.rename(payloadTemp.path, payloadURL.path) == 0,
+              Darwin.rename(metaTemp.path, metaURL.path) == 0 else {
             try? fm.removeItem(at: payloadTemp)
             try? fm.removeItem(at: metaTemp)
+            accounting.usedBytes = nil
+            return
+        }
+        guard Self.isPrivateOwnedFileDescriptorPinned(payloadURL.path),
+              Self.isPrivateOwnedFileDescriptorPinned(metaURL.path) else {
+            try? fm.removeItem(at: payloadURL)
+            try? fm.removeItem(at: metaURL)
             accounting.usedBytes = nil
             return
         }
@@ -613,14 +757,6 @@ public struct MeasurementCache: Sendable {
         }
         if let used = accounting.usedBytes, used > limitBytes {
             accounting.usedBytes = evictToFit(limit: limitBytes)
-        }
-    }
-
-    private static func replaceOrMove(_ temporary: URL, at destination: URL) throws {
-        if FileManager.default.fileExists(atPath: destination.path) {
-            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
-        } else {
-            try FileManager.default.moveItem(at: temporary, to: destination)
         }
     }
 
@@ -683,7 +819,7 @@ public struct MeasurementCache: Sendable {
     }
 
     /// Returns the payload and meta when the entry is intact: both files
-    /// present, payload digest matches the recorded checksum, schema current.
+    /// present, owner-only, payload digest matches the recorded checksum, schema current.
     func readEntry(key: String, kind: String) throws -> (payload: Data, meta: [String: Any]?) {
         lock.lock()
         defer { lock.unlock() }
@@ -691,9 +827,11 @@ public struct MeasurementCache: Sendable {
         let directory = entryDirectory(key: key)
         let prefixURL = directory.deletingLastPathComponent()
         guard !Self.isSymlink(at: prefixURL.path), !Self.isSymlink(at: directory.path) else { return (Data(), nil) }
+        guard Self.isPrivateOwnedDir(prefixURL), Self.isPrivateOwnedDir(directory) else { return (Data(), nil) }
         let payloadURL = directory.appendingPathComponent("payload")
         let metaURL = directory.appendingPathComponent("meta")
         guard !Self.isSymlink(at: payloadURL.path), !Self.isSymlink(at: metaURL.path) else { return (Data(), nil) }
+        guard Self.isPrivateOwnedFile(payloadURL.path), Self.isPrivateOwnedFile(metaURL.path) else { return (Data(), nil) }
         guard let metaData = Self.readBoundedFile(metaURL, maximumBytes: Self.maximumMetadataBytes),
               let meta = try? PropertyListDecoder().decode(EntryMeta.self, from: metaData) else {
             return (Data(), nil)

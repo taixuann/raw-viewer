@@ -107,7 +107,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.map(\.relativePath) == ["data/raw/shown.csv"])
 }
 
-@Test func rejectsDiscoveredSymlinksThatEscapeRawRoot() throws {
+@Test func listsDiscoveredSymlinksLexicallyWithoutTargetAccess() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -121,7 +121,10 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     let project = try ProjectContext.open(root)
     let sources = try project.discoverSources()
 
-    #expect(sources.map(\.relativePath) == ["data/raw/inside.csv"])
+    // Symlink entries stay listed lexically (claimed path, no target size) so
+    // inspection can report them; the target is never resolved or read.
+    #expect(sources.map(\.relativePath) == ["data/raw/escape.csv", "data/raw/inside.csv"])
+    #expect(sources.first(where: { $0.relativePath == "data/raw/escape.csv" })?.byteSize == 0)
 }
 
 @Test func discoveryAsyncUsesProductionSeamOffMain() async throws {

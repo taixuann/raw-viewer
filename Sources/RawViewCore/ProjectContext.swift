@@ -54,6 +54,19 @@ public struct ProjectContext: Sendable {
         return source.lastPathComponent
     }
 
+    /// Project-relative path in either URL or kernel-canonical path space.
+    /// Nil when outside the project.
+    func relativePath(of url: URL) -> String? {
+        if url.path.hasPrefix(root.path + "/") {
+            return String(url.path.dropFirst(root.path.count + 1))
+        }
+        let kernelRoot = SecureFile.kernelCanonical(root.path)
+        if url.path.hasPrefix(kernelRoot + "/") {
+            return String(url.path.dropFirst(kernelRoot.count + 1))
+        }
+        return nil
+    }
+
     public func discoverSources() throws -> [RawSource] {
         try walkRawSources(onVisitDirectory: nil, onVisitFile: nil, cancellable: false)
     }
@@ -110,6 +123,8 @@ public struct ProjectContext: Sendable {
         visitedDirectories.insert(rawRoot.path)
         onVisitDirectory?(rawRoot)
         for case let url as URL in enumerator {
+            // macOS Finder metadata is not a measurement source.
+            if url.lastPathComponent == ".DS_Store" { continue }
             // Excluded suffixes are decided from the claimed name alone,
             // before any per-entry metadata request or symlink
             // canonicalization: an entry named *.spe/*.affm is skipped with
@@ -124,14 +139,38 @@ public struct ProjectContext: Sendable {
             if Self.skippedRawExtensions.contains(url.pathExtension.lowercased()) {
                 continue
             }
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .isSymbolicLinkKey])
+            // A symlink is never followed, resolved, opened, stat-ed, hashed,
+            // or read: `readlink` touches only the link itself, so even a
+            // dangling link is classified without reaching its target.
+            // Directory symlinks are left untraversed, while a supported-name
+            // file symlink is listed lexically (claimed path, no claimed
+            // target size) so inspection can report the no-follow diagnostic
+            // and plotting stays blocked.
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+                enumerator.skipDescendants()
+                // Lexical handling only: match the enumerator's path (which
+                // may use the kernel-canonical prefix) against either root
+                // form, then rebuild the claimed URL from the project root so
+                // downstream diagnostics and identity use one path space.
+                // The link target is never resolved, opened, or stat-ed.
+                let lexical = url.standardizedFileURL
+                let rawRootCanonical = SecureFile.kernelCanonical(rawRoot.path)
+                guard [rawRoot.path, rawRootCanonical].contains(where: {
+                    lexical.path == $0 || lexical.path.hasPrefix($0 + "/")
+                }) else { continue }
+                guard let relativePath = self.relativePath(of: lexical),
+                      !relativePath.isEmpty, !relativePath.hasPrefix("/") else { continue }
+                let claimed = root.appendingPathComponent(relativePath)
+                onVisitFile?(claimed)
+                discovered[relativePath] = RawSource(relativePath: relativePath, url: claimed, byteSize: 0)
+                if cancellable {
+                    filesSinceCheck += 1
+                    if filesSinceCheck.isMultiple(of: 64) { try Task.checkCancellation() }
+                }
+                continue
+            }
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey])
             guard let values else { continue }
-            // Symlinks are never followed for the inventory: their metadata
-            // describes the link, so a link never inventoried a supported
-            // source before either, and canonicalizing one could touch an
-            // excluded target. They are conservatively excluded without any
-            // target access.
-            if values.isSymbolicLink == true { continue }
             let canonical = url.resolvingSymlinksInPath().standardizedFileURL
             // A supported name whose canonical path carries an excluded
             // extension stays out of the inventory (fail-closed catch for

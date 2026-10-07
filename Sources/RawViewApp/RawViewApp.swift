@@ -183,9 +183,11 @@ final class RawViewModel: ObservableObject {
     }
 
     /// Overlay state for the current selection: nil when fewer than two are
-    /// selected (single-source display), otherwise eligible or blocked. A load
-    /// failure or missing measurement blocks the whole comparison; the caller
-    /// keeps the focused single-source plot when blocked.
+    /// selected (single-source display), otherwise eligible, focused-cohort
+    /// partial, or blocked. A load failure or missing measurement blocks the
+    /// whole comparison; the caller keeps the focused single-source plot when
+    /// blocked. Quantity/unit differences exclude non-matching selections
+    /// from the plotted cohort but never drop the focus.
     func overlayResult() -> OverlayEligibility? {
         guard selectedSourceIDs.count >= 2 else { return nil }
         let ids = selectedSourceIDs.sorted()
@@ -202,7 +204,7 @@ final class RawViewModel: ObservableObject {
         guard measurements.count == ids.count else {
             return .blocked(reason: "Not every selected source finished loading. The focused source remains shown.")
         }
-        return OverlayEvaluator.evaluate(measurements: measurements, manifests: studyManifests)
+        return OverlayEvaluator.evaluateFocused(measurements: measurements, manifests: studyManifests, focusedSourceID: focusedSourceID)
     }
 
     func ensureSelectedLoaded() {
@@ -584,10 +586,7 @@ struct RawDetailView: View {
         if let focusedID { currentState = model.sourceStates[focusedID] }
         var currentSource: RawSource? = nil
         if let focusedID {
-            for candidate in model.sources where candidate.id == focusedID {
-                currentSource = candidate
-                break
-            }
+            currentSource = model.sources.first(where: { $0.id == focusedID })
         }
         return InspectorPane(measurement: currentState?.measurement, inspection: currentState?.inspection,
                              source: currentSource?.url, error: currentState?.error ?? model.error,
@@ -923,8 +922,8 @@ struct InspectorPane: View {
             HStack {
                 Text("Line width").font(.caption)
                 Slider(value: $lineWidth, in: 0.5...3.0, step: 0.1) {
-                    Text("Line width")
-                }.accessibilityLabel("Series line width")
+                    EmptyView()
+                }.labelsHidden().accessibilityLabel("Series line width")
             }
             Text("Colors follow the native plot palette and repeat after its configured colors; source labels stay distinct. Visibility only changes presentation.")
                 .font(.caption2).foregroundStyle(.secondary)
@@ -944,6 +943,11 @@ struct InspectorPane: View {
                 Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
             } else if case .eligible(let path) = overlay {
                 Text("Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)").font(.caption2).foregroundStyle(.secondary)
+            } else if case .partial(let group) = overlay {
+                Text("Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent): plotting focused cohort (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
+                ForEach(group.excluded, id: \.path) { exclusion in
+                    Text("Excluded \(URL(fileURLWithPath: exclusion.path).lastPathComponent): \(exclusion.reason)").font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+                }
             }
         }
     }
@@ -953,6 +957,12 @@ struct InspectorPane: View {
         let isFocused = focusedID == id
         let state = states[id]
         let label = URL(fileURLWithPath: id).lastPathComponent
+        let exclusionReason: String? = {
+            if case .partial(let group) = overlay {
+                return group.excluded.first(where: { $0.path == id })?.reason
+            }
+            return nil
+        }()
         return HStack(spacing: 8) {
             Circle().fill(seriesColor(id)).frame(width: 9, height: 9).accessibilityHidden(true)
             Button {
@@ -965,6 +975,8 @@ struct InspectorPane: View {
                         Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
                     } else if state?.isLoading == true {
                         Text("Loading…").font(.caption2).foregroundStyle(.secondary)
+                    } else if let exclusionReason {
+                        Text("Excluded from comparison: \(exclusionReason)").font(.caption2).foregroundStyle(.orange).lineLimit(3)
                     } else if isFocused {
                         Text("Focused").font(.caption2).foregroundStyle(.secondary)
                     }
@@ -974,11 +986,17 @@ struct InspectorPane: View {
             .help("Focus this source")
             .accessibilityLabel("Focus \(label)")
             Spacer(minLength: 4)
-            Toggle(isOn: Binding(get: { !isHidden }, set: { show in
-                if show { hidden.remove(id) } else { hidden.insert(id) }
-            })) { Text("Show \(label)") }.labelsHidden()
-                .help(isHidden ? "Show this series" : "Hide this series")
-                .accessibilityLabel("\(label) visibility")
+            if exclusionReason == nil {
+                Toggle(isOn: Binding(get: { !isHidden }, set: { show in
+                    if show { hidden.remove(id) } else { hidden.insert(id) }
+                })) { Text("Show \(label)") }.labelsHidden()
+                    .help(isHidden ? "Show this series" : "Hide this series")
+                    .accessibilityLabel("\(label) visibility")
+            } else {
+                Text("Not plotted").font(.caption2).foregroundStyle(.secondary)
+                    .help("Excluded from the focused comparison cohort")
+                    .accessibilityLabel("\(label) excluded from comparison")
+            }
         }
         .contentShape(Rectangle())
     }

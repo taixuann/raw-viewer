@@ -9,14 +9,20 @@ when that entry exists.
 
 ## Project layout and discovery
 
+- The exact filename .DS_Store is omitted lexically at every depth before
+  per-entry metadata is requested. Other dot-prefixed files remain eligible
+  for normal inventory.
+
 - A project is a folder containing a readable `data/raw` directory. A missing
   raw directory is rejected with an actionable message so another folder can be
   selected.
-- Only regular files under the selected project's canonical `data/raw` are
-  inventoried. Symlinks are never followed for the inventory: a link is
-  excluded without touching its target, and descendant project roots are never
-  discovered as additional roots — a subdirectory carrying its own `data/raw`
-  marker is pruned, not recursed into.
+- Readable regular files under the selected project's canonical `data/raw`
+  enter the inventory except for the excluded names and suffixes below. Other
+  symlink entries are listed lexically with no claimed target size, then
+  blocked during inspection with a no-follow diagnostic; their targets are
+  never followed or read. Symlinked directories are not traversed, and
+  descendant project roots are never discovered as additional roots — a
+  subdirectory carrying its own `data/raw` marker is pruned, not recursed into.
 - Files ending in `.spe` or `.affm` (case-insensitive) are omitted from the
   inventory. RawView decides the exclusion from the file name and skips those
   entries before requesting any per-entry metadata from them; RawView never
@@ -106,13 +112,14 @@ V2 additions over v1 (all fail-closed; v1 documents reject the new fields):
 
 | Field | Meaning |
 |---|---|
-| `formats[].kind` | Finite layout set: `tabular` or `comment-tsv`. Any other kind is rejected. |
+| `formats[].kind` | Finite layout set: `tabular`, `comment-tsv`, or `first-row-header`. Any other kind is rejected. |
 | `formats[].decimal` | Optional lexical decimal separator, `"."` (default) or `","`. A comma decimal rewrites `12,345` to `12.345` before parsing; it conflicts with a `","` delimiter and is rejected there. Schema v1 has no decimal field. This is a lexical property, not a transform mechanism: v2 has no transforms field either. |
 | `formats[].rows.data_prefix` | May be `""` (empty string): every non-blank line after the header row is a data row (Keithley LVM rows carry an empty leading cell; the legacy Horiba semicolon table has numeric first cells). A non-empty marker keeps the v1 equality rule. Blank lines are skipped, never parsed as gap rows. |
 | `formats[].columns.<key>.column_index` | Required instead of `header`/`aliases` for `comment-tsv`: the 0-based source column. Indices must be unique per format. `header`/`aliases` are rejected for this kind, and `column_index` is rejected for `tabular`. |
-| `formats[].columns.<key>.required` | Tabular v2 only, `true` by default. `false` makes a declared non-axis channel optional: it resolves when its header is present and is skipped without invented values when absent, leaving required channels unchanged. Rejected in v1 and for `comment-tsv`. Plot axes (`extract.x`/`extract.y`) must reference required columns. |
+| `formats[].columns.<key>.required` | Tabular and first-row-header v2 only, `true` by default. `false` makes a declared non-axis channel optional: it resolves when its header is present and is skipped without invented values when absent, leaving required channels unchanged. Rejected in v1 and for `comment-tsv`. Plot axes (`extract.x`/`extract.y`) must reference required columns. |
 | `modes[].filename_contains_all` | Optional v2-only basename gate: a non-empty list of non-empty strings. Every token must occur case-insensitively in the source basename (`lastPathComponent` only; parent directories never match). Rejected in v1 as an unknown key. |
 | No `rows` for `comment-tsv` | A `rows` mapping under `comment-tsv` is rejected: the layout is headerless by definition. |
+| No `rows` for `first-row-header` | A `rows` mapping under `first-row-header` is rejected: the first non-blank line is the header row by definition, and every later non-blank line is a data row. |
 
 ## Project profile ownership
 
@@ -122,6 +129,9 @@ loads the Study runtime. A project may keep Study-owned profiles in
 `data/instruments/rawview/`. When `data/instruments/rawview/` exists, those
 companion profiles are the only profiles loaded: parent-directory YAML is
 ignored, and an empty or unusable companion directory never falls back to it.
+The `rawview` companion directory and each selected YAML entry must be regular
+paths in that directory; RawView rejects a symlinked companion directory,
+profile entry, or opened profile whose descriptor path resolves elsewhere.
 Companion profiles are standalone top-level RawView YAML without Study
 metadata, evidence, source references, or hashes. They describe only the
 formats the viewer supports. They must not duplicate Study run pins or embed
@@ -174,10 +184,19 @@ locally against the selected project and are not included in shared docs.
 The row-block layout covers the Keysight B1500A I-V, dual-sweep, list-sweep,
 and WGFMU tabular CSV profiles and, under schema v2, the Keithley LVM and
 legacy Horiba semicolon tables (empty `data_prefix`, tab/`;` delimiters). The
-headerless Horiba comment TSV uses the `comment-tsv` positional layout with the
-same gap contract. The approved list-sweep profile plots current exactly as
-stored; no legacy sign transform is applied. WGFMU plots channel 1 and keeps
-its declared unit status, so an unspecified unit remains ineligible for overlay.
+first-row-header layout covers the WGFMU pulse CSV profiles: the first
+non-blank line is the header row resolving declared channels by exact header
+(or alias fallback), and every later non-blank line is a data row with the
+same gap contract. The headerless Horiba comment TSV uses the `comment-tsv` positional layout with the
+same gap contract. The RawView list-sweep profile plots current exactly as stored; it deliberately does not apply the Study-owned profile’s `current × -1` transform. Study-pipeline parity for that transformed quantity is therefore not claimed. WGFMU plots channel 1 and keeps
+its declared quantity/unit status, so an unknown quantity or unspecified unit
+remains ineligible for overlay. WGFMU PPF layouts plot time or pulse index
+(X) against current (Y); STP plots time (X) against voltage (Y) only
+(the plot refuses mixed-unit Y channels), while `current_v`, `fit`, and
+`fit_current` remain complete table channels; endurance plots cycles (X)
+against raw_ch2 (Y). Ambiguous labels (`current_v`, `fit`, `fit_current`,
+`raw_ch1`, `raw_ch2`) stay unknown with unspecified unit, and absent optional
+channels are skipped without invented values.
 
 - The file is decoded with the profile's ordered encodings, trying only
   encodings from formats that declare the source extension. A leading
@@ -228,7 +247,7 @@ future overlay eligibility. It carries:
 | `source.path`, `source.sha256` | Project-relative path and SHA-256 of exactly the bytes parsed. |
 | `instrument.id`, `instrument.name` | Profile instrument identity, with optional profile `vendor`/`model` when declared. |
 | `application_mode` | Matched mode id. |
-| `view.kind`, `view.x`, `view.y`, `view.preserve_order` | `xy` view; `preserve_order` is always `true` for data views. |
+| `view.kind`, `view.x`, `view.y`, `view.preserve_order` | RawView profiles emit `xy` views; the v1 decoder also preserves `regions` records emitted by the existing project reader. `preserve_order` is always `true` for data views. |
 | `channels` | Ordered channels with `name`, `label`, `unit`, `quantity`, row-aligned `values` (numbers or null gaps), and parallel `gap_reasons` (`blank`, `nan`, `infinite`, `saturated`, `unknown`); names are unique and lengths equal, so every channel has the same acquisition row count. Non-null values are always finite. |
 | `metadata_sections`, `warnings`, `support_status` | Reported metadata and state; `supported` for extracted data. `metadata_sections` carries `Acquisition` (header fields such as SetupTitle, Dimension, record time), `Identity` (filename-derived device, timestamp, category, plus filename), and `Data` (channel/row/gap counts). `warnings` carries per-gap diagnostics and truncation notes. |
 | `provenance` | `reader_version` and `mode` always; profile-backed sources add `profile_id`, `profile_hash`, `profile_schema_version`. |
@@ -244,8 +263,10 @@ Unknown or calendrically impossible facts stay unknown and display as Unknown.
 ## Overlay comparison (exact-manifest + quantities/units)
 
 - Overlay membership comes only from an existing project YAML manifest with a
-  top-level `study_id` and a `sources` list of `{path}` objects. Filename
-  category tokens, group labels, and display names never establish membership.
+  top-level `study_id` and a `sources` list of `{path}` objects. That explicit
+  `study_id` is the per-source study value for every listed path (`library.study`
+  membership); filename category tokens, group labels, and display names never
+  establish it.
 - Every selected source must resolve through exactly one manifest, and all
   selected sources must share one identical manifest file (canonical
   project-relative manifest path). Equal Study IDs in different files remain
@@ -254,17 +275,25 @@ Unknown or calendrically impossible facts stay unknown and display as Unknown.
   valid, the focused single-source plot stays visible with the blocking reason.
   The viewer never picks the largest compatible subgroup and never omits the
   focused source.
-- All selected measurements must declare matching X and Y quantities with exact
-  matching units. Missing or placeholder (`unspecified` / `unknown`) units
-  block. Units are never converted.
+- Within that exact shared manifest, the comparison cohort is anchored to the
+  focused source. Plot the focus and every selected source with the same
+  complete, ordered X/Y quantity-and-unit signature. Exclude incompatible
+  sources with a per-source reason while leaving the selection unchanged; never
+  choose the largest compatible subgroup or omit the focus. Missing or
+  placeholder (`unspecified` / `unknown`) quantities or units make a source
+  ineligible for the cohort. If the focus cannot be compared, or no selected
+  peer matches it, keep the focused single-source plot and explain why. Units
+  are never converted.
 - Every eligible series draws its full arrays in acquisition order with gaps
   preserved: no sorting, interpolation, averaging, normalization, downsampling,
   or transforms. Series visibility and line width change presentation only.
-- Manifest source paths resolve project-relative or manifest-relative safely
-  inside the selected project (no-follow opens, containment-checked); absolute,
-  outside-project, malformed, or ambiguous mappings fail closed naming the
-  manifest path. Manifests are capped at 1 MiB like profiles; `.spe`/`.affm`
-  handling is unchanged.
+- Manifest source paths resolve project-relative or manifest-relative inside
+  the selected project's canonical `data/raw`. Explicit Study input aliases
+  may be symlinks, but their final resolved path must stay under that raw root;
+  selected sources are still opened without following links. Manifest members
+  ending in `.spe` or `.affm` are skipped lexically before path resolution.
+  Absolute, outside-project, malformed, or ambiguous mappings fail closed
+  naming the manifest path. Manifests are capped at 1 MiB like profiles.
 - The plot sits on a floating central card with surrounding whitespace and
   resize-safe axes; the right inspector exposes Data, Style, Series, and Axes.
   Series keep distinct labels/colors with per-series visibility toggles that
@@ -299,7 +328,9 @@ Unknown or calendrically impossible facts stay unknown and display as Unknown.
 - The source SHA-256 is computed incrementally from exactly the bytes parsed,
   so the recorded hash always identifies the parsed content.
 - Profile files are capped at 1 MiB and mode detection reads at most the first
-  64 KiB. Tabular sources stream in bounded chunks with cancellation
+  64 KiB. Each source line is capped at 1 MiB and accumulated row-block or
+  comment-TSV header bytes are capped at 1 MiB; exceeding either blocks that source.
+  Tabular sources stream in bounded chunks with cancellation
   checkpoints, and complete point arrays are retained without downsampling.
 - No arbitrary project code is executed by RawView.
 
@@ -313,7 +344,13 @@ project root, and entry names are digests; no raw path or project identifier
 appears in directory or entry names. The cached measurement payload does
 include the project-relative source path. Application Support is preferred,
 with a private temporary-directory location as fallback. If neither location
-can be secured, caching becomes a no-op and source reads still work.
+can be secured, caching becomes a no-op and source reads still work. The current
+schema uses a fresh `RawView-v3` directory (or `RawViewCache-v3` in the
+temporary fallback) so it does not depend on permissions of cache directories
+created by earlier releases. Owner-only storage protects against project
+contributors running under a different OS user; it is not a sandbox against a
+hostile process running as the same user, which can race path-based cache
+operations.
 
 - **Inspection entries** are keyed by the project-relative source identity,
   lowercase extension, descriptor size taken from the already secured
@@ -343,10 +380,11 @@ can be secured, caching becomes a no-op and source reads still work.
   the current request but are not stored; each entry is capped at 128 MiB.
   Storage is bounded by a per-project limit (default 512 MiB) with LRU
   eviction, configurable in the inspector, with a clear action and usage/limit
-  status. Clearing removes only contained cache entry directories — never
-  project files. Every cache operation is contained to the private app-local
-  cache root and never follows a symlink out of it; inspection/focused/overlay
-  tasks serialize through one cache.
+  status. Clearing removes only cache entry directories — never project files.
+  Cache operations check the owner-only app-local namespace and fail closed on
+  observed symlinks or permission changes. This prevents project-controlled
+  cache injection but does not provide same-UID process isolation;
+  inspection/focused/overlay tasks serialize through one cache.
 - The SwiftPM fixture suite contains assertions for the bitwise full-payload
   round-trip (gaps, metadata), invalidation matrix, corruption recovery,
   symlink/containment, ignored project-controlled cache entries, limit/LRU/clear,
@@ -371,11 +409,11 @@ returned non-success states. A separate pass securely opened and hashed the
 bounded 64 KiB inspection prefixes for all 6,723 files (81,616,891 bytes) in
 0.228 s. This is about 2% of the uncached inspection median.
 
-A separate cache run recorded 36.990 s for cold population and a 2.539 s warm
-inspection median across 6,723 entries (5,117,196 bytes). That timing path
-includes cache population and is not directly comparable with the uncached
-11.458 s median above. The finished candidate has not been re-benchmarked; its
-repeat-performance result remains **NOT_ASSESSED**.
+A separate earlier cache run recorded 36.990 s for cold population and a
+2.539 s warm inspection median across 6,723 entries (5,117,196 bytes). That
+timing path includes cache population and is not directly comparable with the
+uncached 11.458 s median above. Final-candidate measurements are recorded
+below.
 
 Three largest matched local sources across the three observed modes totalled
 154,124 bytes. Nine full reader loads (three repetitions per source) retained
@@ -404,16 +442,83 @@ and transient filesystem/security failures are not cached. LRU eviction and
 clear operations are contained to the cache root and never modify raw sources
 or instrument profiles.
 
-The acceptance baseline is pinned by Issue #7's live measurement: three-run
-uncached inspection median 7.247 s. The measured acceptance targets are:
-after cache population, three-run median inspection at or below 3.624 s (half
-of the 7.247 s pinned baseline), including prefix verification and cache
-lookup/decode; prefix verification remains at or below 1.449 s (20% of the
-pinned baseline); warm full-measurement loading does not exceed the 24.3 ms
-median on the same representative sources. The separately measured fresh local
-3-run median (11.458 s) is observed evidence about this host at that time, not
-the pinned acceptance baseline. First-open and cache population are reported
-separately, and the 0.228 s full-prefix verification pass is reported
-separately. Repeat measurements remain NOT_ASSESSED until the parent runs the
-benchmark. These are targets, not claimed results; the Issue 8 workflow must
-measure the finished implementation.
+Issue #7 pins a three-run uncached inspection median of 7.247 s. Its targets
+are a three-run warm inspection median at or below 3.624 s (half the pinned
+baseline), including prefix verification and cache lookup/decode, and prefix
+verification at or below 1.449 s. The earlier 24.3 ms full-measurement median
+has no recorded exact source cohort, so it is historical context rather than
+a verifiable cross-mode target. Full-load acceptance is now measured per mode:
+for each fixed representative source, the three-run warm median must be no
+more than half its uncached median. Separately, the historical Issue #6 fixed
+caps are 4.7 ms for dual-sweep, 5.15 ms for list-sweep, and 406.65 ms for
+WGFMU; they are not this candidate's half-median values.
+
+Local acceptance evidence for the exact candidate (distinct from the older
+2026-10-06 unverified observations, which it supersedes). A full-data parser
+run used a disposable APFS copy-on-write fixture under a private temporary
+directory with the three versioned v2 viewer profiles; nothing was written to
+the selected project, and `.spe`/`.affm` entries were filtered by filename
+suffix before any metadata/content operation. The fixture and its temporary
+identity report were removed after the run. No source filenames, raw values,
+or source/profile hashes appear below.
+
+On arm64 / macOS 26.3.1, 7,540 supported-extension files (2,701 CSV;
+4,839 TXT; 373,840,602 logical bytes) were inventoried. Of these, 5,200 had
+a valid profile/mode inspection and 5,191 loaded; 9 failures were isolated
+per-source `invalidSource` diagnostics; 2,340 were blocked or unmatched with
+explicit diagnostics; 0 profile-catalog issues; 0 `.spe`/`.affm` opens.
+Pooled diagnostic loaded counts across the inventory (not separate per-profile
+or per-mode counts): dual-sweep 4,702; list-sweep 300; Raman semicolon 1;
+Raman TSV 15; WGFMU 173. Source size/mtime metadata was unchanged after the
+validation.
+
+A separate one-real-source-per-mode end-to-end check compared every complete
+channel array, acquisition order, gaps, and cache payload against independent
+local extraction for all 10 declared modes; source and profile hashes were
+verified locally and no identifiers or values were retained or sent
+externally. Each warm full cache payload was byte-for-byte equal to its
+uncached normalized payload.
+
+Open plus discovery took 0.749 s. Three uncached inspections took 13.993,
+13.938, and 13.963 s (median 13.963 s; 5,200 supported, 0 profile issues).
+Secure prefix verification covered 86,602,005 bytes per run in 0.756, 0.699,
+and 0.696 s (median 0.699 s), passing the 1.449 s target. Private app-local
+inspection-cache population took 36.631 s; three warm scans took 3.801,
+3.317, and 3.309 s (median 3.317 s), passing the 3.624 s target. The cache
+held 7,545 entries / 9,291,674 bytes of the 536,870,912-byte limit.
+
+Largest fixed selected source per measured mode, with three-run medians
+(uncached / warm); warm medians include a fresh full-source digest check and
+decoding the complete cached arrays. This candidate's half-median caps are
+4.65 ms for dual-sweep, 4.75 ms for list-sweep, and 467.6 ms for WGFMU (half
+of its own 9.3 / 9.5 / 935.2 ms uncached medians). The warm medians also pass
+the historical Issue #6 fixed caps (4.7 / 5.15 / 406.65 ms):
+dual-sweep 601 points / 2 channels / 34,544-byte encoded payload at 9.3 /
+3.8 ms (candidate cap 4.65 ms; historical cap 4.7 ms); list-sweep 402 / 2 /
+39,227 bytes at 9.5 / 4.6 ms (candidate cap 4.75 ms; historical cap 5.15 ms);
+WGFMU 70,000 / 5 / 1,775,671 bytes at 935.2 / 18.7 ms (candidate cap 467.6 ms;
+historical cap 406.65 ms). Cold cache population for those three representatives took
+1.268 s. A six-load cached switching sequence had a 53.6 ms median. Peak RSS
+was 292.2 MiB.
+
+The exact-manifest evaluator benchmark returned an eligible two-source cohort
+and measured a 13.5 μs median across 1,000 evaluations. This measures
+eligibility evaluation only, not reader, rendering, or file-switch latency.
+The final packaged app was opened against a disposable copy of the project:
+the native UI confirmed two exact-manifest sources, 201 points each, 402 total,
+and zero gaps. Long series labels stayed inside the center plot card, and the
+Inspector showed one visible “Line width” label with the slider accessibility
+name “Series line width”. The blocked state for sources lacking one exact
+shared manifest was also verified earlier. Real WGFMU overlay, SwiftUI render
+latency, and isolated user-visible file-switch latency remain
+**NOT_ASSESSED**. The SwiftPM `Testing` suite remains **NOT_ASSESSED** on
+this host because its command-line toolchain lacks the Swift `Testing`
+module. `Scripts/check_core.sh` (including the app-layer typecheck),
+`Scripts/package_app.sh`, signature verification, diff checks, profile YAML
+parsing, and the AQG construction check pass on the current candidate.
+
+The synthetic inventory check confirms root and nested .DS_Store entries are
+omitted while a dot-prefixed CSV and an ordinary CSV remain discoverable.
+
+Code validation establishes reader behavior only; it does not establish
+scientific acceptance of any measurement.

@@ -62,11 +62,17 @@ struct MeasurementCacheTests {
             view: MeasurementView(kind: "xy", x: "voltage", y: ["current"], preserveOrder: true),
             channels: [
                 MeasurementChannel(name: "voltage", label: "Voltage", unit: "V", quantity: "voltage",
-                                   values: [0, 0.1, -0.2, 0.1, -0, 1e-300, Double(bitPattern: 0x7FEFFFFFFFFFFFFF &- 1), 0.5],
+                                   values: [0, Double(bitPattern: 0x8000000000000000),
+                                            Double(bitPattern: 1),
+                                            Double(bitPattern: 0x7FEFFFFFFFFFFFFF),
+                                            nil, nil,
+                                            Double(bitPattern: 0x7FEFFFFFFFFFFFFF &- 1), 0.5],
                                    gapReasons: [nil, nil, nil, nil, .blank, nil, nil, nil]),
                 MeasurementChannel(name: "current", label: "Current", unit: "A", quantity: "current",
-                                   values: [1e-12, nil, -3e-12, nil, Double(sign: .minus, exponent: 1023, significand: 1.5), 2.5e-12, 0, nil],
-                                   gapReasons: [nil, .nan, nil, .infinite, nil, nil, .saturated, .unknown]),
+                                   values: [1e-12, nil, -3e-12, nil,
+                                            Double(sign: .minus, exponent: 1023, significand: 1.5), nil,
+                                            2.5e-12, nil],
+                                   gapReasons: [nil, .nan, nil, .infinite, nil, .saturated, nil, .unknown]),
             ],
             metadataSections: [
                 MetadataSection(title: "Acquisition", fields: [
@@ -79,7 +85,7 @@ struct MeasurementCacheTests {
             ],
             warnings: ["data/raw/synth.csv line 4: column \"current\" records NaN; shown as a gap."],
             supportStatus: "supported",
-            provenance: ["reader_version": "1.1.0", "profile_id": "synth", "profile_hash": "abc123", "profile_schema_version": "2", "mode": "dual-sweep"]
+            provenance: ["reader_version": InstrumentReader.version, "profile_id": "synth", "profile_hash": "abc123", "profile_schema_version": "2", "mode": "dual-sweep"]
         )
     }
 
@@ -100,7 +106,8 @@ struct MeasurementCacheTests {
         #expect(restored.warnings == original.warnings)
         #expect(restored.supportStatus == original.supportStatus)
         #expect(restored.provenance == original.provenance)
-        // Exact Double bit patterns (including -0 and a denormal-range literal), gap reasons, order.
+        // Exact Double bit patterns (including signed zero, a subnormal, and
+        // finite max), gap reasons (including nil vs `.unknown`), order.
         for (channel, expected) in zip(restored.channels, original.channels) {
             #expect(channel.name == expected.name)
             #expect(channel.label == expected.label)
@@ -134,18 +141,9 @@ struct MeasurementCacheTests {
     }
 
     private func securedPrefixInfo(_ source: RawSource, project: ProjectContext) throws -> (prefixSHA256: String, size: Int64) {
-        let canonical = source.url.resolvingSymlinksInPath().standardizedFileURL
-        let handle = try SecureFile.openVerified(resolvedPath: canonical.path, beneath: project.rawRoot.path)
-        defer { try? handle.close() }
-        let prefix = try handle.read(upToCount: InstrumentReader.headerSampleBytes) ?? Data()
-        var fileStat = stat()
-        let size: Int64
-        if fstat(handle.fileDescriptor, &fileStat) == 0 {
-            size = Int64(fileStat.st_size)
-        } else {
-            size = source.byteSize
-        }
-        return (sha256Hex(prefix), size)
+        let secured = try MeasurementCache.openSecuredPrefix(source: source, project: project)
+        defer { try? secured.handle.close() }
+        return (sha256Hex(secured.prefix), secured.descriptorSize)
     }
 
     private func storeViaDescriptor(_ cache: MeasurementCache, measurement: NormalizedMeasurement, source: RawSource, project: ProjectContext, fingerprint: String) throws {
@@ -377,8 +375,8 @@ struct MeasurementCacheTests {
         let source = try #require(try project.discoverSources().first)
         let catalogFingerprint = "fp-1"
 
-        let first = try await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { () throws -> MeasurementCache.CachedInspection in
-            try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+        let first = try await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+            try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         guard case .supported(let coldInspection) = first.outcome else {
             Issue.record("clean fixture should resolve to a supported inspection")
@@ -391,8 +389,8 @@ struct MeasurementCacheTests {
         // 64 KiB header prefix.
         try rewriteRowsChangingOneValue(source)
 
-        let second = try await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { () throws -> MeasurementCache.CachedInspection in
-            try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+        let second = try await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+            try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         #expect(second.fromCache == true)
         guard case .supported(let warmInspection) = second.outcome else {
@@ -402,8 +400,8 @@ struct MeasurementCacheTests {
         #expect(warmInspection.instrumentID == coldInspection.instrumentID)
 
         // A different catalog fingerprint misses (profile-catalog invalidation).
-        let third = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-2") { () throws -> MeasurementCache.CachedInspection in
-            try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+        let third = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-2") { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+            try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         #expect(third.fromCache == false)
     }
@@ -414,8 +412,8 @@ struct MeasurementCacheTests {
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
         let source = try #require(try project.discoverSources().first)
 
-        _ = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () throws -> MeasurementCache.CachedInspection in
-            try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+        _ = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+            try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
 
         // Header edit inside the 64 KiB prefix, same size, same mtime: the exact prefix digest changes -> miss.
@@ -426,8 +424,8 @@ struct MeasurementCacheTests {
         try Data(replacement.utf8).write(to: url)
         try FileManager.default.setAttributes([.modificationDate: originalMtime], ofItemAtPath: url.path)
 
-        let second = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () throws -> MeasurementCache.CachedInspection in
-            try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+        let second = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+            try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         #expect(second.fromCache == false)
     }
@@ -446,9 +444,9 @@ struct MeasurementCacheTests {
         try Data(unmatchable.utf8).write(to: source.url)
 
         let firstProducerRan = InspectionRunCounter()
-        let first = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () throws -> MeasurementCache.CachedInspection in
+        let first = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
             firstProducerRan.count += 1
-            return try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+            return try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         guard case .blocked(let message) = first.outcome else {
             Issue.record("unmatchable header should produce a blocked outcome: \(first.outcome)")
@@ -458,9 +456,9 @@ struct MeasurementCacheTests {
         #expect(message.contains("detect") || message.contains("No profile mode matched"))
         // Warm run serves the cached deterministic diagnostic without rerunning the producer.
         let warmProducerRan = InspectionRunCounter()
-        let second = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () throws -> MeasurementCache.CachedInspection in
+        let second = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
             warmProducerRan.count += 1
-            return try InstrumentReader.inspectAccess(source, project: project, catalog: ProfileCatalog.load(project: project))
+            return try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         #expect(second.fromCache == true)
         #expect(second.outcome == first.outcome)
@@ -476,7 +474,7 @@ struct MeasurementCacheTests {
 
         // Cancellation throws through the seam: nothing cached, nothing served.
         do {
-            _ = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () -> MeasurementCache.CachedInspection in
+            _ = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (_: Data, _: Int64, _: URL) throws -> MeasurementCache.CachedInspection in
                 throw CancellationError()
             }
             Issue.record("cancellation should propagate")
@@ -485,7 +483,7 @@ struct MeasurementCacheTests {
 
         // A transient open/read failure throws as well and retries.
         do {
-            _ = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () -> MeasurementCache.CachedInspection in
+            _ = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (_: Data, _: Int64, _: URL) throws -> MeasurementCache.CachedInspection in
                 throw ReaderError.invalidSource("data/raw/dual-sweep.csv: could not read the source file: transient I/O error")
             }
             Issue.record("transient failure should propagate")
@@ -494,7 +492,7 @@ struct MeasurementCacheTests {
 
         // The next call runs the producer again (a thrown outcome left no entry).
         let ran = InspectionRunCounter()
-        let retried = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () throws -> MeasurementCache.CachedInspection in
+        let retried = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (_: Data, _: Int64, _: URL) throws -> MeasurementCache.CachedInspection in
             ran.count += 1
             return .blocked("data/raw/dual-sweep.csv: deterministic diagnostic")
         }
@@ -502,7 +500,7 @@ struct MeasurementCacheTests {
         #expect(retried.fromCache == false)
         #expect(try cache.usage().entryCount == 1, "only the deterministic outcome is stored")
         // And it hits afterwards.
-        let warm = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { () throws -> MeasurementCache.CachedInspection in
+        let warm = try await cache.inspection(for: source, project: project, catalogFingerprint: "fp-1") { (_: Data, _: Int64, _: URL) throws -> MeasurementCache.CachedInspection in
             Issue.record("deterministic outcome was not served from cache")
             return .blocked("unreachable")
         }
@@ -651,6 +649,59 @@ struct MeasurementCacheTests {
                 "cache operations traversed the symlinked namespace")
     }
 
+    @Test func unsafeExistingCacheDirectoryFailsClosedWithoutRepair() async throws {
+        let (root, project) = try makeCacheProject(rowCount: 300)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
+        let source = try #require(try project.discoverSources().first)
+        let measurement = try await loadMeasurement(source, project: project)
+        try storeViaDescriptor(cache, measurement: measurement, source: source, project: project, fingerprint: "fp-1")
+        #expect(try cache.usage().entryCount == 1)
+        let cacheRoot = URL(fileURLWithPath: try cache.usage().root, isDirectory: true)
+        let prefix = try #require(try FileManager.default.contentsOfDirectory(atPath: cacheRoot.path).first)
+        let prefixURL = cacheRoot.appendingPathComponent(prefix)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: prefixURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: prefixURL.path) }
+        // A pre-existing permissive RawView-owned directory fails closed: no
+        // chmod repair, no lookup hit; usage still accounts the entry on disk.
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-1") == nil)
+        let perms = (try FileManager.default.attributesOfItem(atPath: prefixURL.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        #expect(perms & 0o077 != 0)
+        try storeViaDescriptor(cache, measurement: measurement, source: source, project: project, fingerprint: "fp-2")
+        #expect((try FileManager.default.attributesOfItem(atPath: prefixURL.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0 & 0o077 != 0)
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-2") == nil)
+    }
+
+    @Test func symlinkedPayloadIsNotFollowed() async throws {
+        let (root, project) = try makeCacheProject(rowCount: 300)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
+        let source = try #require(try project.discoverSources().first)
+        let measurement = try await loadMeasurement(source, project: project)
+        try storeViaDescriptor(cache, measurement: measurement, source: source, project: project, fingerprint: "fp-1")
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-1") != nil)
+        let cacheRoot = URL(fileURLWithPath: try cache.usage().root, isDirectory: true)
+        var payloadURL: URL?
+        for prefix in try FileManager.default.contentsOfDirectory(atPath: cacheRoot.path) {
+            let prefixURL = cacheRoot.appendingPathComponent(prefix)
+            for key in (try? FileManager.default.contentsOfDirectory(atPath: prefixURL.path)) ?? [] {
+                let candidate = prefixURL.appendingPathComponent(key).appendingPathComponent("payload")
+                if FileManager.default.fileExists(atPath: candidate.path) { payloadURL = candidate }
+            }
+        }
+        let victim = try #require(payloadURL)
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-payload-escape-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try Data("sentinel".utf8).write(to: outside.appendingPathComponent("sentinel.txt"))
+        try FileManager.default.removeItem(at: victim)
+        try FileManager.default.createSymbolicLink(at: victim, withDestinationURL: outside.appendingPathComponent("sentinel.txt"))
+        // Lookup misses and a rebuild never writes through the link.
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-1") == nil)
+        try storeViaDescriptor(cache, measurement: measurement, source: source, project: project, fingerprint: "fp-1")
+        #expect(try Data(contentsOf: outside.appendingPathComponent("sentinel.txt")) == Data("sentinel".utf8))
+    }
+
     @Test func corruptPayloadShapeIsAMissNotATrap() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -659,10 +710,69 @@ struct MeasurementCacheTests {
 
         // Misshape the payload after a valid encode: 2 channels declared, 1 value array.
         var payload = MeasurementCache.MeasurementPayload(measurement: measurement)
-        payload.channelValueBits = [payload.channelValueBits[0]]
+        payload.channelValueBytes = [payload.channelValueBytes[0]]
         let encoded = try PropertyListEncoder().encode(payload)
         #expect(throws: ContractError.self) {
             try MeasurementCache.decode(measurement: encoded)
         }
+    }
+
+    @Test func malformedPackedPayloadFailsClosed() throws {
+        let original = syntheticMeasurement
+        func encodedPayload(_ mutate: (inout MeasurementCache.MeasurementPayload) -> Void) throws -> Data {
+            var payload = MeasurementCache.MeasurementPayload(measurement: original)
+            mutate(&payload)
+            return try PropertyListEncoder().encode(payload)
+        }
+        // Truncated value bytes: length is no longer a multiple of 8.
+        #expect(throws: ContractError.self) {
+            try MeasurementCache.decode(measurement: try encodedPayload { $0.channelValueBytes[0].removeLast() })
+        }
+        // Mismatched lengths: value bytes and gap codes disagree on the row count.
+        #expect(throws: ContractError.self) {
+            try MeasurementCache.decode(measurement: try encodedPayload { $0.channelGapCodes[0].removeLast() })
+        }
+        // Invalid gap code is rejected instead of guessing a reason.
+        #expect(throws: ContractError.self) {
+            try MeasurementCache.decode(measurement: try encodedPayload { $0.channelGapCodes[0][4] = 99 })
+        }
+        // Gap slots must use zero bytes: non-zero bytes for a gap fail closed.
+        #expect(throws: ContractError.self) {
+            try MeasurementCache.decode(measurement: try encodedPayload { $0.channelValueBytes[0][4 * 8] = 1 })
+        }
+    }
+
+    @Test func packedCodecKeepsNilGapReasonDistinctFromUnknown() throws {
+        let original = syntheticMeasurement
+        let restored = try MeasurementCache.decode(measurement: try MeasurementCache.encode(measurement: original))
+        // Voltage row 5 is a nil gap reason; current row 7 is `.unknown`: they
+        // must not collapse (the benchmark shared one code for both).
+        #expect(restored.channels[0].values[5] == nil && restored.channels[0].gapReasons[5] == nil)
+        #expect(restored.channels[1].values[7] == nil && restored.channels[1].gapReasons[7] == .unknown)
+    }
+
+    @Test func presentNonFiniteSamplesAreInvalid() throws {
+        // Present NaN/infinity are never valid present samples; recorded
+        // non-finite source cells are gaps.
+        for value in [Double.nan, Double.infinity, -Double.infinity] {
+            let measurement = NormalizedMeasurement(
+                source: SourceIdentity(path: "data/raw/synth.csv", sha256: String(repeating: "a", count: 64)),
+                instrument: InstrumentIdentity(id: "synth", name: "Synth"),
+                applicationMode: "dual-sweep",
+                view: MeasurementView(kind: "xy", x: "voltage", y: ["current"], preserveOrder: true),
+                channels: [MeasurementChannel(name: "voltage", label: "Voltage", unit: "V", quantity: "voltage",
+                                              values: [value], gapReasons: [nil])],
+                metadataSections: [], warnings: [], supportStatus: "supported", provenance: [:])
+            #expect(throws: ContractError.self) { try MeasurementCache.encode(measurement: measurement) }
+        }
+    }
+
+    @Test func forgedNonFinitePresentSampleFailsClosed() throws {
+        var payload = MeasurementCache.MeasurementPayload(measurement: syntheticMeasurement)
+        let bits = Double.nan.bitPattern
+        for offset in 0..<8 { payload.channelValueBytes[0][offset] = UInt8((bits >> (offset * 8)) & 0xFF) }
+        payload.channelGapCodes[0][0] = 0
+        let encoded = try PropertyListEncoder().encode(payload)
+        #expect(throws: ContractError.self) { try MeasurementCache.decode(measurement: encoded) }
     }
 }

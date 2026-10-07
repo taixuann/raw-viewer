@@ -6,6 +6,15 @@
 # Gap semantics: blank, NaN, and Infinity source cells are preserved as null
 # gaps (plot breaks, table shows the gap marker); other corrupt text blocks
 # the source. Schema v2 has no transforms mechanism: do not add one.
+# List-sweep values are shown exactly as stored (no sign transform); WGFMU
+# keeps every value with time/order displayable, plots channel 1 vs Time with
+# generic labels and unknown quantity/unspecified unit (overlay ineligible),
+# keeps channel 2 in the table, and skips optional per-point times when absent.
+# PPF first-row-header layouts plot time or pulse index (X) against current
+# (Y); STP plots time (X) against voltage (Y) while current_v, fit, and
+# fit_current stay table-only; endurance plots cycles (X) against raw_ch2 (Y).
+# Ambiguous labels (current_v, fit, fit_current, raw_ch*) stay unknown with
+# unspecified unit (overlay ineligible); absent optionals are skipped.
 schema_version: 2
 
 instrument:
@@ -35,15 +44,181 @@ formats:
         quantity: current
         unit: "A"
         label: "Current"
+  - id: wgfmu
+    kind: tabular
+    extensions: [".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      names_prefix: "DataName"
+      data_prefix: "DataValue"
+    columns:
+      time:
+        header: "Time"
+        quantity: time
+        unit: "s"
+        label: "Time"
+      signal_1:
+        header: "MeasResult1_value"
+        quantity: unknown
+        unit: "unspecified"
+        label: "Channel 1"
+      signal_2:
+        header: "MeasResult2_value"
+        quantity: unknown
+        unit: "unspecified"
+        label: "Channel 2"
+      meas_time1:
+        header: "MeasResult1_time"
+        quantity: time
+        unit: "s"
+        label: "Meas time 1"
+        required: false
+      meas_time2:
+        header: "MeasResult2_time"
+        quantity: time
+        unit: "s"
+        label: "Meas time 2"
+        required: false
+  - id: wgfmu-ppf-time
+    kind: first-row-header
+    extensions: [".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      time:
+        header: "time_s"
+        quantity: time
+        unit: "s"
+        label: "Time"
+      current:
+        header: "current_a"
+        quantity: current
+        unit: "A"
+        label: "Current"
+  - id: wgfmu-ppf-index
+    kind: first-row-header
+    extensions: [".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      pulse_index:
+        header: "index-pulse"
+        quantity: pulse
+        unit: "pulse"
+        label: "Pulse index"
+      current:
+        header: "current_a"
+        quantity: current
+        unit: "A"
+        label: "Current"
+  - id: wgfmu-stp
+    kind: first-row-header
+    extensions: [".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      time:
+        header: "time_s"
+        quantity: time
+        unit: "s"
+        label: "Time"
+      voltage:
+        header: "voltage_v"
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "current_v"
+        quantity: unknown
+        unit: "unspecified"
+        label: "current_v"
+      fit:
+        header: "fit"
+        quantity: unknown
+        unit: "unspecified"
+        label: "Fit"
+        required: false
+      fit_current:
+        header: "fit_current"
+        quantity: unknown
+        unit: "unspecified"
+        label: "Fit current"
+        required: false
+  - id: wgfmu-endurance
+    kind: tabular
+    extensions: [".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      names_prefix: "DataName"
+      data_prefix: "DataValue"
+    columns:
+      cycles:
+        header: "raw_cycles"
+        quantity: cycles
+        unit: "cycles"
+        label: "Cycles"
+      channel_2:
+        header: "raw_ch2"
+        quantity: unknown
+        unit: "unspecified"
+        label: "Channel 2"
+      channel_1:
+        header: "raw_ch1"
+        quantity: unknown
+        unit: "unspecified"
+        label: "Channel 1"
+        required: false
 
 modes:
   - id: dual-sweep
     format: csv
-    # Illustrative basename gate: replace with case-insensitive fragments that
-    # actually occur in exported basenames, or omit this optional selector for
-    # header-only matching. Either detect alternative matches (OR).
-    filename_contains_all: ["keysight-b1500a.dual-sweep"]
+    # Case-insensitive substrings searched in the first 64 KiB of the source.
     detect: ["2-terminal dual Vsweep", "dual Vsweep"]
+    filename_contains_all: ["keysight-b1500a.dual-sweep"]
     extract:
       x: voltage
       y: [current]
+  - id: list-sweep
+    format: csv
+    detect: ["I/V List Sweep"]
+    filename_contains_all: ["keysight-b1500a"]
+    extract:
+      x: voltage
+      y: [current]
+  - id: wgfmu
+    format: wgfmu
+    detect: ["MeasResult"]
+    filename_contains_all: ["keysight-b1500a.wgfmu"]
+    extract:
+      x: time
+      y: [signal_1]
+  - id: wgfmu-ppf-time
+    format: wgfmu-ppf-time
+    detect: ["time_s,current_a", "time_s, current_a"]
+    filename_contains_all: ["keysight-b1500a.wgfmu"]
+    extract:
+      x: time
+      y: [current]
+  - id: wgfmu-ppf-index
+    format: wgfmu-ppf-index
+    detect: ["index-pulse"]
+    filename_contains_all: ["keysight-b1500a.wgfmu"]
+    extract:
+      x: pulse_index
+      y: [current]
+  - id: wgfmu-stp
+    format: wgfmu-stp
+    detect: ["time_s,voltage_v,current_v", "time_s, voltage_v, current_v"]
+    filename_contains_all: ["keysight-b1500a.wgfmu"]
+    extract:
+      x: time
+      y: [voltage]
+  - id: wgfmu-endurance
+    format: wgfmu-endurance
+    detect: ["raw_cycles"]
+    filename_contains_all: ["keysight-b1500a.wgfmu"]
+    extract:
+      x: cycles
+      y: [channel_2]
