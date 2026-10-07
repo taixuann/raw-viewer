@@ -669,12 +669,35 @@ public struct MeasurementCache: Sendable {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Minimum packed sample bytes: `MeasurementPayload` stores eight value
+    /// bytes and one gap-code byte per sample, and the binary plist preserves
+    /// both Data arrays. Metadata/warnings/provenance overhead is still checked
+    /// via the final encoded-size check in `storeEntry`.
+    static func minimumPackedSampleBytesExceedsCap(sampleCounts: [Int], cap: Int64 = maximumEntryBytes) -> Bool {
+        var total: Int64 = 0
+        for count in sampleCounts {
+            let (bytes, mulOverflow) = Int64(count).multipliedReportingOverflow(by: 9)
+            if mulOverflow { return true }
+            let (newTotal, addOverflow) = total.addingReportingOverflow(bytes)
+            if addOverflow { return true }
+            total = newTotal
+            if total > cap { return true }
+        }
+        return total > cap
+    }
+
     /// Stores a successful measurement. The entry's identity is derived from
     /// the source descriptor (size + exact prefix digest) exactly like the
     /// lookup path; the recorded full-content digest is the measurement's own
     /// `source.sha256` (the reader hashes exactly the bytes it parsed).
     public func store(measurement: NormalizedMeasurement, profileFingerprint: String, source: RawSource, prefixSHA256: String) throws {
+        try store(measurement: measurement, profileFingerprint: profileFingerprint, source: source,
+                  prefixSHA256: prefixSHA256, preflightCap: Self.maximumEntryBytes)
+    }
+
+    func store(measurement: NormalizedMeasurement, profileFingerprint: String, source: RawSource, prefixSHA256: String, preflightCap: Int64) throws {
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else { return }
+        if Self.minimumPackedSampleBytesExceedsCap(sampleCounts: measurement.channels.map({ $0.values.count }), cap: preflightCap) { return }
         let identity = MeasurementCache.measurementIdentity(source: source, prefixSHA256: prefixSHA256, catalogFingerprint: profileFingerprint)
         storeEntry(key: identity.key, kind: "measurement", payload: try MeasurementCache.encode(measurement: measurement),
                    fullSHA256: measurement.source.sha256, sourceSize: source.byteSize)

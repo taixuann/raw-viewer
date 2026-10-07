@@ -775,4 +775,36 @@ struct MeasurementCacheTests {
         let encoded = try PropertyListEncoder().encode(payload)
         #expect(throws: ContractError.self) { try MeasurementCache.decode(measurement: encoded) }
     }
+
+    @Test func cachePreflightSkipsOverCapWithoutHugeAllocation() async throws {
+        // Minimum packed bytes: 9 per sample (8 value + 1 gap). Lower bound
+        // only; metadata overhead stays on the final encoded-size check.
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [10], cap: 100) == false)
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [12], cap: 100) == true)
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [], cap: 100) == false)
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [Int.max], cap: 128 * 1024 * 1024) == true)
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [Int.max / 9, Int.max / 9], cap: Int64.max) == true)
+        let cap = MeasurementCache.maximumEntryBytes
+        let under = Int(cap / 9)
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [under], cap: cap) == false)
+        #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [under + 1], cap: cap) == true)
+
+        // Store skips an over-cap measurement without creating an entry,
+        // using a small cap so the fixture stays tiny (no huge allocation).
+        let (root, project) = try makeCacheProject(rowCount: 7)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
+        let source = try #require(try project.discoverSources().first)
+        let measurement = try await loadMeasurement(source, project: project)
+        let minimumPackedBytes = measurement.channels.reduce(Int64(0)) { $0 + Int64($1.values.count) * 9 }
+        let encodedBytes = try MeasurementCache.encode(measurement: measurement).count
+        #expect(Int64(encodedBytes) >= minimumPackedBytes)
+        let info = try securedPrefixInfo(source, project: project)
+        let probe = RawSource(relativePath: source.relativePath, url: source.url, byteSize: info.size)
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256, preflightCap: 100)
+        #expect(try cache.usage().entryCount == 0)
+        // Control: same small measurement stores under the real cap.
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256)
+        #expect(try cache.usage().entryCount == 1)
+    }
 }

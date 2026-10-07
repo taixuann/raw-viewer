@@ -611,6 +611,7 @@ struct LinePuller {
     var pendingBytes = Data()
     var textBuffer = ""
     var readyLines: [String] = []
+    var readyIndex = 0
     var eof = false
     var finalFlushed = false
     var linesEmitted = 0
@@ -626,9 +627,19 @@ struct LinePuller {
 
     mutating func nextLine() throws -> String? {
         while true {
-            if !readyLines.isEmpty {
+            if readyIndex < readyLines.count {
                 linesEmitted += 1
-                var line = readyLines.removeFirst()
+                var line = readyLines[readyIndex]
+                readyIndex += 1
+                // O(1) amortized consumption: drop the consumed prefix in bulk
+                // instead of shifting per row; reset when fully drained.
+                if readyIndex == readyLines.count {
+                    readyLines.removeAll(keepingCapacity: true)
+                    readyIndex = 0
+                } else if readyIndex > 1024 && readyIndex > readyLines.count / 2 {
+                    readyLines.removeFirst(readyIndex)
+                    readyIndex = 0
+                }
                 if linesEmitted == 1, line.hasPrefix("\u{FEFF}") {
                     line = String(line.dropFirst())
                 }

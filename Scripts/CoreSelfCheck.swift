@@ -65,6 +65,9 @@ enum CoreSelfCheck {
         try await auditTrustBoundaryTighteningSelfCheck()
         try await focusedCohortSelfCheck()
         try await symlinkVisibilitySelfCheck()
+        try await fifoProfileSelfCheck()
+        try await cachePreflightSelfCheck()
+        try await manyShortRowsSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -1693,6 +1696,114 @@ enum CoreSelfCheck {
         precondition(linkResult.error?.lowercased().contains("symlink") == true,
                      "symlink source did not report the no-follow diagnostic: \(linkResult.error ?? "none")")
         precondition(report.results.first(where: { $0.id == "data/raw/real.csv" })?.inspection != nil)
+    }
+
+    /// Bound the complete inspectMany path. On timeout, briefly open a writer
+    /// so a regressed blocking FIFO read can finish before the process fails.
+    static func fifoProfileSelfCheck() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-fifo-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeFixture(root, "data/raw/dual.csv", dualSweepCSV)
+        try writeFixture(root, "data/instruments/keysight-b1500a.yaml", keysightProfile)
+        let fifo = root.appendingPathComponent("data/instruments/fifo.yaml")
+        precondition(Darwin.mkfifo(fifo.path, 0o644) == 0, "mkfifo failed")
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        final class Box: @unchecked Sendable { var report: ReaderInspectionReport? }
+        let outcome: (report: ReaderInspectionReport?, timedOut: Bool, workerFinished: Bool) = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let semaphore = DispatchSemaphore(value: 0)
+                let box = Box()
+                Task.detached {
+                    box.report = await InstrumentReader.inspectMany(sources, project: project)
+                    semaphore.signal()
+                }
+                let firstWaitFinished = semaphore.wait(timeout: .now() + 5) == .success
+                guard !firstWaitFinished else {
+                    continuation.resume(returning: (box.report, false, true))
+                    return
+                }
+                let writer = Darwin.open(fifo.path, O_WRONLY | O_NONBLOCK | O_CLOEXEC)
+                let workerFinished: Bool
+                if writer >= 0 {
+                    Darwin.close(writer)
+                    workerFinished = semaphore.wait(timeout: .now() + 5) == .success
+                } else {
+                    workerFinished = false
+                }
+                continuation.resume(returning: (box.report, true, workerFinished))
+            }
+        }
+        if outcome.timedOut {
+            precondition(outcome.workerFinished, "inspectMany exceeded 5s and the FIFO worker could not be released")
+            try? FileManager.default.removeItem(at: root)
+            preconditionFailure("inspectMany exceeded the 5s FIFO deadline")
+        }
+        let report = try requireLike(outcome.report)
+        precondition(report.profileIssues.contains { $0.contains("fifo.yaml") }, "FIFO entry missing diagnostic: \(report.profileIssues)")
+        precondition(report.results.count == 1, "unexpected raw source result count: \(report.results.count)")
+        let result = try requireLike(report.results.first { $0.id == "data/raw/dual.csv" })
+        precondition(result.inspection != nil, "valid source blocked by FIFO profile")
+    }
+
+    /// Cache preflight: overflow-safe minimum packed bytes (9/sample) skips an
+    /// over-cap measurement without encoding. Small boundary fixtures only.
+    static func cachePreflightSelfCheck() async throws {
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [10], cap: 100) == false)
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [12], cap: 100) == true)
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [], cap: 100) == false)
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [Int.max], cap: 128 * 1024 * 1024) == true)
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [Int.max / 9, Int.max / 9], cap: Int64.max) == true)
+        let cap = MeasurementCache.maximumEntryBytes
+        let under = Int(cap / 9)
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [under], cap: cap) == false)
+        precondition(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [under + 1], cap: cap) == true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-preflight-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeFixture(root, "data/instruments/keysight-b1500a.yaml", keysightProfile)
+        try writeFixture(root, "data/raw/dual.csv", dualSweepCSV)
+        let project = try ProjectContext.open(root)
+        let source = try requireLike(try project.discoverSources().first)
+        let measurement = try await InstrumentReader.load(source.url, project: project)
+        let minimumPackedBytes = measurement.channels.reduce(Int64(0)) { $0 + Int64($1.values.count) * 9 }
+        let encodedBytes = try MeasurementCache.encode(measurement: measurement).count
+        precondition(Int64(encodedBytes) >= minimumPackedBytes,
+                     "packed-byte lower bound disagrees with the cache encoder")
+        let cache = MeasurementCache(project: project)
+        let secured = try MeasurementCache.openSecuredPrefix(
+            source: RawSource(relativePath: source.relativePath, url: source.url, byteSize: source.byteSize),
+            project: project)
+        let prefixDigest = sha256Hex(secured.prefix)
+        let size = secured.descriptorSize
+        try? secured.handle.close()
+        let probe = RawSource(relativePath: source.relativePath, url: source.url, byteSize: size)
+        let before = try cache.usage().entryCount
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: prefixDigest, preflightCap: 50)
+        let afterSkip = try cache.usage().entryCount
+        precondition(afterSkip == before, "preflight stored an over-cap entry")
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: prefixDigest)
+        let afterStore = try cache.usage().entryCount
+        precondition(afterStore == before + 1, "preflight blocked a small entry")
+    }
+
+    /// Many short rows across 64 KiB chunk boundaries stay in file order with
+    /// no loss.
+    static func manyShortRowsSelfCheck() async throws {
+        let rowCount = 8000
+        var csv = "SetupTitle, 2-terminal dual Vsweep\nDataName, V1, I1\n"
+        for index in 0..<rowCount { csv += "DataValue, \(Double(index) * 0.001), 1E-12\n" }
+        precondition(Data(csv.utf8).count > 2 * 65536, "fixture must cross chunk boundaries")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-manyrows-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeFixture(root, "data/instruments/keysight-b1500a.yaml", keysightProfile)
+        try writeFixture(root, "data/raw/many.csv", csv)
+        let project = try ProjectContext.open(root)
+        let measurement = try await InstrumentReader.load(root.appendingPathComponent("data/raw/many.csv"), project: project)
+        let voltage = try requireLike(measurement.channel(named: "voltage"))
+        let current = try requireLike(measurement.channel(named: "current"))
+        precondition(voltage.values.count == rowCount && current.values.count == rowCount, "row loss across chunks")
+        precondition(voltage.values == (0..<rowCount).map { Double($0) * 0.001 }, "voltage rows lost, reordered, or changed")
+        precondition(current.values == Array(repeating: 1e-12, count: rowCount), "current rows lost or changed")
     }
 
     static let filenameV2Profile = """

@@ -140,6 +140,58 @@ struct ReaderTrustTests {
         }
     }
 
+    @Test func fifoProfileIsSkippedWithoutBlockingInspection() async throws {
+        // Bound the complete inspectMany path. On timeout, open the FIFO writer
+        // briefly so a regressed blocking reader can finish before teardown.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-fifo-\(UUID().uuidString)")
+        var shouldRemoveRoot = true
+        defer { if shouldRemoveRoot { try? FileManager.default.removeItem(at: root) } }
+        try write("data/raw/dual.csv", Data(Fixtures.dualSweepCSV.utf8), under: root)
+        try write("data/instruments/keysight-b1500a.yaml", Data(Fixtures.keysightProfile.utf8), under: root)
+        let fifo = root.appendingPathComponent("data/instruments/fifo.yaml")
+        guard Darwin.mkfifo(fifo.path, 0o644) == 0 else {
+            Issue.record("mkfifo failed: \(String(cString: strerror(errno)))")
+            return
+        }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        final class Box: @unchecked Sendable { var report: ReaderInspectionReport? }
+        let outcome: (report: ReaderInspectionReport?, timedOut: Bool, workerFinished: Bool) = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let semaphore = DispatchSemaphore(value: 0)
+                let box = Box()
+                Task.detached {
+                    box.report = await InstrumentReader.inspectMany(sources, project: project)
+                    semaphore.signal()
+                }
+                let firstWaitFinished = semaphore.wait(timeout: .now() + 5) == .success
+                guard !firstWaitFinished else {
+                    continuation.resume(returning: (box.report, false, true))
+                    return
+                }
+                let writer = Darwin.open(fifo.path, O_WRONLY | O_NONBLOCK | O_CLOEXEC)
+                let workerFinished: Bool
+                if writer >= 0 {
+                    Darwin.close(writer)
+                    workerFinished = semaphore.wait(timeout: .now() + 5) == .success
+                } else {
+                    workerFinished = false
+                }
+                continuation.resume(returning: (box.report, true, workerFinished))
+            }
+        }
+        if outcome.timedOut {
+            if !outcome.workerFinished { shouldRemoveRoot = false }
+            Issue.record("inspectMany exceeded the 5s deadline; FIFO worker released: \(outcome.workerFinished)")
+            return
+        }
+        let report = try #require(outcome.report)
+        #expect(report.profileIssues.contains { $0.contains("fifo.yaml") })
+        #expect(report.results.count == 1)
+        let result = try #require(report.results.first { $0.id == "data/raw/dual.csv" })
+        #expect(result.inspection != nil)
+    }
+
     private func write(_ relativePath: String, _ data: Data, under root: URL) throws {
         let url = root.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

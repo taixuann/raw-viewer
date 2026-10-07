@@ -239,7 +239,9 @@ enum SecureOpenError: Error, Equatable {
 /// symlink is swapped in between.
 enum SecureFile {
     static func openNoFollow(_ path: String) throws -> FileHandle {
-        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        // Non-blocking open so FIFO/special files never block inspection;
+        // the fstat below then fails closed on non-regular objects.
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY | O_CLOEXEC)
         guard fd >= 0 else {
             switch errno {
             case ENOENT, ENOTDIR: throw SecureOpenError.missing(path: path)
@@ -247,6 +249,22 @@ enum SecureFile {
             case EACCES, EPERM: throw SecureOpenError.unreadable(path: path)
             default: throw SecureOpenError.unreadable(path: path)
             }
+        }
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+            Darwin.close(fd)
+            throw SecureOpenError.unreadable(path: path)
+        }
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0,
+              fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0 else {
+            Darwin.close(fd)
+            throw SecureOpenError.unreadable(path: path)
+        }
+        let verifiedFlags = fcntl(fd, F_GETFL)
+        guard verifiedFlags >= 0, (verifiedFlags & O_NONBLOCK) == 0 else {
+            Darwin.close(fd)
+            throw SecureOpenError.unreadable(path: path)
         }
         return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }

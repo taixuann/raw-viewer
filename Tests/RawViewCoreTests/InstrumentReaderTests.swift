@@ -910,6 +910,28 @@ struct InstrumentReaderTests {
         #expect(measurement.source.sha256 == sha256Hex(payload))
     }
 
+    @Test func manyShortRowsAcrossChunkBoundariesPreserveCountAndOrder() async throws {
+        // Many short rows span several 64 KiB chunks: every row stays in file
+        // order with no loss.
+        let rowCount = 8000
+        var csv = "SetupTitle, 2-terminal dual Vsweep\nDataName, V1, I1\n"
+        for index in 0..<rowCount {
+            csv += "DataValue, \(Double(index) * 0.001), 1E-12\n"
+        }
+        let payload = Data(csv.utf8)
+        #expect(payload.count > 2 * 65536, "fixture must cross chunk boundaries")
+        let root = try makeProject(profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile], sources: ["data/raw/many.csv": payload])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let measurement = try await InstrumentReader.load(try project.discoverSources()[0].url, project: project)
+        let voltage = try #require(measurement.channel(named: "voltage"))
+        let current = try #require(measurement.channel(named: "current"))
+        #expect(voltage.values.count == rowCount)
+        #expect(current.values.count == rowCount)
+        #expect(voltage.values == (0..<rowCount).map { Double($0) * 0.001 })
+        #expect(current.values == Array(repeating: 1e-12, count: rowCount))
+    }
+
     @Test func loadHashesAndReadsTheSameOpenedObject() async throws {
         // The file is replaced between discovery and load: the measurement
         // must carry the replaced content together with its hash, never a mix.
