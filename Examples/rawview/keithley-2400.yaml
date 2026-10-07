@@ -1,0 +1,61 @@
+# RawView companion instrument profile schema v2 — example
+# Copy into a project's data/instruments/rawview/ companion directory and
+# adjust to the instrument. When that companion directory exists, RawView
+# reads profiles only from it. RawView never rewrites profiles and never
+# executes project code.
+# Layout: Keithley 2400 dual-sweep LVM (tab-separated) with voltage/current
+# and an optional elapsed-time channel. Data rows carry an empty leading
+# cell, matched by the empty data_prefix; blank lines are skipped, never
+# parsed as gap rows. There is no transforms mechanism: record values are
+# preserved exactly as written.
+schema_version: 2
+
+instrument:
+  id: keithley-2400
+  name: Keithley 2400 SourceMeter
+  vendor: Keithley Instruments
+  model: "2400"
+
+formats:
+  - id: lvm
+    kind: tabular
+    extensions: [".txt", ".lvm"]
+    # Double-quoted "\t" is one tab character; single quotes would be two.
+    delimiter: "\t"
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      names_prefix: "X_Value"
+      data_prefix: ""
+    columns:
+      voltage:
+        header: "Untitled"
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "Untitled 1"
+        quantity: current
+        unit: "A"
+        label: "Current"
+      timestamp:
+        header: "Untitled 2"
+        quantity: time
+        unit: "s"
+        label: "Time"
+        # Optional channel: parsed with full row alignment when the header is
+        # present, skipped without invented values when absent. Plot axes
+        # must stay on required channels.
+        required: false
+
+modes:
+  - id: dual-sweep
+    format: lvm
+    # Case-insensitive substrings searched in the first 64 KiB of the source.
+    # Illustrative basename gate: replace with case-insensitive fragments that
+    # actually occur in exported basenames, or omit this optional selector for
+    # header-only matching.
+    filename_contains_all: ["keithley-2400.dual-sweep"]
+    detect: ["LabVIEW Measurement"]
+    extract:
+      x: voltage
+      y: [current]

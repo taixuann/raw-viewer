@@ -1,13 +1,18 @@
 #!/bin/sh
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-build="${RAWVIEW_BUILD_DIR:-/tmp/RawView-build}"
-app="${RAWVIEW_APP_PATH:-/tmp/RawView.app}"
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+umask 077
+scratch=""
+if [ -z "${RAWVIEW_BUILD_DIR:-}" ] || [ -z "${RAWVIEW_APP_PATH:-}" ] || [ -z "${CLANG_MODULE_CACHE_PATH:-}" ]; then
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/RawView-XXXXXX")
+fi
+build="${RAWVIEW_BUILD_DIR:-$scratch/build}"
+app="${RAWVIEW_APP_PATH:-$scratch/RawView.app}"
 bundle_id="${RAWVIEW_BUNDLE_ID:-org.taixuann.rawview}"
-cache="${CLANG_MODULE_CACHE_PATH:-/tmp/RawView-module-cache}"
+cache="${CLANG_MODULE_CACHE_PATH:-$scratch/module-cache}"
 mkdir -p "$cache"
-bin_dir=$(CLANG_MODULE_CACHE_PATH="$cache" swift build --disable-sandbox --scratch-path "$build" --package-path "$root/tools/raw-viewer" -c release --show-bin-path)
-CLANG_MODULE_CACHE_PATH="$cache" swift build --disable-sandbox --scratch-path "$build" --package-path "$root/tools/raw-viewer" -c release
+bin_dir=$(CLANG_MODULE_CACHE_PATH="$cache" swift build --disable-sandbox --scratch-path "$build" --package-path "$root" -c release --show-bin-path)
+CLANG_MODULE_CACHE_PATH="$cache" swift build --disable-sandbox --scratch-path "$build" --package-path "$root" -c release
 binary="$bin_dir/RawView"
 if [ ! -x "$binary" ]; then
   echo "Release executable not found: $binary" >&2
@@ -16,7 +21,7 @@ fi
 rm -rf -- "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/RawView"
-cp "$root/tools/raw-viewer/Sources/RawViewApp/Resources/NativePlotStyle.json" "$app/Contents/Resources/NativePlotStyle.json"
+cp "$root/Sources/RawViewApp/Resources/NativePlotStyle.json" "$app/Contents/Resources/NativePlotStyle.json"
 python3 - "$app/Contents/Info.plist" "$bundle_id" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], "wb") as stream:

@@ -1,4 +1,9 @@
 # Release gate — RawView v0.1.0
+#
+# HISTORICAL RECEIPT: this file records the v0.1.0 release checks as run on
+# 2026-10-02. It does not describe the current reader boundary (app-owned
+# readers replaced the `reader.py` trust model in ticket #2) and must not be
+# overwritten with new PASS marks; preserve it as evidence.
 
 Date: 2026-10-02. Checker: orchestrator (improve + opencode-delegate session), executor `opencode-go/deepseek-v4.1-flash` (max).
 
