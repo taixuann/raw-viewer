@@ -1,6 +1,46 @@
 import SwiftUI
 import RawViewCore
 
+struct DraggableLegendView: View {
+    let items: [(color: Color, label: String)]
+    @Binding var offset: CGSize
+    @State private var dragStart: CGSize = .zero
+
+    var body: some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(spacing: 6) {
+                        Capsule()
+                            .fill(item.color)
+                            .frame(width: 14, height: 2.5)
+                        Text(item.label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                }
+            }
+            .padding(6)
+            .background(Color.clear)
+            .contentShape(Rectangle())
+            .offset(offset)
+            .gesture(
+                DragGesture()
+                    .onChanged { gesture in
+                        offset = CGSize(
+                            width: dragStart.width + gesture.translation.width,
+                            height: dragStart.height + gesture.translation.height
+                        )
+                    }
+                    .onEnded { _ in
+                        dragStart = offset
+                    }
+            )
+            .help("Drag to reposition legend")
+        }
+    }
+}
+
 struct ProjectSourcesSidebar: View {
     let sources: [RawSource]
     let inspections: [String: SourceInspection]
@@ -76,33 +116,59 @@ struct ProjectSourcesSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Group by", selection: $facet) {
-                ForEach(Self.facets, id: \.0) { key, title in Text(title).tag(key) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .onChange(of: facet) { _, _ in collapsed = [] }
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                TextField("Filter sources…", text: $search)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                if !search.isEmpty {
-                    Button(action: { search = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                    TextField("Filter sources…", text: $search)
+                        .textFieldStyle(.plain)
+                        .font(.caption)
+                    if !search.isEmpty {
+                        Button(action: { search = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear filter")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear filter")
                 }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+
+                Menu {
+                    ForEach(Self.facets, id: \.0) { key, title in
+                        Button {
+                            facet = key
+                            collapsed = []
+                        } label: {
+                            if facet == key {
+                                Label(title, systemImage: "checkmark")
+                            } else {
+                                Text(title)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                        Text(Self.facetTitle(facet))
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 6).padding(.vertical, 4.5)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Group sources by \(Self.facetTitle(facet))")
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
-            .padding(.horizontal, 10).padding(.bottom, 6)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+
             Divider()
             filterChips
             Text("Select multiple with Shift or Command for comparison.")
@@ -120,7 +186,7 @@ struct ProjectSourcesSidebar: View {
                     }
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
             .scrollContentBackground(.hidden)
         }
         .searchable(text: $search, prompt: "Find a source or metadata")
@@ -148,36 +214,67 @@ struct ProjectSourcesSidebar: View {
 
     private func groupSection(_ group: SourceGroup) -> some View {
         let (visible, total, isTruncated, currentLimit) = visibleIDs(for: group)
-        return DisclosureGroup(isExpanded: expansion(group.label)) {
-            sourceRows(ids: visible)
-            if isTruncated {
-                HStack(spacing: 8) {
-                    Text("Showing \(visible.count) of \(total)")
+        let isExpanded = !collapsed.contains(group.label)
+        return Section {
+            if isExpanded {
+                sourceRows(ids: visible)
+                if isTruncated {
+                    HStack(spacing: 8) {
+                        Text("Showing \(visible.count) of \(total)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Show +250") {
+                            groupDisplayLimits[group.label] = currentLimit + 250
+                        }
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Show +250") {
-                        groupDisplayLimits[group.label] = currentLimit + 250
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        Button("Show all") {
+                            groupDisplayLimits[group.label] = total
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
                     }
-                    .font(.caption2)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
-                    Button("Show all") {
-                        groupDisplayLimits[group.label] = total
-                    }
-                    .font(.caption2)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
             }
-        } label: {
-            HStack {
-                Text(group.label).lineLimit(1)
-                Spacer(minLength: 4)
-                Text("\(group.sourceIDs.count)").font(.caption).foregroundStyle(.secondary)
-                filterToggle(for: group.label)
+        } header: {
+            groupHeaderView(group, isExpanded: isExpanded)
+        }
+    }
+
+    private func groupHeaderView(_ group: SourceGroup, isExpanded: Bool) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                if isExpanded { collapsed.insert(group.label) } else { collapsed.remove(group.label) }
+            } label: {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(.secondary)
             }
+            .buttonStyle(.plain)
+
+            Text(group.label)
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            Text("\(group.sourceIDs.count)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Capsule().fill(.quaternary))
+
+            filterToggle(for: group.label)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isExpanded { collapsed.insert(group.label) } else { collapsed.remove(group.label) }
         }
     }
 
@@ -440,6 +537,12 @@ struct ProjectGallery: View {
     var isLoading: Bool = false
     var loadingStatus: String? = nil
     let retry: () -> Void
+    var useCustomLabels: Bool = false
+    var customPlotTitle: String = ""
+    var customXAxisTitle: String = ""
+    var customYAxisTitle: String = ""
+    var customSeriesLabels: [String: String] = [:]
+    @Binding var legendOffset: CGSize
 
     var body: some View {
         VStack(spacing: 0) {
@@ -566,7 +669,13 @@ struct ProjectGallery: View {
                                 focused: states[focused.id]?.measurement,
                                 lineWidth: lineWidth,
                                 xAbsolute: xAbsolute, yAbsolute: yAbsolute,
-                                xScale: xScale, yScale: yScale)
+                                xScale: xScale, yScale: yScale,
+                                useCustomLabels: useCustomLabels,
+                                customPlotTitle: customPlotTitle,
+                                customXAxisTitle: customXAxisTitle,
+                                customYAxisTitle: customYAxisTitle,
+                                customSeriesLabels: customSeriesLabels,
+                                legendOffset: $legendOffset)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -603,7 +712,13 @@ struct ProjectGallery: View {
                                     focused: visible.first(where: { $0.source.path == focused.id }),
                                     lineWidth: lineWidth,
                                     xAbsolute: xAbsolute, yAbsolute: yAbsolute,
-                                    xScale: xScale, yScale: yScale)
+                                    xScale: xScale, yScale: yScale,
+                                    useCustomLabels: useCustomLabels,
+                                    customPlotTitle: customPlotTitle,
+                                    customXAxisTitle: customXAxisTitle,
+                                    customYAxisTitle: customYAxisTitle,
+                                    customSeriesLabels: customSeriesLabels,
+                                    legendOffset: $legendOffset)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -628,7 +743,13 @@ struct ProjectGallery: View {
                 CenteredFigureView {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute,
                                yAbsolute: yAbsolute, xScale: xScale,
-                               yScale: yScale, lineWidth: lineWidth)
+                               yScale: yScale, lineWidth: lineWidth,
+                               useCustomLabels: useCustomLabels,
+                               customPlotTitle: customPlotTitle,
+                               customXAxisTitle: customXAxisTitle,
+                               customYAxisTitle: customYAxisTitle,
+                               customSeriesLabels: customSeriesLabels,
+                               legendOffset: $legendOffset)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -730,6 +851,12 @@ struct OverlayPlot: View {
     let yAbsolute: Bool
     let xScale: AxisScale
     let yScale: AxisScale
+    var useCustomLabels: Bool = false
+    var customPlotTitle: String = ""
+    var customXAxisTitle: String = ""
+    var customYAxisTitle: String = ""
+    var customSeriesLabels: [String: String] = [:]
+    @Binding var legendOffset: CGSize
     @State private var zoom = 1.0
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
@@ -743,11 +870,11 @@ struct OverlayPlot: View {
         var id: String { sourcePath + "|" + label }
     }
 
-    private var transformed: Result<(xTitle: String, yTitle: String, [Series]), OverlayPlotFailure> {
+    private var transformed: Result<(xChannel: (label: String, unit: String), yChannel: (label: String, unit: String), series: [Series]), OverlayPlotFailure> {
         guard !measurements.isEmpty else { return .failure(.message("No measurements selected")) }
         var series: [Series] = []
-        var xTitle = "X"
-        var yTitle = "Y"
+        var xChannelInfo = ("", "")
+        var yChannelInfo = ("", "")
         var first = true
         let sortedMeasurements = measurements.sorted(by: { $0.source.path < $1.source.path })
         let basenames = sortedMeasurements.reduce(into: [String: Int]()) { counts, item in
@@ -766,9 +893,9 @@ struct OverlayPlot: View {
                 return .failure(.message("\(measurement.source.path) X: \(error.message)"))
             }
             if first {
-                xTitle = axisTitle(xChannel.label, unit: xChannel.unit, absolute: xAbsolute, scale: xScale)
+                xChannelInfo = (xChannel.label, xChannel.unit)
                 if let y0 = yChannels.first {
-                    yTitle = axisTitle(y0.label, unit: y0.unit, absolute: yAbsolute, scale: yScale)
+                    yChannelInfo = (y0.label, y0.unit)
                 }
                 first = false
             }
@@ -786,12 +913,14 @@ struct OverlayPlot: View {
                                      x: xChannel.values, y: yChannel.values))
             }
         }
-        return .success((xTitle, yTitle, series))
+        return .success((xChannelInfo, yChannelInfo, series))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("\(measurements.count) sources · overlay in acquisition order")
+        let defaultTitle = "\(measurements.count) sources · overlay in acquisition order"
+        let titleText = (useCustomLabels && !customPlotTitle.isEmpty) ? customPlotTitle : defaultTitle
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(titleText)
                 .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
                 .lineLimit(1).truncationMode(.middle)
                 .accessibilityLabel("\(measurements.count) sources overlaid")
@@ -806,16 +935,25 @@ struct OverlayPlot: View {
                         if let focused {
                             NativePlot(measurement: focused, xAbsolute: xAbsolute,
                                        yAbsolute: yAbsolute, xScale: xScale,
-                                       yScale: yScale, lineWidth: lineWidth)
+                                       yScale: yScale, lineWidth: lineWidth,
+                                       useCustomLabels: useCustomLabels,
+                                       customPlotTitle: customPlotTitle,
+                                       customXAxisTitle: customXAxisTitle,
+                                       customYAxisTitle: customYAxisTitle,
+                                       customSeriesLabels: customSeriesLabels,
+                                       legendOffset: $legendOffset)
                         }
                     }
                 }
             case .success(let data):
                 let sourceOrder = selectedSourceIDs.sorted()
-                let accessibleSummary = data.2.map {
+                let accessibleSummary = data.series.map {
                     "\($0.label): \($0.x.count) points, \(gapCount($0)) gaps"
                 }.joined(separator: ". ")
-                Canvas { context, size in draw(data.2, xTitle: data.0, yTitle: data.1, in: &context, size: size) }
+                ZStack(alignment: .topTrailing) {
+                    Canvas { context, size in
+                        draw(data.series, xLabel: data.xChannel.label, xUnit: data.xChannel.unit, yLabel: data.yChannel.label, yUnit: data.yChannel.unit, in: &context, size: size)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
@@ -825,31 +963,38 @@ struct OverlayPlot: View {
                             .accessibilityLabel("Reset plot zoom and pan")
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Overlay plot with \(data.2.count) series")
+                    .accessibilityLabel("Overlay plot with \(data.series.count) series")
                     .accessibilityValue(accessibleSummary)
-                VStack(alignment: .leading, spacing: 4) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], alignment: .leading, spacing: 4) {
-                        ForEach(data.2) { item in
-                            Label(item.label, systemImage: "line.diagonal")
-                                .foregroundStyle(palette(item.sourcePath, order: sourceOrder))
-                                .font(.custom(NativeOverlayPalette.fontFamily, size: 11.0)).fixedSize(horizontal: false, vertical: true)
-                        }
+
+                    let legendItems: [(color: Color, label: String)] = data.series.map { item in
+                        let name = (useCustomLabels && !customSeriesLabels[item.sourcePath, default: ""].isEmpty) ? customSeriesLabels[item.sourcePath]! : item.label
+                        return (palette(item.sourcePath, order: sourceOrder), name)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("\(pointCount(data.2)) points across visible series · \(gapCount(data.2)) gaps")
+                    DraggableLegendView(items: legendItems, offset: $legendOffset)
+                        .padding(.trailing, 28)
+                        .padding(.top, 24)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(pointCount(data.series)) points across visible series · \(gapCount(data.series)) gaps")
                         .font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)).foregroundStyle(.secondary)
                 }
             }
         }
     }
 
-    private func draw(_ series: [Series], xTitle: String, yTitle: String, in context: inout GraphicsContext, size: CGSize) {
+    private func draw(_ series: [Series], xLabel: String, xUnit: String, yLabel: String, yUnit: String, in context: inout GraphicsContext, size: CGSize) {
         guard let xBounds = extrema(series, isX: true), let yBounds = extrema(series, isX: false) else { return }
+
+        let allX = series.flatMap { $0.x.compactMap { $0 } }
+        let allY = series.flatMap { $0.y.compactMap { $0 } }
+        let xScaleInfo = AxisFormatter.scaleInfo(for: allX, baseUnit: xUnit)
+        let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
+
         let yRangeTemp = viewport(expanded(yBounds), pan: pan.height, dimension: size.height, vertical: true)
         let yLabels: [String] = (0...4).map { index in
             let t = Double(index) / 4
             let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
-            return axisLabel(y, scale: yScale)
+            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
         }
         let maxChars = yLabels.map(\.count).max() ?? 1
         let maxLabelWidth = max(30, CGFloat(maxChars) * 7.2)
@@ -881,9 +1026,15 @@ struct OverlayPlot: View {
             var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 5, y: py))
             context.stroke(xTick, with: .color(.primary), lineWidth: 0.9)
             context.stroke(yTick, with: .color(.primary), lineWidth: 0.9)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
             context.draw(Text(yLabels[index]).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
+        let defaultXTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
+        let xTitle = (useCustomLabels && !customXAxisTitle.isEmpty) ? customXAxisTitle : defaultXTitle
+
+        let defaultYTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
+        let yTitle = (useCustomLabels && !customYAxisTitle.isEmpty) ? customYAxisTitle : defaultYTitle
+
         context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
         let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
         var yLabelContext = context
@@ -979,8 +1130,8 @@ struct OverlayPlot: View {
         let magnitude = absolute ? "|\(physical)|" : physical
         return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
     }
-    private func axisLabel(_ value: Double, scale: AxisScale) -> String {
-        scale == .logarithmic ? "10^\(NumberLabel.format(value))" : NumberLabel.format(value)
+    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo) -> String {
+        scale == .logarithmic ? "10^\(AxisFormatter.formatTick(value, factor: 1.0))" : AxisFormatter.formatTick(value, factor: scaleInfo.factor)
     }
     private func palette(_ sourcePath: String, order: [String]) -> Color {
         NativeOverlayPalette.color(order.firstIndex(of: sourcePath) ?? 0)

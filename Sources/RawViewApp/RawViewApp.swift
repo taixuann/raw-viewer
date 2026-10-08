@@ -38,6 +38,12 @@ final class RawViewModel: ObservableObject {
     @Published var yScale: AxisScale = .linear
     @Published var showInspector = true
     func toggleInspector() { showInspector.toggle() }
+    @Published var useCustomLabels = false
+    @Published var customPlotTitle = ""
+    @Published var customXAxisTitle = ""
+    @Published var customYAxisTitle = ""
+    @Published var customSeriesLabels: [String: String] = [:]
+    @Published var legendOffset: CGSize = .zero
     // Independent cancellation identities: inventory, bulk inspection, and the
     // focused-source load each own their task slot, so changing focus cancels
     // only the focused load and never drops in-flight inspection results.
@@ -575,7 +581,13 @@ struct RawViewShell: View {
                            showInspector: $model.showInspector,
                            isLoading: model.isLoading,
                            loadingStatus: model.isInspecting ? "Inspecting (\(model.inspectedSources)/\(model.inspectionTotal))…" : (model.isLoading && model.loadingPhase != "Idle" && model.loadingPhase != "Inspecting" ? "\(model.loadingPhase)…" : nil),
-                           retry: model.loadFocused)
+                           retry: model.loadFocused,
+                           useCustomLabels: model.useCustomLabels,
+                           customPlotTitle: model.customPlotTitle,
+                           customXAxisTitle: model.customXAxisTitle,
+                           customYAxisTitle: model.customYAxisTitle,
+                           customSeriesLabels: model.customSeriesLabels,
+                           legendOffset: $model.legendOffset)
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             if model.showInspector {
                 inspector
@@ -704,7 +716,13 @@ struct RawViewShell: View {
                              onRetry: model.loadFocused,
                              cacheStatus: cacheStatus,
                              onClearCache: { model.clearCacheFiles(); model.loadFocused() },
-                             onLimitChange: { model.cacheLimitBytes = $0 })
+                             onLimitChange: { model.cacheLimitBytes = $0 },
+                             useCustomLabels: $model.useCustomLabels,
+                             customPlotTitle: $model.customPlotTitle,
+                             customXAxisTitle: $model.customXAxisTitle,
+                             customYAxisTitle: $model.customYAxisTitle,
+                             customSeriesLabels: $model.customSeriesLabels,
+                             legendOffset: $model.legendOffset)
     }
 
     private var cacheStatus: InspectorPane.CacheStatus? {
@@ -725,6 +743,12 @@ struct NativePlot: View {
     let xScale: AxisScale
     let yScale: AxisScale
     var lineWidth: Double = 1.4
+    var useCustomLabels: Bool = false
+    var customPlotTitle: String = ""
+    var customXAxisTitle: String = ""
+    var customYAxisTitle: String = ""
+    var customSeriesLabels: [String: String] = [:]
+    @Binding var legendOffset: CGSize
     @State private var zoom = 1.0
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
@@ -754,27 +778,35 @@ struct NativePlot: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? ""))
+        let defaultTitle = measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? "")
+        let titleText = (useCustomLabels && !customPlotTitle.isEmpty) ? customPlotTitle : defaultTitle
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(titleText)
                 .font(.custom(NativePlotStyle.fontFamily, size: 13.5).bold())
                 .lineLimit(1).truncationMode(.middle)
             switch transformed {
             case .failure(let failure):
                 if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
             case .success(let data):
-                Canvas { context, size in draw(data, in: &context, size: size) }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
-                    .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
-                    .overlay(alignment: .topTrailing) {
-                        Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
+                ZStack(alignment: .topTrailing) {
+                    Canvas { context, size in draw(data, in: &context, size: size) }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
+                        .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
+                        .overlay(alignment: .topTrailing) {
+                            Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
+                        }
+
+                    let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
+                        let name = (useCustomLabels && !customSeriesLabels[item.0, default: ""].isEmpty) ? customSeriesLabels[item.0]! : item.0
+                        return (palette(index), name)
                     }
+                    DraggableLegendView(items: legendItems, offset: $legendOffset)
+                        .padding(.trailing, 28)
+                        .padding(.top, 24)
+                }
                 HStack(spacing: 14) {
-                    ForEach(Array(data.1.enumerated()), id: \.offset) { index, item in
-                        Label(item.0, systemImage: "line.diagonal")
-                            .foregroundStyle(palette(index)).font(.custom(NativePlotStyle.fontFamily, size: 11.0))
-                    }
                     Spacer()
                     Text("Drag to pan · Pinch to zoom · \(data.0.count) rows")
                         .font(.custom(NativePlotStyle.fontFamily, size: 10.5)).foregroundStyle(.secondary)
@@ -787,11 +819,18 @@ struct NativePlot: View {
         let finiteX = data.0.compactMap { $0 }
         let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
         guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
+
+        let xChannel = measurement.channel(named: measurement.view.x ?? "")
+        let yChannel = measurement.view.y?.first.flatMap(measurement.channel(named:))
+
+        let xScaleInfo = AxisFormatter.scaleInfo(for: finiteX, baseUnit: xChannel?.unit ?? "")
+        let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
+
         let yRangeTemp = viewport(expanded(finiteY), pan: pan.height, dimension: size.height, vertical: true)
         let yLabels: [String] = (0...4).map { index in
             let t = Double(index) / 4
             let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
-            return axisLabel(y, scale: yScale)
+            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
         }
         let maxChars = yLabels.map(\.count).max() ?? 1
         let maxLabelWidth = max(30, CGFloat(maxChars) * 7.2)
@@ -823,13 +862,15 @@ struct NativePlot: View {
             var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 5, y: py))
             context.stroke(xTick, with: .color(.primary), lineWidth: 0.9)
             context.stroke(yTick, with: .color(.primary), lineWidth: 0.9)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
             context.draw(Text(yLabels[index]).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
-        let xChannel = measurement.channel(named: measurement.view.x ?? "")
-        let xTitle = axisTitle(xChannel?.label ?? "X", unit: xChannel?.unit ?? "", absolute: xAbsolute, scale: xScale)
-        let yChannel = measurement.view.y?.first.flatMap(measurement.channel(named:))
-        let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yChannel?.unit ?? "", absolute: yAbsolute, scale: yScale)
+        let defaultXTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
+        let xTitle = (useCustomLabels && !customXAxisTitle.isEmpty) ? customXAxisTitle : defaultXTitle
+
+        let defaultYTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
+        let yTitle = (useCustomLabels && !customYAxisTitle.isEmpty) ? customYAxisTitle : defaultYTitle
+
         context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
         let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
         var yLabelContext = context
@@ -885,8 +926,8 @@ struct NativePlot: View {
         let magnitude = absolute ? "|\(physical)|" : physical
         return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
     }
-    private func axisLabel(_ value: Double, scale: AxisScale) -> String {
-        scale == .logarithmic ? "10^\(NumberLabel.format(value))" : NumberLabel.format(value)
+    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo) -> String {
+        scale == .logarithmic ? "10^\(AxisFormatter.formatTick(value, factor: 1.0))" : AxisFormatter.formatTick(value, factor: scaleInfo.factor)
     }
     private func palette(_ index: Int) -> Color {
         let colors = NativePlotStyle.palette
@@ -1014,6 +1055,12 @@ struct InspectorPane: View {
     var cacheStatus: CacheStatus? = nil
     var onClearCache: (() -> Void)? = nil
     var onLimitChange: ((Int64) -> Void)? = nil
+    @Binding var useCustomLabels: Bool
+    @Binding var customPlotTitle: String
+    @Binding var customXAxisTitle: String
+    @Binding var customYAxisTitle: String
+    @Binding var customSeriesLabels: [String: String]
+    @Binding var legendOffset: CGSize
 
     struct CacheStatus {
         var usedBytes: Int64
@@ -1050,6 +1097,7 @@ struct InspectorPane: View {
                         }
                     } else {
                         dataSection
+                        labelsSection
                         styleSection
                         seriesSection
                         axesSection
@@ -1132,6 +1180,50 @@ struct InspectorPane: View {
         }
     }
 
+    private var labelsSection: some View {
+        section("Labels") {
+            Toggle("Custom Labels", isOn: $useCustomLabels)
+                .font(.caption)
+            if useCustomLabels {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Figure Title").font(.caption2).foregroundStyle(.secondary)
+                        TextField("Title override…", text: $customPlotTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("X-Axis Label").font(.caption2).foregroundStyle(.secondary)
+                        TextField("X label override…", text: $customXAxisTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Y-Axis Label").font(.caption2).foregroundStyle(.secondary)
+                        TextField("Y label override…", text: $customYAxisTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                    }
+                    HStack {
+                        Button("Reset Labels") {
+                            customPlotTitle = ""
+                            customXAxisTitle = ""
+                            customYAxisTitle = ""
+                            customSeriesLabels.removeAll()
+                        }
+                        .font(.caption2)
+                        Spacer()
+                        Button("Reset Legend Position") {
+                            legendOffset = .zero
+                        }
+                        .font(.caption2)
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
     private var styleSection: some View {
         section("Style") {
             HStack {
@@ -1182,26 +1274,40 @@ struct InspectorPane: View {
         }()
         return HStack(spacing: 8) {
             Circle().fill(seriesColor(id)).frame(width: 9, height: 9).accessibilityHidden(true)
-            Button {
-                focusedID = id
-                onRetry()
-            } label: {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(label).font(.caption).lineLimit(1).truncationMode(.middle)
-                    if let error = state?.error {
-                        Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
-                    } else if state?.isLoading == true {
-                        Text("Loading…").font(.caption2).foregroundStyle(.secondary)
-                    } else if let exclusionReason {
-                        Text("Excluded from comparison: \(exclusionReason)").font(.caption2).foregroundStyle(.orange).lineLimit(3)
-                    } else if isFocused {
-                        Text("Focused").font(.caption2).foregroundStyle(.secondary)
+            if useCustomLabels {
+                VStack(alignment: .leading, spacing: 2) {
+                    TextField(label, text: Binding(
+                        get: { customSeriesLabels[id] ?? "" },
+                        set: { customSeriesLabels[id] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    if let exclusionReason {
+                        Text("Excluded: \(exclusionReason)").font(.caption2).foregroundStyle(.orange)
                     }
                 }
+            } else {
+                Button {
+                    focusedID = id
+                    onRetry()
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(label).font(.caption).lineLimit(1).truncationMode(.middle)
+                        if let error = state?.error {
+                            Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
+                        } else if state?.isLoading == true {
+                            Text("Loading…").font(.caption2).foregroundStyle(.secondary)
+                        } else if let exclusionReason {
+                            Text("Excluded from comparison: \(exclusionReason)").font(.caption2).foregroundStyle(.orange).lineLimit(3)
+                        } else if isFocused {
+                            Text("Focused").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Focus this source")
+                .accessibilityLabel("Focus \(label)")
             }
-            .buttonStyle(.plain)
-            .help("Focus this source")
-            .accessibilityLabel("Focus \(label)")
             Spacer(minLength: 4)
             if exclusionReason == nil {
                 Toggle(isOn: Binding(get: { !isHidden }, set: { show in
