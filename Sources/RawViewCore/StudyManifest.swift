@@ -244,7 +244,9 @@ public enum ManifestIndex {
                 issues.append("\(relativePath): source path \"\(raw)\" must not be absolute; skipped.")
                 return nil
             }
-            if ProjectContext.skippedRawExtensions.contains(URL(fileURLWithPath: raw).pathExtension.lowercased()) {
+            let pathExt = URL(fileURLWithPath: raw).pathExtension.lowercased()
+            if ProjectContext.skippedRawExtensions.contains(pathExt)
+                || (!pathExt.isEmpty && !ProjectContext.supportedRawExtensions.contains(pathExt)) {
                 continue
             }
             let projectCandidate = project.root.appendingPathComponent(raw).standardizedFileURL

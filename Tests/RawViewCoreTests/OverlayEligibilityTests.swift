@@ -22,6 +22,28 @@ struct OverlayEligibilityTests {
         #expect(index.manifests.first?.members == ["data/raw/a.csv"])
     }
 
+    @Test func manifestSkipsNonMeasurementFilesSuchAsIntakeLog() throws {
+        let root = try makeOverlayProject(
+            profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
+            sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8)],
+            manifests: ["study.yaml": """
+                study_id: synth-study-intake
+                sources:
+                  - path: data/raw/a.csv
+                  - path: data/raw/.intake.log
+                  - path: data/raw/run.log
+                  - path: data/raw/analysis.py
+                """]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let index = ManifestIndex.load(project: project)
+
+        #expect(index.issues.isEmpty)
+        #expect(index.manifests.count == 1)
+        #expect(index.manifests.first?.members == ["data/raw/a.csv"])
+    }
+
     @Test func studyManifestResolvesExplicitRawAliasesAndIgnoresFoldedRationale() async throws {
         let csv = Data(syntheticCSV(values: [(0, 1e-12), (0.1, 2e-12)]).utf8)
         let root = try makeOverlayProject(
