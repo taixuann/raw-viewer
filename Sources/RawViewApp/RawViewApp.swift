@@ -549,82 +549,10 @@ struct RawViewShell: View {
     @StateObject private var model = RawViewModel()
 
     var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("PROJECT SOURCES").font(.headline)
-                    Spacer()
-                    Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
-                        .help("Open project")
-                }
-                if let project = model.project {
-                    Text(project.root.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if model.isLoading && model.loadingPhase == "Discovering" {
-                        ProgressView {
-                            Text("Discovering sources under data/raw…")
-                        }
-                        Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
-                    } else if model.isLoading && model.loadingPhase == "Inspecting" {
-                        ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
-                            Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
-                        }
-                        Button("Cancel Inspection", action: model.cancelLoad).buttonStyle(.bordered)
-                    } else if model.inspectionCancelled {
-                        let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
-                        if remaining > 0 {
-                            Text("Inspection cancelled · \(remaining) remaining")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
-                        }
-                    }
-                    ProjectSourcesSidebar(sources: model.sources,
-                        inspections: model.inspections,
-                        states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
-                        selectedSourceIDs: $model.selectedSourceIDs)
-                    if !model.profileIssues.isEmpty {
-                        profileIssueList
-                    }
-                    Spacer()
-                    Text("RawView's built-in readers parse sources. Raw files and instrument profiles are never modified.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
-                }
-            }
-            .padding(14)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 260, max: 380)
-        } detail: {
-            RawDetailView(model: model)
-                .overlay(alignment: .top) {
-                    if let error = model.error {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .padding(10).frame(maxWidth: .infinity).background(.regularMaterial)
-                            .foregroundStyle(.red).textSelection(.enabled)
-                    }
-                }
-        }
-        .frame(minWidth: 880, minHeight: 560)
-        .onChange(of: model.focusedSourceID) { _, _ in model.loadFocused() }
-        .onChange(of: model.selectedSourceIDs) { _, new in model.updateSelection(new) }
-    }
-
-    private var profileIssueList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if !model.profileIssues.isEmpty {
-                Text("PROFILE ISSUES").font(.caption2.bold()).foregroundStyle(.orange)
-                ForEach(Array(model.profileIssues.enumerated()), id: \.offset) { _, issue in
-                    Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-            }
-        }
-    }
-}
-
-struct RawDetailView: View {
-    @ObservedObject var model: RawViewModel
-
-    var body: some View {
         HSplitView {
+            sidebarPane
+                .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
+                .frame(maxHeight: .infinity)
             ProjectGallery(sources: model.sources, states: model.sourceStates,
                            focusedSourceID: $model.focusedSourceID,
                            selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
@@ -636,6 +564,73 @@ struct RawDetailView: View {
             inspector
                 .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
                 .frame(maxHeight: .infinity)
+        }
+        .frame(minWidth: 880, minHeight: 560)
+        .overlay(alignment: .top) {
+            if let error = model.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .padding(10).frame(maxWidth: .infinity).background(.regularMaterial)
+                    .foregroundStyle(.red).textSelection(.enabled)
+            }
+        }
+        .onChange(of: model.focusedSourceID) { _, _ in model.loadFocused() }
+        .onChange(of: model.selectedSourceIDs) { _, new in model.updateSelection(new) }
+    }
+
+    private var sidebarPane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("PROJECT SOURCES").font(.headline)
+                Spacer()
+                Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
+                    .help("Open project")
+            }
+            if let project = model.project {
+                Text(project.root.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if model.isLoading && model.loadingPhase == "Discovering" {
+                    ProgressView {
+                        Text("Discovering sources under data/raw…")
+                    }
+                    Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
+                } else if model.isLoading && model.loadingPhase == "Inspecting" {
+                    ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
+                        Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
+                    }
+                    Button("Cancel Inspection", action: model.cancelLoad).buttonStyle(.bordered)
+                } else if model.inspectionCancelled {
+                    let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
+                    if remaining > 0 {
+                        Text("Inspection cancelled · \(remaining) remaining")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
+                    }
+                }
+                ProjectSourcesSidebar(sources: model.sources,
+                    inspections: model.inspections,
+                    states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
+                    selectedSourceIDs: $model.selectedSourceIDs)
+                if !model.profileIssues.isEmpty {
+                    profileIssueList
+                }
+                Spacer()
+                Text("RawView's built-in readers parse sources. Raw files and instrument profiles are never modified.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var profileIssueList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !model.profileIssues.isEmpty {
+                Text("PROFILE ISSUES").font(.caption2.bold()).foregroundStyle(.orange)
+                ForEach(Array(model.profileIssues.enumerated()), id: \.offset) { _, issue in
+                    Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
         }
     }
 
@@ -744,9 +739,18 @@ struct NativePlot: View {
         let topGutter: CGFloat = 16
         let bottomGutter: CGFloat = 54
         let rightGutter: CGFloat = 20
-        let plotWidth = max(10, size.width - leftGutter - rightGutter)
-        let plotHeight = max(10, size.height - topGutter - bottomGutter)
-        let plot = CGRect(x: leftGutter, y: topGutter, width: plotWidth, height: plotHeight)
+        let targetRatio: CGFloat = 59.1 / 50.0
+        let availWidth = max(10, size.width - leftGutter - rightGutter)
+        let availHeight = max(10, size.height - topGutter - bottomGutter)
+        var plotW = availWidth
+        var plotH = plotW / targetRatio
+        if plotH > availHeight {
+            plotH = availHeight
+            plotW = plotH * targetRatio
+        }
+        let plotX = leftGutter + (availWidth - plotW) / 2
+        let plotY = topGutter + (availHeight - plotH) / 2
+        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)

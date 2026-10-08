@@ -487,12 +487,16 @@ struct ProjectGallery: View {
         private func cardSize(in geoSize: CGSize) -> CGSize {
             let availW = max(100, geoSize.width - 48)
             let availH = max(100, geoSize.height - 48)
-            var cardW = availW
-            var cardH = cardW / targetRatio
-            if cardH > availH {
-                cardH = availH
-                cardW = cardH * targetRatio
+            let maxPlotW = max(100, availW - 135)
+            let maxPlotH = max(80, availH - 166)
+            var plotW = maxPlotW
+            var plotH = plotW / targetRatio
+            if plotH > maxPlotH {
+                plotH = maxPlotH
+                plotW = plotH * targetRatio
             }
+            let cardW = plotW + 135
+            let cardH = plotH + 166
             return CGSize(width: max(280, cardW), height: max(240, cardH))
         }
 
