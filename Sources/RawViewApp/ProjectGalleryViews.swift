@@ -402,17 +402,14 @@ struct ProjectGallery: View {
                     description: Text("Every selected series is hidden. Show at least one series in the inspector."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        floatingCard {
-                            OverlayPlot(measurements: visible, selectedSourceIDs: selectedIDs,
-                                        focused: states[focused.id]?.measurement,
-                                        lineWidth: lineWidth,
-                                        xAbsolute: xAbsolute, yAbsolute: yAbsolute,
-                                        xScale: xScale, yScale: yScale)
-                        }
-                    }.padding(20)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                CenteredFigureView {
+                    OverlayPlot(measurements: visible, selectedSourceIDs: selectedIDs,
+                                focused: states[focused.id]?.measurement,
+                                lineWidth: lineWidth,
+                                xAbsolute: xAbsolute, yAbsolute: yAbsolute,
+                                xScale: xScale, yScale: yScale)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         case .blocked(let reason):
             VStack(spacing: 0) {
@@ -442,17 +439,14 @@ struct ProjectGallery: View {
                         description: Text("Every selected series is hidden. Show at least one series in the inspector."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            floatingCard {
-                                OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
-                                            focused: visible.first(where: { $0.source.path == focused.id }),
-                                            lineWidth: lineWidth,
-                                            xAbsolute: xAbsolute, yAbsolute: yAbsolute,
-                                            xScale: xScale, yScale: yScale)
-                            }
-                        }.padding(20)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    CenteredFigureView {
+                        OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
+                                    focused: visible.first(where: { $0.source.path == focused.id }),
+                                    lineWidth: lineWidth,
+                                    xAbsolute: xAbsolute, yAbsolute: yAbsolute,
+                                    xScale: xScale, yScale: yScale)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         case nil:
@@ -472,13 +466,12 @@ struct ProjectGallery: View {
                     description: Text("The profile reports metadata only; its data remains available in the Data tab."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    floatingCard {
-                        NativePlot(measurement: measurement, xAbsolute: xAbsolute,
-                                   yAbsolute: yAbsolute, xScale: xScale,
-                                   yScale: yScale, lineWidth: lineWidth)
-                    }.padding(20)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                CenteredFigureView {
+                    NativePlot(measurement: measurement, xAbsolute: xAbsolute,
+                               yAbsolute: yAbsolute, xScale: xScale,
+                               yScale: yScale, lineWidth: lineWidth)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
             sourceStatus(source, symbol: "chart.xyaxis.line")
@@ -486,18 +479,49 @@ struct ProjectGallery: View {
         }
     }
 
-    private func floatingCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(nsColor: .textBackgroundColor))
-                    .shadow(color: .black.opacity(0.12), radius: 6, x: 0, y: 2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(.quaternary, lineWidth: 0.5)
-            )
+    private struct CenteredFigureView<Content: View>: View {
+        @ViewBuilder let content: () -> Content
+
+        private let targetRatio: CGFloat = 59.1 / 50.0
+
+        private func cardSize(in geoSize: CGSize) -> CGSize {
+            let availW = max(100, geoSize.width - 48)
+            let availH = max(100, geoSize.height - 48)
+            var cardW = availW
+            var cardH = cardW / targetRatio
+            if cardH > availH {
+                cardH = availH
+                cardW = cardH * targetRatio
+            }
+            return CGSize(width: max(280, cardW), height: max(240, cardH))
+        }
+
+        var body: some View {
+            GeometryReader { geo in
+                let size = cardSize(in: geo.size)
+                ZStack(alignment: .center) {
+                    floatingCard {
+                        content()
+                    }
+                    .frame(width: size.width, height: size.height)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            }
+        }
+
+        private func floatingCard<C: View>(@ViewBuilder cardContent: () -> C) -> some View {
+            cardContent()
+                .padding(20)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(nsColor: .textBackgroundColor))
+                        .shadow(color: .black.opacity(0.12), radius: 6, x: 0, y: 2)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(.quaternary, lineWidth: 0.5)
+                )
+        }
     }
 
     private func sourceStatus(_ source: RawSource, symbol: String) -> some View {
@@ -628,7 +652,7 @@ struct OverlayPlot: View {
                     "\($0.label): \($0.x.count) points, \(gapCount($0)) gaps"
                 }.joined(separator: ". ")
                 Canvas { context, size in draw(data.2, xTitle: data.0, yTitle: data.1, in: &context, size: size) }
-                    .frame(maxWidth: .infinity, minHeight: 380, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                     .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
@@ -658,12 +682,18 @@ struct OverlayPlot: View {
     private func draw(_ series: [Series], xTitle: String, yTitle: String, in context: inout GraphicsContext, size: CGSize) {
         guard let xBounds = extrema(series, isX: true), let yBounds = extrema(series, isX: false) else { return }
         let leftGutter = min(100, max(68, size.width * 0.16))
-        let topGutter: CGFloat = 16
-        let bottomGutter: CGFloat = 54
-        let rightGutter: CGFloat = 20
-        let plotWidth = max(10, size.width - leftGutter - rightGutter)
-        let plotHeight = max(10, size.height - topGutter - bottomGutter)
-        let plot = CGRect(x: leftGutter, y: topGutter, width: plotWidth, height: plotHeight)
+        let targetRatio: CGFloat = 59.1 / 50.0
+        let availWidth = max(10, size.width - leftGutter - 20)
+        let availHeight = max(10, size.height - 16 - 54)
+        var plotW = availWidth
+        var plotH = plotW / targetRatio
+        if plotH > availHeight {
+            plotH = availHeight
+            plotW = plotH * targetRatio
+        }
+        let plotX = leftGutter + (availWidth - plotW) / 2
+        let plotY = 16 + (availHeight - plotH) / 2
+        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)

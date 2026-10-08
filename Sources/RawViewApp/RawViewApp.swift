@@ -592,7 +592,7 @@ struct RawViewShell: View {
                 }
             }
             .padding(14)
-            .navigationSplitViewColumnWidth(min: 220, ideal: 265)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 260, max: 380)
         } detail: {
             RawDetailView(model: model)
                 .overlay(alignment: .top) {
@@ -603,6 +603,7 @@ struct RawViewShell: View {
                     }
                 }
         }
+        .frame(minWidth: 880, minHeight: 560)
         .onChange(of: model.focusedSourceID) { _, _ in model.loadFocused() }
         .onChange(of: model.selectedSourceIDs) { _, new in model.updateSelection(new) }
     }
@@ -631,9 +632,9 @@ struct RawDetailView: View {
                            tab: $model.tab,
                            xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                            xScale: $model.xScale, yScale: $model.yScale, retry: model.loadFocused)
-                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             inspector
-                .frame(minWidth: 260, idealWidth: 320, maxWidth: 650)
+                .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
                 .frame(maxHeight: .infinity)
         }
     }
@@ -715,7 +716,7 @@ struct NativePlot: View {
                 if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
             case .success(let data):
                 Canvas { context, size in draw(data, in: &context, size: size) }
-                    .frame(maxWidth: .infinity, minHeight: 380, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                     .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
