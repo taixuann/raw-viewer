@@ -671,18 +671,12 @@ struct NativePlot: View {
         let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
         guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
         let leftGutter = min(100, max(68, size.width * 0.16))
-        let targetRatio: CGFloat = 59.1 / 50.0
-        let availWidth = max(10, size.width - leftGutter - 20)
-        let availHeight = max(10, size.height - 16 - 54)
-        var plotW = availWidth
-        var plotH = plotW / targetRatio
-        if plotH > availHeight {
-            plotH = availHeight
-            plotW = plotH * targetRatio
-        }
-        let plotX = leftGutter + (availWidth - plotW) / 2
-        let plotY = 16 + (availHeight - plotH) / 2
-        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
+        let topGutter: CGFloat = 16
+        let bottomGutter: CGFloat = 54
+        let rightGutter: CGFloat = 20
+        let plotWidth = max(10, size.width - leftGutter - rightGutter)
+        let plotHeight = max(10, size.height - topGutter - bottomGutter)
+        let plot = CGRect(x: leftGutter, y: topGutter, width: plotWidth, height: plotHeight)
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
