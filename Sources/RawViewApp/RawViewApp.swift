@@ -578,48 +578,54 @@ struct RawViewShell: View {
     }
 
     private var sidebarPane: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("PROJECT SOURCES").font(.headline)
-                Spacer()
-                Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
-                    .help("Open project")
-            }
-            if let project = model.project {
-                Text(project.root.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if model.isLoading && model.loadingPhase == "Discovering" {
-                    ProgressView {
-                        Text("Discovering sources under data/raw…")
-                    }
-                    Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
-                } else if model.isLoading && model.loadingPhase == "Inspecting" {
-                    ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
-                        Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
-                    }
-                    Button("Cancel Inspection", action: model.cancelLoad).buttonStyle(.bordered)
-                } else if model.inspectionCancelled {
-                    let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
-                    if remaining > 0 {
-                        Text("Inspection cancelled · \(remaining) remaining")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("PROJECT SOURCES").font(.headline)
+                    Spacer()
+                    Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
+                        .help("Open project")
+                }
+                if let project = model.project {
+                    Text(project.root.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if model.isLoading && model.loadingPhase == "Discovering" {
+                        ProgressView {
+                            Text("Discovering sources under data/raw…")
+                        }
+                        Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
+                    } else if model.isLoading && model.loadingPhase == "Inspecting" {
+                        ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
+                            Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
+                        }
+                        Button("Cancel Inspection", action: model.cancelLoad).buttonStyle(.bordered)
+                    } else if model.inspectionCancelled {
+                        let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
+                        if remaining > 0 {
+                            Text("Inspection cancelled · \(remaining) remaining")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
+                        }
                     }
                 }
+            }
+            .padding([.top, .horizontal], 12)
+            if let _ = model.project {
                 ProjectSourcesSidebar(sources: model.sources,
                     inspections: model.inspections,
                     states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
                     selectedSourceIDs: $model.selectedSourceIDs)
                 if !model.profileIssues.isEmpty {
                     profileIssueList
+                        .padding(.horizontal, 12)
                 }
-                Spacer()
                 Text("RawView's built-in readers parse sources. Raw files and instrument profiles are never modified.")
                     .font(.caption2).foregroundStyle(.secondary)
+                    .padding([.bottom, .horizontal], 12)
             } else {
                 ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
+                    .padding(12)
             }
         }
-        .padding(14)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 

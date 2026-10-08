@@ -81,8 +81,28 @@ struct ProjectSourcesSidebar: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
-            .padding(.horizontal, 10).padding(.vertical, 8)
+            .padding(.horizontal, 10).padding(.vertical, 6)
             .onChange(of: facet) { _, _ in collapsed = [] }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                TextField("Filter sources…", text: $search)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                if !search.isEmpty {
+                    Button(action: { search = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear filter")
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+            .padding(.horizontal, 10).padding(.bottom, 6)
             Divider()
             filterChips
             Text("Select multiple with Shift or Command for comparison.")
@@ -101,6 +121,7 @@ struct ProjectSourcesSidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
         .searchable(text: $search, prompt: "Find a source or metadata")
         // Verified: the sidebar is created inside `if let project`, so opening another project
