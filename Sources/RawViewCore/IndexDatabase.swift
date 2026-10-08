@@ -21,6 +21,7 @@ public final class IndexDatabase: @unchecked Sendable {
         public let supportStatus: String
         public let validationState: String
         public let readerVersion: String
+        public let profileID: String?
         public let profileHash: String
         public let error: String?
 
@@ -37,6 +38,7 @@ public final class IndexDatabase: @unchecked Sendable {
             supportStatus: String = "supported",
             validationState: String = "profile valid; source not loaded",
             readerVersion: String = "",
+            profileID: String? = nil,
             profileHash: String = "",
             error: String? = nil
         ) {
@@ -52,6 +54,7 @@ public final class IndexDatabase: @unchecked Sendable {
             self.supportStatus = supportStatus
             self.validationState = validationState
             self.readerVersion = readerVersion
+            self.profileID = profileID
             self.profileHash = profileHash
             self.error = error
         }
@@ -70,6 +73,7 @@ public final class IndexDatabase: @unchecked Sendable {
                 supportStatus: inspection.supportStatus ?? "supported",
                 validationState: inspection.validationState ?? "",
                 readerVersion: inspection.readerVersion ?? "",
+                profileID: inspection.profileID,
                 profileHash: inspection.profileHash ?? "",
                 error: inspection.error
             )
@@ -88,7 +92,7 @@ public final class IndexDatabase: @unchecked Sendable {
                 supportStatus: supportStatus,
                 validationState: validationState,
                 readerVersion: readerVersion,
-                profileID: instrumentID ?? "",
+                profileID: profileID ?? instrumentID ?? "",
                 profileHash: profileHash,
                 error: error
             )
@@ -129,6 +133,7 @@ public final class IndexDatabase: @unchecked Sendable {
             support_status TEXT NOT NULL,
             validation_state TEXT NOT NULL,
             reader_version TEXT NOT NULL,
+            profile_id TEXT,
             profile_hash TEXT NOT NULL,
             error TEXT
         );
@@ -146,7 +151,7 @@ public final class IndexDatabase: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard let db else { return nil }
-        let sql = "SELECT relative_path, mtime, byte_size, instrument_id, instrument_name, application_mode, device_id, timestamp, category, support_status, validation_state, reader_version, profile_hash, error FROM sources WHERE relative_path = ? AND mtime = ? AND byte_size = ? LIMIT 1;"
+        let sql = "SELECT relative_path, mtime, byte_size, instrument_id, instrument_name, application_mode, device_id, timestamp, category, support_status, validation_state, reader_version, profile_id, profile_hash, error FROM sources WHERE relative_path = ? AND mtime = ? AND byte_size = ? LIMIT 1;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return nil }
         defer { sqlite3_finalize(stmt) }
@@ -163,7 +168,7 @@ public final class IndexDatabase: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard let db else { return [:] }
-        let sql = "SELECT relative_path, mtime, byte_size, instrument_id, instrument_name, application_mode, device_id, timestamp, category, support_status, validation_state, reader_version, profile_hash, error FROM sources;"
+        let sql = "SELECT relative_path, mtime, byte_size, instrument_id, instrument_name, application_mode, device_id, timestamp, category, support_status, validation_state, reader_version, profile_id, profile_hash, error FROM sources;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return [:] }
         defer { sqlite3_finalize(stmt) }
@@ -186,8 +191,8 @@ public final class IndexDatabase: @unchecked Sendable {
         INSERT OR REPLACE INTO sources (
             relative_path, mtime, byte_size, instrument_id, instrument_name,
             application_mode, device_id, timestamp, category, support_status,
-            validation_state, reader_version, profile_hash, error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            validation_state, reader_version, profile_id, profile_hash, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
@@ -209,8 +214,9 @@ public final class IndexDatabase: @unchecked Sendable {
             sqlite3_bind_text(stmt, 10, (r.supportStatus as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 11, (r.validationState as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 12, (r.readerVersion as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 13, (r.profileHash as NSString).utf8String, -1, nil)
-            bindOptionalText(stmt, index: 14, value: r.error)
+            bindOptionalText(stmt, index: 13, value: r.profileID)
+            sqlite3_bind_text(stmt, 14, (r.profileHash as NSString).utf8String, -1, nil)
+            bindOptionalText(stmt, index: 15, value: r.error)
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
                 throw NSError(domain: "IndexDatabase", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to insert record"])
@@ -233,13 +239,14 @@ public final class IndexDatabase: @unchecked Sendable {
         let status = sqlite3_column_text(stmt, 9).map { String(cString: $0) } ?? "supported"
         let valState = sqlite3_column_text(stmt, 10).map { String(cString: $0) } ?? ""
         let version = sqlite3_column_text(stmt, 11).map { String(cString: $0) } ?? ""
-        let hash = sqlite3_column_text(stmt, 12).map { String(cString: $0) } ?? ""
-        let err = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
+        let profID = sqlite3_column_text(stmt, 12).map { String(cString: $0) }
+        let hash = sqlite3_column_text(stmt, 13).map { String(cString: $0) } ?? ""
+        let err = sqlite3_column_text(stmt, 14).map { String(cString: $0) }
         return Record(
             relativePath: path, mtime: mtime, byteSize: size, instrumentID: instID,
             instrumentName: instName, applicationMode: mode, deviceID: device,
             timestamp: ts, category: cat, supportStatus: status, validationState: valState,
-            readerVersion: version, profileHash: hash, error: err
+            readerVersion: version, profileID: profID, profileHash: hash, error: err
         )
     }
 
