@@ -36,6 +36,8 @@ final class RawViewModel: ObservableObject {
     @Published var yAbsolute = false
     @Published var xScale: AxisScale = .linear
     @Published var yScale: AxisScale = .linear
+    @Published var showInspector = true
+    func toggleInspector() { showInspector.toggle() }
     // Independent cancellation identities: inventory, bulk inspection, and the
     // focused-source load each own their task slot, so changing focus cancels
     // only the focused load and never drops in-flight inspection results.
@@ -559,11 +561,17 @@ struct RawViewShell: View {
                            lineWidth: model.lineWidth, overlay: model.overlayResult(),
                            tab: $model.tab,
                            xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
-                           xScale: $model.xScale, yScale: $model.yScale, retry: model.loadFocused)
+                           xScale: $model.xScale, yScale: $model.yScale,
+                           showInspector: $model.showInspector,
+                           isLoading: model.isLoading,
+                           loadingStatus: model.isLoading ? (model.loadingPhase == "Inspecting" ? "Inspecting (\(model.inspectedSources)/\(model.inspectionTotal))…" : "\(model.loadingPhase)…") : nil,
+                           retry: model.loadFocused)
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-            inspector
-                .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
-                .frame(maxHeight: .infinity)
+            if model.showInspector {
+                inspector
+                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
+                    .frame(maxHeight: .infinity)
+            }
         }
         .frame(minWidth: 880, minHeight: 560)
         .overlay(alignment: .top) {
@@ -853,26 +861,84 @@ struct NativePlot: View {
 
 struct MeasurementTable: View {
     let measurement: NormalizedMeasurement
-    private var rows: [Int] { Array(0..<(measurement.channels.first?.values.count ?? 0)) }
+    @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
+
+    private var allRows: [Int] { Array(0..<(measurement.channels.first?.values.count ?? 0)) }
+
+    private var filteredRows: [Int] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return allRows }
+        return allRows.filter { rowIndex in
+            if String(rowIndex).contains(query) { return true }
+            for channel in measurement.channels {
+                if channel.text(at: rowIndex).lowercased().contains(query) {
+                    return true
+                }
+            }
+            return false
+        }
+    }
 
     var body: some View {
         if measurement.channels.isEmpty {
             ContentUnavailableView("Metadata Only", systemImage: "tablecells", description: Text("This source has no normalized numeric channels."))
         } else {
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    rowHeader
-                    ForEach(rows, id: \.self) { index in
-                        HStack(spacing: 0) {
-                            cell(String(index), width: 64)
-                            ForEach(measurement.channels) { channel in
-                                cell(channel.text(at: index), width: 150)
+            VStack(spacing: 0) {
+                searchBar
+                Divider()
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        rowHeader
+                        ForEach(filteredRows, id: \.self) { index in
+                            HStack(spacing: 0) {
+                                cell(String(index), width: 64)
+                                ForEach(measurement.channels) { channel in
+                                    cell(channel.text(at: index), width: 150)
+                                }
                             }
+                            .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.035) : .clear)
                         }
-                        .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.035) : .clear)
                     }
                 }
             }
+        }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search data (⌘F)…", text: $searchText)
+                .textFieldStyle(.plain)
+                .focused($isSearchFocused)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            if !searchText.isEmpty {
+                Text("\(filteredRows.count) of \(allRows.count) rows")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Text("\(allRows.count) rows")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.bar)
+        .overlay {
+            Button("") {
+                isSearchFocused = true
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .opacity(0)
+            .allowsHitTesting(false)
         }
     }
 

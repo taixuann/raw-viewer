@@ -334,23 +334,46 @@ struct ProjectGallery: View {
     @Binding var yAbsolute: Bool
     @Binding var xScale: AxisScale
     @Binding var yScale: AxisScale
+    @Binding var showInspector: Bool
+    var isLoading: Bool = false
+    var loadingStatus: String? = nil
     let retry: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
                 Picker("View", selection: $tab) {
                     Text("Plot").tag("Plot")
                     Text("Data").tag("Data")
                 }
                 .pickerStyle(.segmented).frame(width: 180)
                 .accessibilityLabel("Plot or Data view")
+                if isLoading {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        if let loadingStatus {
+                            Text(loadingStatus)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Spacer()
                 if selectedIDs.count >= 2 {
                     Text("\(selectedIDs.count) selected\(overlayLabel)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         .accessibilityLabel("Selection comparison status")
                 }
+                Button {
+                    showInspector.toggle()
+                } label: {
+                    Image(systemName: "sidebar.right")
+                        .foregroundStyle(showInspector ? .primary : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Toggle Inspector (⌘I)")
+                .keyboardShortcut("i", modifiers: .command)
+                .accessibilityLabel("Toggle Inspector")
             }
             .padding(.horizontal, 20).padding(.vertical, 10)
             Divider()
