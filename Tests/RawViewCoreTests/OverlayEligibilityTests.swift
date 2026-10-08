@@ -33,6 +33,9 @@ struct OverlayEligibilityTests {
                   - path: data/raw/.intake.log
                   - path: data/raw/run.log
                   - path: data/raw/analysis.py
+                  - path: README
+                  - path: .gitignore
+                  - path: data/raw/README
                 """]
         )
         defer { try? FileManager.default.removeItem(at: root) }

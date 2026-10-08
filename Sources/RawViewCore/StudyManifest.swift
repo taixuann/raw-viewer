@@ -245,8 +245,7 @@ public enum ManifestIndex {
                 return nil
             }
             let pathExt = URL(fileURLWithPath: raw).pathExtension.lowercased()
-            if ProjectContext.skippedRawExtensions.contains(pathExt)
-                || (!pathExt.isEmpty && !ProjectContext.supportedRawExtensions.contains(pathExt)) {
+            if !ProjectContext.supportedRawExtensions.contains(pathExt) {
                 continue
             }
             let projectCandidate = project.root.appendingPathComponent(raw).standardizedFileURL
