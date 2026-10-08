@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 9446)
+Total output lines: 542
+
 # RawView reader contract v1
 
 RawView owns its readers. Opening a project reads its raw files in-process: the
@@ -139,6 +142,24 @@ raw-file paths, hashes, measurements, or sample inventories. Tests in this
 repository use synthetic fixtures; source-specific equivalence checks run
 locally against the selected project and are not included in shared docs.
 
+### Profile upgrade procedure
+
+1. Keep the Study-owned instrument profile unchanged. Create or update a
+   standalone viewer profile in `data/instruments/rawview/` with an explicit
+   supported `schema_version`.
+2. Declare only observed tabular layouts: extension, delimiter, encoding,
+   headers and aliases, quantities, units, and the channels used for plotting.
+   Use `filename_contains_all` only with observed basename tokens when broad
+   signatures need scoping or signatures overlap another instrument or layout.
+   A missing token leaves the file inventoried but unmatched with a
+   source-level diagnostic. Do not add transforms or inferred channels.
+3. Validate the profile with RawView's inspection and load path against
+   representative files. Confirm mode selection, row order and count, arrays,
+   units, and diagnostics for unmatched or malformed sources.
+4. Keep source-specific measurements and hashes in local validation evidence;
+   do not copy raw data, inventories, or hashes into the profile or shared
+   documentation.
+
 ## Matching one source
 
 1. The source extension must be declared by at least one valid profile. The
@@ -148,199 +169,7 @@ locally against the selected project and are not included in shared docs.
    source with a diagnostic naming each candidate.
 2. A mode matches when its filename selector matches (every
    `filename_contains_all` token occurs case-insensitively in the source
-   basename; a mode without the field keeps the legacy behavior) AND at least
-   one `detect` signature appears, case-insensitively, in the first 64 KiB of
-   the decoded file. Either `detect` alternative matching is enough (OR). A
-   mode that does not match reports its exact cause: filename tokens missing
-   from the basename and detect signatures missing from the header sample are
-   named separately, both are named when both miss, and a side that did match
-   is noted as matched — a filename-only miss never claims a header miss. The
-   trailing advice mentions `filename_contains_all` only when a gated mode was
-   involved, so v1 profiles never see v2-only advice.
-3. Per-source isolation: broken profiles keep their selectors and diagnostics
-   per profile and never borrow another profile's, and each broken mode is
-   judged on its own selectors. Only a declared schema v2 gives
-   `filename_contains_all` meaning: v1, unversioned, malformed-version, and
-   unsupported-version claims ignore that unknown key as selector evidence and
-   keep their header evidence, so a matching header still blocks there. A
-   broken mode is unrelated only when a trustworthy selector proves mismatch:
-   a valid filename list missing any basename token, or a valid non-empty
-   detect list (from `modes[].detect` or legacy
-   `application_modes[].detect.signatures`) with no header match. Any other
-   mode could still conflict and keeps the source blocked: both sides
-   matching, or uncertainty from a malformed or missing selector. A filename
-   match plus a missing detect list is uncertain and blocks; a header match
-   plus a malformed filename is uncertain and blocks. A claim with no mode
-   evidence at all blocks fail-closed. A profile blocks when any of its modes
-   could conflict; one malformed mode never clears a source, and one proven
-   unrelated mode never blocks it. A source with exactly one valid mode match
-   stays usable beside a broken profile only when every mode of that profile
-   is proven unrelated to the source. Sources with no valid match stay blocked
-   until the invalid profile is fixed or removed. Sources that match no other
-   source's declarations are unaffected.
-
-## Tabular extraction (row-block layouts)
-
-The row-block layout covers the Keysight B1500A I-V, dual-sweep, list-sweep,
-and WGFMU tabular CSV profiles and, under schema v2, the Keithley LVM and
-legacy Horiba semicolon tables (empty `data_prefix`, tab/`;` delimiters). The
-first-row-header layout covers the WGFMU pulse CSV profiles: the first
-non-blank line is the header row resolving declared channels by exact header
-(or alias fallback), and every later non-blank line is a data row with the
-same gap contract. The headerless Horiba comment TSV uses the `comment-tsv` positional layout with the
-same gap contract. The RawView list-sweep profile plots current exactly as stored; it deliberately does not apply the Study-owned profile’s `current × -1` transform. Study-pipeline parity for that transformed quantity is therefore not claimed. WGFMU plots channel 1 and keeps
-its declared quantity/unit status, so an unknown quantity or unspecified unit
-remains ineligible for overlay. WGFMU PPF layouts plot time or pulse index
-(X) against current (Y); STP plots time (X) against voltage (Y) only
-(the plot refuses mixed-unit Y channels), while `current_v`, `fit`, and
-`fit_current` remain complete table channels; endurance plots cycles (X)
-against raw_ch2 (Y). Ambiguous labels (`current_v`, `fit`, `fit_current`,
-`raw_ch1`, `raw_ch2`) stay unknown with unspecified unit, and absent optional
-channels are skipped without invented values.
-
-- The file is decoded with the profile's ordered encodings, trying only
-  encodings from formats that declare the source extension. A leading
-  byte-order mark is accepted. The bounded 64 KiB header sample never splits a
-  UTF-8 scalar: a cut mid-scalar backs off to the scalar boundary.
-- The first row whose first cell equals `rows.names_prefix` is the header row.
-  Every format-declared channel resolves by exact primary header first, with
-  aliases only as fallback; ambiguity at either rank blocks the source, as do
-  two channels resolving to the same source column. All declared channels are
-  parsed into the ordered table; only the mode's x/y channels drive the plot.
-- Cells are quote-aware: a delimiter inside `"..."` stays in the cell and `""`
-  is an escaped quote. A malformed quote blocks the source naming file and
-  line instead of shifting columns silently. Remaining cells are split on the
-  profile delimiter and trimmed.
-- Data rows are rows whose first cell equals `rows.data_prefix`. Every data row
-  is kept in file order as one acquisition row, including rows with gaps.
-- A missing cell (short row) or empty cell is a blank gap; case-insensitive
-  `NaN`/`Inf`/`Infinity` spellings (with optional sign) are recorded gaps; a
-  spelled number that parses to a non-finite value is overflow saturation.
-  Each gap keeps its reason and raw token: the channel value is null for that
-  row, the plot breaks the line at the gap (drawing singleton runs as visible
-  dots), and the table shows the reason marker. A warning names the file,
-  line, column, reason, and raw token for each gap cell. Finite values are kept
-  bitwise exact; gaps are never interpolated, averaged, or replaced with
-  invented finite numbers.
-- Any other non-numeric cell text (for example `--`) is corrupt, not a gap: it
-  blocks that source and names the file, line, column, and value. Corrupt text
-  is never silently converted into valid data or a gap.
-- Header lines before the names row are preserved as `Acquisition` metadata
-  (for example Keysight SetupTitle, Dimension, record time) with stable unique
-  keys, so repeated rows keep every distinct value. Filename-derived device,
-  timestamp, and category join a separate `Identity` section; the category is
-  a filename grouping aid, never scientific study membership.
-- Every data row is kept in file order. Values are never sorted, interpolated,
-  averaged, normalized, downsampled, or unit-converted, and repeated or reversed
-  sweep points remain where the instrument wrote them.
-- A missing header row or zero data rows blocks that source with a diagnostic.
-- Transforms are not part of schema v1: there is no mechanism to invert, scale,
-  or otherwise convert measured values.
-
-## Normalized measurement boundary
-
-The normalized measurement is the integration seam for plotting, tables, and
-future overlay eligibility. It carries:
-
-| Field | Meaning |
-|---|---|
-| `source.path`, `source.sha256` | Project-relative path and SHA-256 of exactly the bytes parsed. |
-| `instrument.id`, `instrument.name` | Profile instrument identity, with optional profile `vendor`/`model` when declared. |
-| `application_mode` | Matched mode id. |
-| `view.kind`, `view.x`, `view.y`, `view.preserve_order` | RawView profiles emit `xy` views; the v1 decoder also preserves `regions` records emitted by the existing project reader. `preserve_order` is always `true` for data views. |
-| `channels` | Ordered channels with `name`, `label`, `unit`, `quantity`, row-aligned `values` (numbers or null gaps), and parallel `gap_reasons` (`blank`, `nan`, `infinite`, `saturated`, `unknown`); names are unique and lengths equal, so every channel has the same acquisition row count. Non-null values are always finite. |
-| `metadata_sections`, `warnings`, `support_status` | Reported metadata and state; `supported` for extracted data. `metadata_sections` carries `Acquisition` (header fields such as SetupTitle, Dimension, record time), `Identity` (filename-derived device, timestamp, category, plus filename), and `Data` (channel/row/gap counts). `warnings` carries per-gap diagnostics and truncation notes. |
-| `provenance` | `reader_version` and `mode` always; profile-backed sources add `profile_id`, `profile_hash`, `profile_schema_version`. |
-
-Filename facts follow the existing project convention (read-only): a leading
-`DDMMYY-HHMMSS` timestamp validated as a calendar date (years pivot to
-2000–2099), a `[device]` token, and a trailing category token such as
-`iv.dual-sweep`. The category is a filename grouping aid and is reported as
-`category`, feeding the Date / Batch and Category groupings; it must not be
-equated with scientific study membership. Study migration remains out of scope.
-Unknown or calendrically impossible facts stay unknown and display as Unknown.
-
-## Overlay comparison (exact-manifest + quantities/units)
-
-- Overlay membership comes only from an existing project YAML manifest with a
-  top-level `study_id` and a `sources` list of `{path}` objects. That explicit
-  `study_id` is the per-source study value for every listed path (`library.study`
-  membership); filename category tokens, group labels, and display names never
-  establish it.
-- Every selected source must resolve through exactly one manifest, and all
-  selected sources must share one identical manifest file (canonical
-  project-relative manifest path). Equal Study IDs in different files remain
-  different identities. Missing, ambiguous, or different manifest membership
-  blocks the whole comparison; when blocked and the focused measurement is
-  valid, the focused single-source plot stays visible with the blocking reason.
-  The viewer never picks the largest compatible subgroup and never omits the
-  focused source.
-- Within that exact shared manifest, the comparison cohort is anchored to the
-  focused source. Plot the focus and every selected source with the same
-  complete, ordered X/Y quantity-and-unit signature. Exclude incompatible
-  sources with a per-source reason while leaving the selection unchanged; never
-  choose the largest compatible subgroup or omit the focus. Missing or
-  placeholder (`unspecified` / `unknown`) quantities or units make a source
-  ineligible for the cohort. If the focus cannot be compared, or no selected
-  peer matches it, keep the focused single-source plot and explain why. Units
-  are never converted.
-- Every eligible series draws its full arrays in acquisition order with gaps
-  preserved: no sorting, interpolation, averaging, normalization, downsampling,
-  or transforms. Series visibility and line width change presentation only.
-- Manifest source paths resolve project-relative or manifest-relative inside
-  the selected project's canonical `data/raw`. Explicit Study input aliases
-  may be symlinks, but their final resolved path must stay under that raw root;
-  selected sources are still opened without following links. Manifest members
-  ending in `.spe` or `.affm` are skipped lexically before path resolution.
-  Absolute, outside-project, malformed, or ambiguous mappings fail closed
-  naming the manifest path. Manifests are capped at 1 MiB like profiles.
-- The plot sits on a floating central card with surrounding whitespace and
-  resize-safe axes; the right inspector exposes Data, Style, Series, and Axes.
-  Series keep distinct labels/colors with per-series visibility toggles that
-  remain keyboard and assistive-technology accessible. Plot/Data access and
-  per-source errors persist during multi-selection.
-
-## Failures, progress, and limits
-
-- Failures are isolated per source: one blocked source never suppresses another
-  source's inspection or load. Invalid, unversioned, ambiguous, or unsupported
-  entries stay listed with their diagnostic, except `.spe` and `.affm` files,
-  which are omitted without being opened. A uniquely matched valid source
-  stays usable beside an unrelated invalid profile claiming the same extension.
-- Discovery, inspection, and loading run off the main thread on independent
-  cancellation identities: changing focus cancels only the focused load and
-  never drops in-flight inspection results. Discovery runs detached through a
-  cancellable seam with incremental checkpoints (including single very wide
-  directories): cancelling the open operation stops the worker instead of
-  letting it finish in the background, and a generation gate drops results
-  superseded by reselection. Inspection runs in batches of at most 64 sources
-  with progress; a cancelled inspection keeps its partial results and offers a
-  resume action for the remainder. Failed loads can be retried.
-- A missing or unreadable in-root source reports its own diagnostic naming the
-  project-relative path; only paths resolving outside `data/raw` report the
-  outside diagnostic. A symlink source is rejected without following it: the
-  link text is classified lexically, an inside-`data/raw` link reports the
-  symlink diagnostic, and only a lexically outside link reports the outside
-  diagnostic, so a supported-named link to a `.spe`/`.affm` target never
-  reaches that target. Source and profile reads use no-follow opens pinned to
-  descriptor-relative handles beneath the project root, so path checks and the
-  hashed/parsed bytes cannot be separated by a swapped symlink.
-- The source SHA-256 is computed incrementally from exactly the bytes parsed,
-  so the recorded hash always identifies the parsed content.
-- Profile files are capped at 1 MiB and mode detection reads at most the first
-  64 KiB. Each source line is capped at 1 MiB and accumulated row-block or
-  comment-TSV header bytes are capped at 1 MiB; exceeding either blocks that source.
-  Tabular sources stream in bounded chunks with cancellation
-  checkpoints, and complete point arrays are retained without downsampling.
-- No arbitrary project code is executed by RawView.
-
-## Content-verified cache (Issues 6 and 7)
-
-Deterministic results are cached per project in a private app-local directory.
-RawView never reads from or writes to a project-controlled cache: project
-contributors can edit project files and must not be able to forge cached
-measurement arrays. The cache root is keyed by a digest of the canonical
-project root, and entry names are digests; no raw path or project identifier
+   basename; a mode without the field keeps the legacy behavior) AND …3446 tokens truncated…root, and entry names are digests; no raw path or project identifier
 appears in directory or entry names. The cached measurement payload does
 include the project-relative source path. Application Support is preferred,
 with a private temporary-directory location as fallback. If neither location
