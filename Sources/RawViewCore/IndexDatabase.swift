@@ -144,6 +144,8 @@ public final class IndexDatabase: @unchecked Sendable {
             sqlite3_close_v2(db)
             throw NSError(domain: "IndexDatabase", code: 2, userInfo: [NSLocalizedDescriptionKey: msg])
         }
+        // Migration: ensure existing databases upgrade to include profile_id column.
+        sqlite3_exec(db, "ALTER TABLE sources ADD COLUMN profile_id TEXT;", nil, nil, nil)
         return IndexDatabase(db: db)
     }
 

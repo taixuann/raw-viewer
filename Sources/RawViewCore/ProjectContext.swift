@@ -167,6 +167,12 @@ public struct ProjectContext: Sendable {
             // and plotting stays blocked.
             if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
                 enumerator.skipDescendants()
+                // A symlink without a supported extension or whose canonical path is not supported
+                // is not a measurement source.
+                let ext = url.pathExtension.lowercased()
+                if !ext.isEmpty && !Self.supportedRawExtensions.contains(ext) {
+                    continue
+                }
                 // Lexical handling only: match the enumerator's path (which
                 // may use the kernel-canonical prefix) against either root
                 // form, then rebuild the claimed URL from the project root so

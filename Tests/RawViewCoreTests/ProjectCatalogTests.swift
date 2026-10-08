@@ -272,3 +272,20 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sourcesB.count == total * 2)
     #expect(await gate.isCurrent(tokenB))
 }
+
+@Test func discoveryFiltersSymlinksToUnsupportedExtensions() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let raw = root.appendingPathComponent("data/raw")
+    try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
+    
+    let target = raw.appendingPathComponent("data.csv")
+    try Data("meas".utf8).write(to: target)
+    try FileManager.default.createSymbolicLink(at: raw.appendingPathComponent("symlink.csv"), withDestinationURL: target)
+    try FileManager.default.createSymbolicLink(at: raw.appendingPathComponent("symlink.log"), withDestinationURL: target)
+    
+    let sources = try ProjectContext.open(root).discoverSources()
+    
+    let paths = sources.map(\.relativePath).sorted()
+    #expect(paths == ["data/raw/data.csv", "data/raw/symlink.csv"])
+}

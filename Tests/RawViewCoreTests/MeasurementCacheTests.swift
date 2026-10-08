@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import SQLite3
 import Testing
 @testable import RawViewCore
 
@@ -828,5 +829,57 @@ struct MeasurementCacheTests {
         // Control: same small measurement stores under the real cap.
         try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256)
         #expect(try cache.usage().entryCount == 1)
+    }
+
+    @Test func indexDatabaseAutoMigratesProfileIDForExistingDatabases() throws {
+        let dbURL = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-test-\(UUID().uuidString).db")
+        defer { try? FileManager.default.removeItem(at: dbURL) }
+        var rawDB: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        guard sqlite3_open_v2(dbURL.path, &rawDB, flags, nil) == SQLITE_OK, let rawDB else {
+            Issue.record("Failed to create legacy database")
+            return
+        }
+        // Create table without profile_id (the previous schema version)
+        let legacySchema = """
+        CREATE TABLE sources (
+            relative_path TEXT PRIMARY KEY,
+            mtime INTEGER NOT NULL,
+            byte_size INTEGER NOT NULL,
+            instrument_id TEXT,
+            instrument_name TEXT,
+            application_mode TEXT,
+            device_id TEXT,
+            timestamp TEXT,
+            category TEXT,
+            support_status TEXT NOT NULL,
+            validation_state TEXT NOT NULL,
+            reader_version TEXT NOT NULL,
+            profile_hash TEXT NOT NULL,
+            error TEXT
+        );
+        INSERT INTO sources VALUES (
+            'data/raw/legacy.csv', 12345, 100, 'inst-1', 'Inst One', 'mode-a',
+            'dev-x', '2026-10-01', 'cat-y', 'supported', 'valid', '1.0', 'hash1', NULL
+        );
+        """
+        #expect(sqlite3_exec(rawDB, legacySchema, nil, nil, nil) == SQLITE_OK)
+        sqlite3_close_v2(rawDB)
+
+        // Opening via IndexDatabase must automatically migrate the table and read successfully
+        let indexDB = try IndexDatabase.open(at: dbURL)
+        let record = indexDB.lookup(path: "data/raw/legacy.csv", mtime: 12345, size: 100)
+        #expect(record != nil)
+        #expect(record?.instrumentID == "inst-1")
+        #expect(record?.profileID == nil)
+
+        // Writing new records with explicit profileID must succeed on migrated DB
+        let newRecord = IndexDatabase.Record(
+            relativePath: "data/raw/new.csv", mtime: 20000, byteSize: 250,
+            instrumentID: "inst-2", profileID: "prof-custom"
+        )
+        try indexDB.upsertBatch([newRecord])
+        let fetchedNew = indexDB.lookup(path: "data/raw/new.csv", mtime: 20000, size: 250)
+        #expect(fetchedNew?.profileID == "prof-custom")
     }
 }
