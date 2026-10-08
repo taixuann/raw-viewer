@@ -401,8 +401,6 @@ final class RawViewModel: ObservableObject {
     }
 
     private func startInspection(_ context: ProjectContext) {
-        // Cancels only bulk inspection: discovery already finished and any
-        // focused load keeps its own slot and state.
         inspectionTask?.cancel()
         inspectionTask = nil
         inspectionID = UUID()
@@ -410,12 +408,45 @@ final class RawViewModel: ObservableObject {
         isLoading = true
         error = nil
         loadingPhase = "Inspecting"
-        inspectedSources = 0
-        inspectionTotal = sources.count
         profileIssues = []
         inspectionCancelled = false
-        sourceStates = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, GallerySourceState()) })
-        inspectSources(sources, project: context, requestID: requestID, baseCompleted: 0)
+
+        // 1. Fast SQLite Cache Restoration:
+        let indexDB = try? IndexDatabase.open(at: context.indexDatabaseURL)
+        var cachedMap: [String: IndexDatabase.Record] = [:]
+        if let indexDB {
+            cachedMap = indexDB.lookupAll()
+        }
+
+        var uninspected: [RawSource] = []
+        var initialStates: [String: GallerySourceState] = [:]
+        var cachedCount = 0
+
+        for source in sources {
+            let mtime: Int64 = (try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
+            if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
+                var state = GallerySourceState()
+                state.inspection = record.asInspection
+                state.error = record.error
+                initialStates[source.id] = state
+                cachedCount += 1
+            } else {
+                initialStates[source.id] = GallerySourceState()
+                uninspected.append(source)
+            }
+        }
+
+        sourceStates = initialStates
+        inspectedSources = cachedCount
+        inspectionTotal = sources.count
+
+        if uninspected.isEmpty {
+            isLoading = false
+            loadingPhase = "Idle"
+            return
+        }
+
+        inspectSources(uninspected, project: context, requestID: requestID, baseCompleted: cachedCount, indexDB: indexDB)
     }
 
     /// Resumes a cancelled inspection for the sources still lacking results,
@@ -432,21 +463,30 @@ final class RawViewModel: ObservableObject {
         loadingPhase = "Inspecting"
         inspectionTotal = sources.count
         inspectedSources = sources.count - pending.count
-        inspectSources(pending, project: project, requestID: requestID, baseCompleted: sources.count - pending.count)
+        let indexDB = try? IndexDatabase.open(at: project.indexDatabaseURL)
+        inspectSources(pending, project: project, requestID: requestID, baseCompleted: sources.count - pending.count, indexDB: indexDB)
         return true
     }
 
-    private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int) {
+    private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int, indexDB: IndexDatabase? = nil) {
         inspectionTask = Task {
             let report = await InstrumentReader.inspectMany(targets, project: project, cache: cache,
                 onProgress: { results, completed in
                     await MainActor.run {
                         guard requestID == self.inspectionID else { return }
+                        var dbRecords: [IndexDatabase.Record] = []
                         for result in results {
                             var state = self.sourceStates[result.id] ?? GallerySourceState()
                             state.inspection = result.inspection
                             state.error = result.error
                             self.sourceStates[result.id] = state
+                            if let inspection = result.inspection {
+                                let mtime: Int64 = (try? result.source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
+                                dbRecords.append(IndexDatabase.Record(source: result.source, inspection: inspection, mtime: mtime))
+                            }
+                        }
+                        if let indexDB, !dbRecords.isEmpty {
+                            try? indexDB.upsertBatch(dbRecords)
                         }
                         self.inspectedSources = baseCompleted + completed
                     }

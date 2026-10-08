@@ -6,6 +6,11 @@ public struct ProjectContext: Sendable {
     public let root: URL
     public let rawRoot: URL
 
+    /// Project-local index database location: <root>/data/.rawview/index.db
+    public var indexDatabaseURL: URL {
+        root.appendingPathComponent("data/.rawview/index.db")
+    }
+
     public static func open(_ root: URL) throws -> Self {
         let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
         let raw = canonicalRoot.appendingPathComponent("data/raw", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
