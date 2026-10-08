@@ -317,6 +317,7 @@ enum CoreSelfCheck {
         precondition(sources.map(\.relativePath) == ["data/raw/b.dat", "data/raw/dual.csv", "data/raw/escape.csv", "data/raw/no-header.csv"])
         // The symlink entry is lexical: claimed path, no target size, target never touched.
         precondition(sources.first(where: { $0.relativePath == "data/raw/escape.csv" })?.byteSize == 0)
+        precondition((sources.first(where: { $0.relativePath == "data/raw/dual.csv" })?.mtime ?? 0) > 0)
         let report = await InstrumentReader.inspectMany(sources, project: project)
         precondition(report.results.count == 4)
         precondition(report.results.first { $0.id == "data/raw/dual.csv" }?.inspection?.instrumentID == "keysight-b1500a")

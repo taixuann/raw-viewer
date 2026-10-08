@@ -140,6 +140,19 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     ])
 }
 
+@Test func discoveryPopulatesFileModificationTimestamp() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let raw = root.appendingPathComponent("data/raw")
+    try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
+    let file = raw.appendingPathComponent("sample.csv")
+    try Data("sample".utf8).write(to: file)
+
+    let sources = try ProjectContext.open(root).discoverSources()
+    #expect(sources.count == 1)
+    #expect(sources[0].mtime > 0)
+}
+
 @Test func listsDiscoveredSymlinksLexicallyWithoutTargetAccess() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

@@ -17,6 +17,7 @@ final class RawViewModel: ObservableObject {
     @Published var project: ProjectContext?
     @Published var sources: [RawSource] = []
     @Published var sourceStates: [String: GallerySourceState] = [:]
+    @Published var inspections: [String: SourceInspection] = [:]
     @Published var focusedSourceID: String?
     @Published var selectedSourceIDs: Set<String> = []
     @Published var hiddenSeries: Set<String> = []
@@ -388,7 +389,7 @@ final class RawViewModel: ObservableObject {
 
             for source in capturedSources {
                 if Task.isCancelled { return }
-                let mtime: Int64 = (try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
+                let mtime: Int64 = source.mtime != 0 ? source.mtime : ((try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
                 if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
                     var state = GallerySourceState()
                     state.inspection = record.asInspection
@@ -408,6 +409,7 @@ final class RawViewModel: ObservableObject {
             await MainActor.run {
                 guard requestID == self.inspectionID else { return }
                 self.sourceStates = finalStates
+                self.inspections = finalStates.compactMapValues(\.inspection)
                 self.inspectedSources = finalCached
 
                 if finalUninspected.isEmpty {
@@ -442,27 +444,35 @@ final class RawViewModel: ObservableObject {
 
     private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int, indexDB: IndexDatabase? = nil) {
         inspectionTask = Task {
+            let accumulator = InspectionProgressAccumulator()
+
             let report = await InstrumentReader.inspectMany(targets, project: project, cache: cache,
                 onProgress: { results, completed in
                     var dbRecords: [IndexDatabase.Record] = []
                     for result in results {
                         if let inspection = result.inspection {
-                            let mtime: Int64 = (try? result.source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
+                            let mtime: Int64 = result.source.mtime != 0 ? result.source.mtime : ((try? result.source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
                             dbRecords.append(IndexDatabase.Record(source: result.source, inspection: inspection, mtime: mtime))
                         }
                     }
                     if let indexDB, !dbRecords.isEmpty {
                         try? indexDB.upsertBatch(dbRecords)
                     }
-                    await MainActor.run {
-                        guard requestID == self.inspectionID else { return }
-                        for result in results {
-                            var state = self.sourceStates[result.id] ?? GallerySourceState()
-                            state.inspection = result.inspection
-                            state.error = result.error
-                            self.sourceStates[result.id] = state
+                    let (shouldFlush, toFlush) = await accumulator.record(results: results, totalCompleted: completed, totalTarget: targets.count)
+                    if shouldFlush {
+                        await MainActor.run {
+                            guard requestID == self.inspectionID else { return }
+                            for result in toFlush {
+                                var state = self.sourceStates[result.id] ?? GallerySourceState()
+                                state.inspection = result.inspection
+                                state.error = result.error
+                                self.sourceStates[result.id] = state
+                                if let insp = result.inspection {
+                                    self.inspections[result.id] = insp
+                                }
+                            }
+                            self.inspectedSources = baseCompleted + completed
                         }
-                        self.inspectedSources = baseCompleted + completed
                     }
                 })
             await MainActor.run { self.refreshCacheUsage() }
@@ -475,6 +485,21 @@ final class RawViewModel: ObservableObject {
                 self.refreshLoading()
                 return
             }
+            let remaining = await accumulator.flushRemaining()
+            if !remaining.isEmpty {
+                await MainActor.run {
+                    guard requestID == self.inspectionID else { return }
+                    for result in remaining {
+                        var state = self.sourceStates[result.id] ?? GallerySourceState()
+                        state.inspection = result.inspection
+                        state.error = result.error
+                        self.sourceStates[result.id] = state
+                        if let insp = result.inspection {
+                            self.inspections[result.id] = insp
+                        }
+                    }
+                }
+            }
             self.profileIssues = report.profileIssues
             self.inspectionTask = nil
             self.refreshLoading()
@@ -486,6 +511,30 @@ final class RawViewModel: ObservableObject {
             self.loadFocused()
             self.ensureSelectedLoaded()
         }
+    }
+}
+
+private actor InspectionProgressAccumulator {
+    private var pendingBuffer: [SourceInspectionResult] = []
+    private var lastFlushTime = Date()
+
+    func record(results: [SourceInspectionResult], totalCompleted: Int, totalTarget: Int) -> (shouldFlush: Bool, toFlush: [SourceInspectionResult]) {
+        pendingBuffer.append(contentsOf: results)
+        let now = Date()
+        let shouldFlush = totalCompleted == totalTarget || now.timeIntervalSince(lastFlushTime) >= 1.0
+        if shouldFlush {
+            let toFlush = pendingBuffer
+            pendingBuffer.removeAll(keepingCapacity: true)
+            lastFlushTime = now
+            return (true, toFlush)
+        }
+        return (false, [])
+    }
+
+    func flushRemaining() -> [SourceInspectionResult] {
+        let remaining = pendingBuffer
+        pendingBuffer.removeAll()
+        return remaining
     }
 }
 
@@ -529,7 +578,7 @@ struct RawViewShell: View {
                         }
                     }
                     ProjectSourcesSidebar(sources: model.sources,
-                        inspections: Dictionary(uniqueKeysWithValues: model.sourceStates.compactMap { id, state in state.inspection.map { (id, $0) } }),
+                        inspections: model.inspections,
                         states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
                         selectedSourceIDs: $model.selectedSourceIDs)
                     if !model.profileIssues.isEmpty {

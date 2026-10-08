@@ -2,7 +2,7 @@ import Foundation
 
 public struct ProjectContext: Sendable {
     static let skippedRawExtensions: Set<String> = ["spe", "affm"]
-    public static let supportedRawExtensions: Set<String> = ["csv", "txt", "lvm"]
+    public static let supportedRawExtensions: Set<String> = ["csv", "txt", "lvm", "dat"]
 
     public let root: URL
     public let rawRoot: URL
@@ -194,7 +194,7 @@ public struct ProjectContext: Sendable {
                 }
                 continue
             }
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey])
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .contentModificationDateKey])
             guard let values else { continue }
             let canonical = url.resolvingSymlinksInPath().standardizedFileURL
             // A supported name whose canonical path carries an excluded
@@ -224,7 +224,8 @@ public struct ProjectContext: Sendable {
             } else if values.isRegularFile == true, values.isReadable == true, let size = values.fileSize {
                 onVisitFile?(canonical)
                 let relativePath = String(canonical.path.dropFirst(root.path.count + 1))
-                discovered[relativePath] = RawSource(relativePath: relativePath, url: canonical, byteSize: Int64(size))
+                let mtime = Int64(values.contentModificationDate?.timeIntervalSince1970 ?? 0)
+                discovered[relativePath] = RawSource(relativePath: relativePath, url: canonical, byteSize: Int64(size), mtime: mtime)
                 // ponytail: per-file checkpoints only every 64 files; directory
                 // tops plus the lazy enumerator are the cancellation bounds.
                 if cancellable {

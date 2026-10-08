@@ -11,6 +11,28 @@ struct ProjectSourcesSidebar: View {
     @State private var facet = "instrument"
     @State private var collapsed = Set<String>()
     @State private var filter = SourceFilter()
+    @State private var groupDisplayLimits: [String: Int] = [:]
+    @State private var flatListLimit = 100
+    private let defaultPageSize = 100
+    private let sourceIndex: [String: RawSource]
+
+    init(
+        sources: [RawSource],
+        inspections: [String: SourceInspection],
+        states: [String: GallerySourceState],
+        focusedSourceID: Binding<String?>,
+        selectedSourceIDs: Binding<Set<String>>
+    ) {
+        self.sources = sources
+        self.inspections = inspections
+        self.states = states
+        self._focusedSourceID = focusedSourceID
+        self._selectedSourceIDs = selectedSourceIDs
+        var index: [String: RawSource] = [:]
+        index.reserveCapacity(sources.count)
+        for s in sources { index[s.id] = s }
+        self.sourceIndex = index
+    }
 
     static let facets: [(String, String)] = [
         ("", "None"), ("sample", "Sample / Device"), ("instrument", "Instrument"),
@@ -86,13 +108,48 @@ struct ProjectSourcesSidebar: View {
         .onChange(of: sources.count) { _, _ in filter.clear() }
     }
 
-    private var sourceIndex: [String: RawSource] {
-        Dictionary(sources.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    private func visibleIDs(for group: SourceGroup) -> (ids: [String], totalCount: Int, isTruncated: Bool, currentLimit: Int) {
+        let total = group.sourceIDs.count
+        guard total > defaultPageSize else {
+            return (group.sourceIDs, total, false, total)
+        }
+        let limit = groupDisplayLimits[group.label] ?? defaultPageSize
+        if limit >= total {
+            return (group.sourceIDs, total, false, limit)
+        }
+        // Ensure focused item is included if it belongs to this group
+        var effectiveLimit = limit
+        if let focused = focusedSourceID, let idx = group.sourceIDs.firstIndex(of: focused), idx >= effectiveLimit {
+            effectiveLimit = min(total, idx + 1)
+        }
+        return (Array(group.sourceIDs.prefix(effectiveLimit)), total, effectiveLimit < total, effectiveLimit)
     }
 
     private func groupSection(_ group: SourceGroup) -> some View {
-        DisclosureGroup(isExpanded: expansion(group.label)) {
-            sourceRows(ids: group.sourceIDs)
+        let (visible, total, isTruncated, currentLimit) = visibleIDs(for: group)
+        return DisclosureGroup(isExpanded: expansion(group.label)) {
+            sourceRows(ids: visible)
+            if isTruncated {
+                HStack(spacing: 8) {
+                    Text("Showing \(visible.count) of \(total)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show +250") {
+                        groupDisplayLimits[group.label] = currentLimit + 250
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    Button("Show all") {
+                        groupDisplayLimits[group.label] = total
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+                .padding(.vertical, 4)
+            }
         } label: {
             HStack {
                 Text(group.label).lineLimit(1)
@@ -145,19 +202,37 @@ struct ProjectSourcesSidebar: View {
     }
 
     private func sourceRows(ids: [String]) -> some View {
-        let index = sourceIndex
-        return ForEach(ids, id: \.self) { id in
-            if let source = index[id] { sourceRow(source) }
+        ForEach(ids, id: \.self) { id in
+            if let source = sourceIndex[id] { sourceRow(source) }
         }
     }
 
     private var flatList: some View {
-        DisclosureGroup(isExpanded: .constant(true)) {
-            ForEach(filteredSources) { source in sourceRow(source) }
+        let total = filteredSources.count
+        let limit = min(total, max(flatListLimit, (focusedSourceID.flatMap { id in filteredSources.firstIndex(where: { $0.id == id }) } ?? 0) + 1))
+        let visible = filteredSources.prefix(limit)
+        return DisclosureGroup(isExpanded: .constant(true)) {
+            ForEach(visible) { source in sourceRow(source) }
+            if limit < total {
+                HStack(spacing: 8) {
+                    Text("Showing \(limit) of \(total)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show +250") { flatListLimit += 250 }
+                        .font(.caption2).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    Button("Show all") { flatListLimit = total }
+                        .font(.caption2).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                }
+                .padding(.vertical, 4)
+            }
         } label: { Text("All files · \(filteredSources.count)").font(.subheadline.bold()) }
     }
 
     private var filteredSources: [RawSource] {
+        if search.isEmpty && filter.isEmpty {
+            return sources
+        }
         // The instrument label per source is resolved once per filtering pass
         // from the same stable-ID grouping the sidebar displays, instead of
         // scanning all inspections separately for every source row.

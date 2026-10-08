@@ -332,18 +332,18 @@ public enum OverlayEvaluator {
     public static func evaluate(
         measurements: [NormalizedMeasurement],
         manifests: [StudyManifest] = [],
-        requireManifest: Bool = false
+        requireManifest: Bool? = nil
     ) -> OverlayEligibility {
         guard measurements.count >= 2 else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")
         }
+        let shouldRequire = requireManifest ?? !manifests.isEmpty
         let shared: String
-        if requireManifest {
-            let gate = sharedManifest(measurements: measurements, manifests: manifests)
-            guard let gateShared = gate.shared else {
-                return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
-            }
+        let gate = sharedManifest(measurements: measurements, manifests: manifests)
+        if let gateShared = gate.shared {
             shared = gateShared
+        } else if shouldRequire {
+            return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
         } else {
             shared = "Comparison"
         }
@@ -391,7 +391,7 @@ public enum OverlayEvaluator {
         measurements: [NormalizedMeasurement],
         manifests: [StudyManifest] = [],
         focusedSourceID: String?,
-        requireManifest: Bool = false
+        requireManifest: Bool? = nil
     ) -> OverlayEligibility {
         guard measurements.count >= 2 else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")
@@ -400,13 +400,13 @@ public enum OverlayEvaluator {
               measurements.contains(where: { $0.source.path == focusID }) else {
             return evaluate(measurements: measurements, manifests: manifests, requireManifest: requireManifest)
         }
+        let shouldRequire = requireManifest ?? !manifests.isEmpty
         let shared: String
-        if requireManifest {
-            let gate = sharedManifest(measurements: measurements, manifests: manifests)
-            guard let gateShared = gate.shared else {
-                return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
-            }
+        let gate = sharedManifest(measurements: measurements, manifests: manifests)
+        if let gateShared = gate.shared {
             shared = gateShared
+        } else if shouldRequire {
+            return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
         } else {
             shared = "Comparison"
         }
