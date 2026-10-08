@@ -537,22 +537,80 @@ struct ProjectGallery: View {
     var isLoading: Bool = false
     var loadingStatus: String? = nil
     let retry: () -> Void
-    var useCustomLabels: Bool = false
-    var customPlotTitle: String = ""
-    var customXAxisTitle: String = ""
-    var customYAxisTitle: String = ""
+    var snapshots: [PlotSnapshot] = []
+    var activeSnapshotID: UUID? = nil
+    var onSaveSnapshot: (() -> Void)? = nil
+    var onSelectSnapshot: ((PlotSnapshot) -> Void)? = nil
+    var onDeleteSnapshot: ((PlotSnapshot) -> Void)? = nil
+    @Binding var showLegend: Bool
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Picker("View", selection: $tab) {
                     Text("Plot").tag("Plot")
                     Text("Data").tag("Data")
                 }
-                .pickerStyle(.segmented).frame(width: 180)
+                .pickerStyle(.segmented).frame(width: 150)
                 .accessibilityLabel("Plot or Data view")
+
+                Divider().frame(height: 16)
+
+                Button {
+                    onSaveSnapshot?()
+                } label: {
+                    Label("Snapshot", systemImage: "camera")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Save current overlay and plot view as a snapshot")
+                .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+
+                if !snapshots.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            ForEach(snapshots) { snap in
+                                let isActive = activeSnapshotID == snap.id
+                                HStack(spacing: 4) {
+                                    Button {
+                                        onSelectSnapshot?(snap)
+                                    } label: {
+                                        Text(snap.name)
+                                            .font(.system(size: 11, weight: isActive ? .semibold : .regular))
+                                            .foregroundStyle(isActive ? .primary : .secondary)
+                                            .lineLimit(1)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button {
+                                        onDeleteSnapshot?(snap)
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 8, weight: .bold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Delete snapshot")
+                                }
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(isActive ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.10))
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(isActive ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+                                )
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 320)
+                }
+
                 if isLoading {
                     HStack(spacing: 6) {
                         ProgressView()
@@ -670,10 +728,7 @@ struct ProjectGallery: View {
                                 lineWidth: lineWidth,
                                 xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                 xScale: xScale, yScale: yScale,
-                                useCustomLabels: useCustomLabels,
-                                customPlotTitle: customPlotTitle,
-                                customXAxisTitle: customXAxisTitle,
-                                customYAxisTitle: customYAxisTitle,
+                                showLegend: showLegend,
                                 customSeriesLabels: customSeriesLabels,
                                 legendOffset: $legendOffset)
                 }
@@ -713,10 +768,7 @@ struct ProjectGallery: View {
                                     lineWidth: lineWidth,
                                     xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                     xScale: xScale, yScale: yScale,
-                                    useCustomLabels: useCustomLabels,
-                                    customPlotTitle: customPlotTitle,
-                                    customXAxisTitle: customXAxisTitle,
-                                    customYAxisTitle: customYAxisTitle,
+                                    showLegend: showLegend,
                                     customSeriesLabels: customSeriesLabels,
                                     legendOffset: $legendOffset)
                     }
@@ -744,10 +796,7 @@ struct ProjectGallery: View {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute,
                                yAbsolute: yAbsolute, xScale: xScale,
                                yScale: yScale, lineWidth: lineWidth,
-                               useCustomLabels: useCustomLabels,
-                               customPlotTitle: customPlotTitle,
-                               customXAxisTitle: customXAxisTitle,
-                               customYAxisTitle: customYAxisTitle,
+                               showLegend: showLegend,
                                customSeriesLabels: customSeriesLabels,
                                legendOffset: $legendOffset)
                 }
@@ -851,10 +900,7 @@ struct OverlayPlot: View {
     let yAbsolute: Bool
     let xScale: AxisScale
     let yScale: AxisScale
-    var useCustomLabels: Bool = false
-    var customPlotTitle: String = ""
-    var customXAxisTitle: String = ""
-    var customYAxisTitle: String = ""
+    var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
     @State private var zoom = 1.0
@@ -918,9 +964,8 @@ struct OverlayPlot: View {
 
     var body: some View {
         let defaultTitle = "\(measurements.count) sources · overlay in acquisition order"
-        let titleText = (useCustomLabels && !customPlotTitle.isEmpty) ? customPlotTitle : defaultTitle
         return VStack(alignment: .leading, spacing: 8) {
-            Text(titleText)
+            Text(defaultTitle)
                 .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
                 .lineLimit(1).truncationMode(.middle)
                 .accessibilityLabel("\(measurements.count) sources overlaid")
@@ -936,10 +981,7 @@ struct OverlayPlot: View {
                             NativePlot(measurement: focused, xAbsolute: xAbsolute,
                                        yAbsolute: yAbsolute, xScale: xScale,
                                        yScale: yScale, lineWidth: lineWidth,
-                                       useCustomLabels: useCustomLabels,
-                                       customPlotTitle: customPlotTitle,
-                                       customXAxisTitle: customXAxisTitle,
-                                       customYAxisTitle: customYAxisTitle,
+                                       showLegend: showLegend,
                                        customSeriesLabels: customSeriesLabels,
                                        legendOffset: $legendOffset)
                         }
@@ -966,13 +1008,16 @@ struct OverlayPlot: View {
                     .accessibilityLabel("Overlay plot with \(data.series.count) series")
                     .accessibilityValue(accessibleSummary)
 
-                    let legendItems: [(color: Color, label: String)] = data.series.map { item in
-                        let name = (useCustomLabels && !customSeriesLabels[item.sourcePath, default: ""].isEmpty) ? customSeriesLabels[item.sourcePath]! : item.label
-                        return (palette(item.sourcePath, order: sourceOrder), name)
+                    if showLegend {
+                        let legendItems: [(color: Color, label: String)] = data.series.map { item in
+                            let custom = customSeriesLabels[item.sourcePath]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let name = (custom != nil && !custom!.isEmpty) ? custom! : item.label
+                            return (palette(item.sourcePath, order: sourceOrder), name)
+                        }
+                        DraggableLegendView(items: legendItems, offset: $legendOffset)
+                            .padding(.trailing, 28)
+                            .padding(.top, 24)
                     }
-                    DraggableLegendView(items: legendItems, offset: $legendOffset)
-                        .padding(.trailing, 28)
-                        .padding(.top, 24)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(pointCount(data.series)) points across visible series · \(gapCount(data.series)) gaps")
@@ -1029,11 +1074,8 @@ struct OverlayPlot: View {
             context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
             context.draw(Text(yLabels[index]).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
-        let defaultXTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
-        let xTitle = (useCustomLabels && !customXAxisTitle.isEmpty) ? customXAxisTitle : defaultXTitle
-
-        let defaultYTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
-        let yTitle = (useCustomLabels && !customYAxisTitle.isEmpty) ? customYAxisTitle : defaultYTitle
+        let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
+        let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
         context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
         let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)

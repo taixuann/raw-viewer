@@ -12,6 +12,49 @@ struct RawViewApp: App {
     }
 }
 
+struct PlotSnapshot: Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    let timestamp: Date
+    let selectedSourceIDs: Set<String>
+    let focusedSourceID: String?
+    let customSeriesLabels: [String: String]
+    let legendOffset: CGSize
+    let showLegend: Bool
+    let xScale: AxisScale
+    let yScale: AxisScale
+    let xAbsolute: Bool
+    let yAbsolute: Bool
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        timestamp: Date = Date(),
+        selectedSourceIDs: Set<String>,
+        focusedSourceID: String?,
+        customSeriesLabels: [String: String],
+        legendOffset: CGSize,
+        showLegend: Bool,
+        xScale: AxisScale,
+        yScale: AxisScale,
+        xAbsolute: Bool,
+        yAbsolute: Bool
+    ) {
+        self.id = id
+        self.name = name
+        self.timestamp = timestamp
+        self.selectedSourceIDs = selectedSourceIDs
+        self.focusedSourceID = focusedSourceID
+        self.customSeriesLabels = customSeriesLabels
+        self.legendOffset = legendOffset
+        self.showLegend = showLegend
+        self.xScale = xScale
+        self.yScale = yScale
+        self.xAbsolute = xAbsolute
+        self.yAbsolute = yAbsolute
+    }
+}
+
 @MainActor
 final class RawViewModel: ObservableObject {
     @Published var project: ProjectContext?
@@ -38,12 +81,67 @@ final class RawViewModel: ObservableObject {
     @Published var yScale: AxisScale = .linear
     @Published var showInspector = true
     func toggleInspector() { showInspector.toggle() }
-    @Published var useCustomLabels = false
-    @Published var customPlotTitle = ""
-    @Published var customXAxisTitle = ""
-    @Published var customYAxisTitle = ""
+    @Published var showLegend = true
     @Published var customSeriesLabels: [String: String] = [:]
     @Published var legendOffset: CGSize = .zero
+    @Published var snapshots: [PlotSnapshot] = []
+    @Published var activeSnapshotID: UUID? = nil
+
+    func saveSnapshot() {
+        guard !selectedSourceIDs.isEmpty || focusedSourceID != nil else { return }
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+        let timeStr = timeFormatter.string(from: Date())
+        let name: String
+        if selectedSourceIDs.count >= 2 {
+            name = "Overlay (\(selectedSourceIDs.count)) · \(timeStr)"
+        } else if let focused = focusedSourceID {
+            let base = URL(fileURLWithPath: focused).deletingPathExtension().lastPathComponent
+            let short = base.count > 16 ? String(base.prefix(14)) + "…" : base
+            name = "\(short) · \(timeStr)"
+        } else {
+            name = "Snapshot \(snapshots.count + 1) · \(timeStr)"
+        }
+        let snap = PlotSnapshot(
+            name: name,
+            selectedSourceIDs: selectedSourceIDs,
+            focusedSourceID: focusedSourceID,
+            customSeriesLabels: customSeriesLabels,
+            legendOffset: legendOffset,
+            showLegend: showLegend,
+            xScale: xScale,
+            yScale: yScale,
+            xAbsolute: xAbsolute,
+            yAbsolute: yAbsolute
+        )
+        snapshots.append(snap)
+        activeSnapshotID = snap.id
+    }
+
+    func loadSnapshot(_ snap: PlotSnapshot) {
+        activeSnapshotID = snap.id
+        selectedSourceIDs = snap.selectedSourceIDs
+        focusedSourceID = snap.focusedSourceID
+        customSeriesLabels = snap.customSeriesLabels
+        legendOffset = snap.legendOffset
+        showLegend = snap.showLegend
+        xScale = snap.xScale
+        yScale = snap.yScale
+        xAbsolute = snap.xAbsolute
+        yAbsolute = snap.yAbsolute
+        if selectedSourceIDs.count >= 2 {
+            ensureSelectedLoaded()
+        } else {
+            loadFocused()
+        }
+    }
+
+    func deleteSnapshot(_ snap: PlotSnapshot) {
+        snapshots.removeAll { $0.id == snap.id }
+        if activeSnapshotID == snap.id {
+            activeSnapshotID = nil
+        }
+    }
     // Independent cancellation identities: inventory, bulk inspection, and the
     // focused-source load each own their task slot, so changing focus cancels
     // only the focused load and never drops in-flight inspection results.
@@ -582,10 +680,12 @@ struct RawViewShell: View {
                            isLoading: model.isLoading,
                            loadingStatus: model.isInspecting ? "Inspecting (\(model.inspectedSources)/\(model.inspectionTotal))…" : (model.isLoading && model.loadingPhase != "Idle" && model.loadingPhase != "Inspecting" ? "\(model.loadingPhase)…" : nil),
                            retry: model.loadFocused,
-                           useCustomLabels: model.useCustomLabels,
-                           customPlotTitle: model.customPlotTitle,
-                           customXAxisTitle: model.customXAxisTitle,
-                           customYAxisTitle: model.customYAxisTitle,
+                           snapshots: model.snapshots,
+                           activeSnapshotID: model.activeSnapshotID,
+                           onSaveSnapshot: { model.saveSnapshot() },
+                           onSelectSnapshot: { model.loadSnapshot($0) },
+                           onDeleteSnapshot: { model.deleteSnapshot($0) },
+                           showLegend: $model.showLegend,
                            customSeriesLabels: model.customSeriesLabels,
                            legendOffset: $model.legendOffset)
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
@@ -717,10 +817,7 @@ struct RawViewShell: View {
                              cacheStatus: cacheStatus,
                              onClearCache: { model.clearCacheFiles(); model.loadFocused() },
                              onLimitChange: { model.cacheLimitBytes = $0 },
-                             useCustomLabels: $model.useCustomLabels,
-                             customPlotTitle: $model.customPlotTitle,
-                             customXAxisTitle: $model.customXAxisTitle,
-                             customYAxisTitle: $model.customYAxisTitle,
+                             showLegend: $model.showLegend,
                              customSeriesLabels: $model.customSeriesLabels,
                              legendOffset: $model.legendOffset)
     }
@@ -743,10 +840,7 @@ struct NativePlot: View {
     let xScale: AxisScale
     let yScale: AxisScale
     var lineWidth: Double = 1.4
-    var useCustomLabels: Bool = false
-    var customPlotTitle: String = ""
-    var customXAxisTitle: String = ""
-    var customYAxisTitle: String = ""
+    var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
     @State private var zoom = 1.0
@@ -779,9 +873,8 @@ struct NativePlot: View {
 
     var body: some View {
         let defaultTitle = measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? "")
-        let titleText = (useCustomLabels && !customPlotTitle.isEmpty) ? customPlotTitle : defaultTitle
         return VStack(alignment: .leading, spacing: 8) {
-            Text(titleText)
+            Text(defaultTitle)
                 .font(.custom(NativePlotStyle.fontFamily, size: 13.5).bold())
                 .lineLimit(1).truncationMode(.middle)
             switch transformed {
@@ -798,13 +891,16 @@ struct NativePlot: View {
                             Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
                         }
 
-                    let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
-                        let name = (useCustomLabels && !customSeriesLabels[item.0, default: ""].isEmpty) ? customSeriesLabels[item.0]! : item.0
-                        return (palette(index), name)
+                    if showLegend {
+                        let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
+                            let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
+                            return (palette(index), name)
+                        }
+                        DraggableLegendView(items: legendItems, offset: $legendOffset)
+                            .padding(.trailing, 28)
+                            .padding(.top, 24)
                     }
-                    DraggableLegendView(items: legendItems, offset: $legendOffset)
-                        .padding(.trailing, 28)
-                        .padding(.top, 24)
                 }
                 HStack(spacing: 14) {
                     Spacer()
@@ -865,11 +961,8 @@ struct NativePlot: View {
             context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
             context.draw(Text(yLabels[index]).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
-        let defaultXTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
-        let xTitle = (useCustomLabels && !customXAxisTitle.isEmpty) ? customXAxisTitle : defaultXTitle
-
-        let defaultYTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
-        let yTitle = (useCustomLabels && !customYAxisTitle.isEmpty) ? customYAxisTitle : defaultYTitle
+        let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
+        let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
         context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
         let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
@@ -1050,17 +1143,18 @@ struct InspectorPane: View {
     @Binding var yScale: AxisScale
     let overlay: OverlayEligibility?
     let onRetry: () -> Void
-    // Cache controls (Issues 6–7): usage/limit status, a clear action, and the
-    // configurable per-project limit. Presentation only — the model owns state.
     var cacheStatus: CacheStatus? = nil
     var onClearCache: (() -> Void)? = nil
     var onLimitChange: ((Int64) -> Void)? = nil
-    @Binding var useCustomLabels: Bool
-    @Binding var customPlotTitle: String
-    @Binding var customXAxisTitle: String
-    @Binding var customYAxisTitle: String
+    @Binding var showLegend: Bool
     @Binding var customSeriesLabels: [String: String]
     @Binding var legendOffset: CGSize
+
+    @State private var isSeriesExpanded = true
+    @State private var isStyleExpanded = true
+    @State private var isAxesExpanded = false
+    @State private var isMetadataExpanded = false
+    @State private var isCacheExpanded = false
 
     struct CacheStatus {
         var usedBytes: Int64
@@ -1083,8 +1177,8 @@ struct InspectorPane: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if measurement == nil && inspection == nil && source == nil {
+                VStack(alignment: .leading, spacing: 14) {
+                    if measurement == nil && inspection == nil && source == nil && selectedIDs.isEmpty {
                         VStack(spacing: 12) {
                             Spacer(minLength: 60)
                             ContentUnavailableView("No Selection", systemImage: "sidebar.right",
@@ -1096,11 +1190,12 @@ struct InspectorPane: View {
                             cacheSection
                         }
                     } else {
-                        dataSection
-                        labelsSection
+                        if !selectedIDs.isEmpty {
+                            seriesSection
+                        }
                         styleSection
-                        seriesSection
                         axesSection
+                        metadataSection
                         cacheSection
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -1112,151 +1207,40 @@ struct InspectorPane: View {
         .background(.background)
     }
 
-    private var cacheSection: some View {
-        section("Cache") {
-            if let cacheStatus, let onClearCache {
-                usageRow(cacheStatus)
-                HStack {
-                    Button("Clear cache") { onClearCache() }
-                        .help("Remove all RawView cache entries for this project. Raw files and profiles are never modified.")
-                        .accessibilityLabel("Clear RawView cache")
-                    Spacer()
-                }
-                Picker("Cache limit", selection: Binding(
-                    get: { cacheStatus.limitBytes },
-                    set: { newLimit in onLimitChange?(newLimit) }
-                )) {
-                    Text("Off").tag(Int64(0))
-                    Text("128 MiB").tag(Int64(128 * 1024 * 1024))
-                    Text("512 MiB").tag(Int64(512 * 1024 * 1024))
-                    Text("2 GiB").tag(Int64(2 * 1024 * 1024 * 1024))
-                }
-                .labelsHidden()
-                .accessibilityLabel("Cache disk limit")
-                Text("Verified entries stay in a private app-local cache; RawView ignores project-controlled cache files. Entries are capped at 128 MiB. Inspection hits re-hash the bounded header; measurement hits verify a fresh full-file SHA-256.")
-                    .font(.caption2).foregroundStyle(.secondary)
-            } else {
-                Text("No project open.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func usageRow(_ status: CacheStatus) -> some View {
-        let used = ByteCountFormatter.string(fromByteCount: status.usedBytes, countStyle: .file)
-        let limit = status.limitBytes <= 0 ? "Off" : ByteCountFormatter.string(fromByteCount: status.limitBytes, countStyle: .file)
-        return HStack {
-            Text("\(status.entryCount) entries · \(used) of \(limit)")
-                .font(.caption).foregroundStyle(.secondary)
-                .accessibilityLabel("Cache usage: \(status.entryCount) entries, \(used) used of \(limit) limit")
-            Spacer()
-        }
-    }
-
-    private var dataSection: some View {        section("Data") {
-            if let measurement {
-                field("Instrument", measurement.instrument.name)
-                field("Mode", measurement.applicationMode ?? "Unknown")
-                field("Channels / Points", "\(measurement.channels.count) / \(measurement.channels.first?.values.count ?? 0)")
-                field("Gaps", "\(measurement.channels.reduce(0) { $0 + $1.gapCount })")
-                ForEach(measurement.channels) { channel in
-                    Text("\(channel.label) (\(channel.unit)) · \(channel.quantity ?? "no quantity")")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-                if !measurement.warnings.isEmpty {
-                    Text("\(measurement.warnings.count) gap warnings").font(.caption).foregroundStyle(.orange)
-                }
-                field("Path", measurement.source.path)
-            } else if let inspection {
-                field("Instrument", inspection.instrumentName ?? inspection.instrumentID ?? "Unknown")
-                field("Mode", inspection.applicationMode ?? "Unknown")
-                field("Path", inspection.source)
-            } else if let source {
-                field("Selected", source.lastPathComponent)
-                Text("Waiting for source inspection.").font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Select one source to inspect it.").font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var labelsSection: some View {
-        section("Labels") {
-            Toggle("Custom Labels", isOn: $useCustomLabels)
-                .font(.caption)
-            if useCustomLabels {
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Figure Title").font(.caption2).foregroundStyle(.secondary)
-                        TextField("Title override…", text: $customPlotTitle)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("X-Axis Label").font(.caption2).foregroundStyle(.secondary)
-                        TextField("X label override…", text: $customXAxisTitle)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Y-Axis Label").font(.caption2).foregroundStyle(.secondary)
-                        TextField("Y label override…", text: $customYAxisTitle)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-                    }
-                    HStack {
-                        Button("Reset Labels") {
-                            customPlotTitle = ""
-                            customXAxisTitle = ""
-                            customYAxisTitle = ""
-                            customSeriesLabels.removeAll()
-                        }
-                        .font(.caption2)
-                        Spacer()
-                        Button("Reset Legend Position") {
-                            legendOffset = .zero
-                        }
-                        .font(.caption2)
-                    }
-                }
-                .padding(.top, 4)
-            }
-        }
-    }
-
-    private var styleSection: some View {
-        section("Style") {
-            HStack {
-                Text("Line width").font(.caption)
-                Slider(value: $lineWidth, in: 0.5...3.0, step: 0.1) {
-                    EmptyView()
-                }.labelsHidden().accessibilityLabel("Series line width")
-            }
-            Text("Colors follow the native plot palette and repeat after its configured colors; source labels stay distinct. Visibility only changes presentation.")
-                .font(.caption2).foregroundStyle(.secondary)
-        }
-    }
-
     private var seriesSection: some View {
-        section("Series") {
-            if selectedIDs.isEmpty {
-                Text("No sources selected.").font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(selectedIDs.sorted(), id: \.self) { id in
-                    seriesRow(id)
+        DisclosureGroup(isExpanded: $isSeriesExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                if selectedIDs.isEmpty {
+                    Text("No sources selected.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(selectedIDs.sorted(), id: \.self) { id in
+                        seriesRow(id)
+                    }
+                }
+                if case .blocked(let reason) = overlay {
+                    Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+                } else if case .eligible(let path) = overlay {
+                    let label = (path == "Comparison" || path.isEmpty) ? "Multi-source comparison" : "Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)"
+                    Text(label).font(.caption2).foregroundStyle(.secondary)
+                } else if case .partial(let group) = overlay {
+                    let label = (group.manifestPath == "Comparison" || group.manifestPath.isEmpty) ? "Plotting compatible cohort" : "Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
+                    Text("\(label) (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
+                    ForEach(group.excluded, id: \.path) { exclusion in
+                        Text("Excluded \(URL(fileURLWithPath: exclusion.path).lastPathComponent): \(exclusion.reason)").font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+                    }
                 }
             }
-            if case .blocked(let reason) = overlay {
-                Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
-            } else if case .eligible(let path) = overlay {
-                let label = (path == "Comparison" || path.isEmpty) ? "Multi-source comparison" : "Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)"
-                Text(label).font(.caption2).foregroundStyle(.secondary)
-            } else if case .partial(let group) = overlay {
-                let label = (group.manifestPath == "Comparison" || group.manifestPath.isEmpty) ? "Plotting compatible cohort" : "Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
-                Text("\(label) (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
-                ForEach(group.excluded, id: \.path) { exclusion in
-                    Text("Excluded \(URL(fileURLWithPath: exclusion.path).lastPathComponent): \(exclusion.reason)").font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
-                }
+            .padding(.top, 4)
+        } label: {
+            HStack(spacing: 6) {
+                Text("SERIES")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+                Text("\(selectedIDs.count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(.quaternary))
             }
         }
     }
@@ -1265,71 +1249,137 @@ struct InspectorPane: View {
         let isHidden = hidden.contains(id)
         let isFocused = focusedID == id
         let state = states[id]
-        let label = URL(fileURLWithPath: id).lastPathComponent
+        let filename = URL(fileURLWithPath: id).lastPathComponent
         let exclusionReason: String? = {
             if case .partial(let group) = overlay {
                 return group.excluded.first(where: { $0.path == id })?.reason
             }
             return nil
         }()
-        return HStack(spacing: 8) {
-            Circle().fill(seriesColor(id)).frame(width: 9, height: 9).accessibilityHidden(true)
-            if useCustomLabels {
-                VStack(alignment: .leading, spacing: 2) {
-                    TextField(label, text: Binding(
-                        get: { customSeriesLabels[id] ?? "" },
-                        set: { customSeriesLabels[id] = $0 }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                    if let exclusionReason {
-                        Text("Excluded: \(exclusionReason)").font(.caption2).foregroundStyle(.orange)
+
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Circle().fill(seriesColor(id)).frame(width: 9, height: 9).accessibilityHidden(true)
+
+                TextField(filename, text: Binding(
+                    get: { customSeriesLabels[id] ?? "" },
+                    set: { customSeriesLabels[id] = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+                .help("Custom legend label (leave empty to use default filename)")
+
+                if customSeriesLabels[id]?.isEmpty == false {
+                    Button {
+                        customSeriesLabels.removeValue(forKey: id)
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
                     }
+                    .buttonStyle(.plain)
+                    .help("Reset to original filename")
                 }
-            } else {
-                Button {
-                    focusedID = id
-                    onRetry()
-                } label: {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(label).font(.caption).lineLimit(1).truncationMode(.middle)
-                        if let error = state?.error {
-                            Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
-                        } else if state?.isLoading == true {
-                            Text("Loading…").font(.caption2).foregroundStyle(.secondary)
-                        } else if let exclusionReason {
-                            Text("Excluded from comparison: \(exclusionReason)").font(.caption2).foregroundStyle(.orange).lineLimit(3)
-                        } else if isFocused {
-                            Text("Focused").font(.caption2).foregroundStyle(.secondary)
-                        }
+
+                if !isFocused {
+                    Button {
+                        focusedID = id
+                        onRetry()
+                    } label: {
+                        Image(systemName: "scope")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
+                    .buttonStyle(.plain)
+                    .help("Focus this source")
                 }
-                .buttonStyle(.plain)
-                .help("Focus this source")
-                .accessibilityLabel("Focus \(label)")
-            }
-            Spacer(minLength: 4)
-            if exclusionReason == nil {
-                Toggle(isOn: Binding(get: { !isHidden }, set: { show in
-                    if show { hidden.remove(id) } else { hidden.insert(id) }
-                })) { Text("Show \(label)") }.labelsHidden()
+
+                if exclusionReason == nil {
+                    Toggle(isOn: Binding(get: { !isHidden }, set: { show in
+                        if show { hidden.remove(id) } else { hidden.insert(id) }
+                    })) {
+                        Text("Show")
+                    }
+                    .labelsHidden()
+                    .toggleStyle(.checkbox)
                     .help(isHidden ? "Show this series" : "Hide this series")
-                    .accessibilityLabel("\(label) visibility")
-            } else {
-                Text("Not plotted").font(.caption2).foregroundStyle(.secondary)
-                    .help("Excluded from the focused comparison cohort")
-                    .accessibilityLabel("\(label) excluded from comparison")
+                } else {
+                    Text("Excluded")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if isFocused {
+                Text("Focused source")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 17)
+            }
+            if let error = state?.error {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .padding(.leading, 17)
+            } else if state?.isLoading == true {
+                Text("Loading…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 17)
+            } else if let exclusionReason {
+                Text("Excluded: \(exclusionReason)")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 17)
             }
         }
-        .contentShape(Rectangle())
+        .padding(.vertical, 2)
+    }
+
+    private var styleSection: some View {
+        DisclosureGroup(isExpanded: $isStyleExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Line width").font(.caption)
+                    Slider(value: $lineWidth, in: 0.5...3.0, step: 0.1) {
+                        EmptyView()
+                    }
+                    .labelsHidden()
+                    Text(String(format: "%.1f pt", lineWidth))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, alignment: .trailing)
+                }
+
+                Toggle("Show Legend", isOn: $showLegend)
+                    .font(.caption)
+
+                Button("Reset Legend Position") {
+                    legendOffset = .zero
+                }
+                .font(.caption2)
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("PLOT STYLING")
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var axesSection: some View {
-        section("Axes") {
-            axisControl("X", absolute: $xAbsolute, scale: $xScale)
-            axisControl("Y", absolute: $yAbsolute, scale: $yScale)
-            Text("Absolute applies before the scale; log needs positive values.")
-                .font(.caption2).foregroundStyle(.secondary)
+        DisclosureGroup(isExpanded: $isAxesExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                axisControl("X", absolute: $xAbsolute, scale: $xScale)
+                axisControl("Y", absolute: $yAbsolute, scale: $yScale)
+                Text("Absolute applies before the scale; log needs positive values.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("AXES")
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1347,17 +1397,93 @@ struct InspectorPane: View {
         }
     }
 
+    private var metadataSection: some View {
+        DisclosureGroup(isExpanded: $isMetadataExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let measurement {
+                    field("Instrument", measurement.instrument.name)
+                    field("Mode", measurement.applicationMode ?? "Unknown")
+                    field("Channels / Points", "\(measurement.channels.count) / \(measurement.channels.first?.values.count ?? 0)")
+                    field("Gaps", "\(measurement.channels.reduce(0) { $0 + $1.gapCount })")
+                    ForEach(measurement.channels) { channel in
+                        Text("\(channel.label) (\(channel.unit)) · \(channel.quantity ?? "no quantity")")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    if !measurement.warnings.isEmpty {
+                        Text("\(measurement.warnings.count) gap warnings").font(.caption).foregroundStyle(.orange)
+                    }
+                    field("Path", measurement.source.path)
+                } else if let inspection {
+                    field("Instrument", inspection.instrumentName ?? inspection.instrumentID ?? "Unknown")
+                    field("Mode", inspection.applicationMode ?? "Unknown")
+                    field("Path", inspection.source)
+                } else if let source {
+                    field("Selected", source.lastPathComponent)
+                    Text("Waiting for source inspection.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Select one source to inspect it.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("SOURCE METADATA")
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var cacheSection: some View {
+        DisclosureGroup(isExpanded: $isCacheExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let cacheStatus, let onClearCache {
+                    usageRow(cacheStatus)
+                    HStack {
+                        Button("Clear cache") { onClearCache() }
+                            .help("Remove all RawView cache entries for this project. Raw files and profiles are never modified.")
+                            .accessibilityLabel("Clear RawView cache")
+                        Spacer()
+                    }
+                    Picker("Cache limit", selection: Binding(
+                        get: { cacheStatus.limitBytes },
+                        set: { newLimit in onLimitChange?(newLimit) }
+                    )) {
+                        Text("Off").tag(Int64(0))
+                        Text("128 MiB").tag(Int64(128 * 1024 * 1024))
+                        Text("512 MiB").tag(Int64(512 * 1024 * 1024))
+                        Text("2 GiB").tag(Int64(2 * 1024 * 1024 * 1024))
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel("Cache disk limit")
+                    Text("Verified entries stay in a private app-local cache; RawView ignores project-controlled cache files.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Text("No project open.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("CACHE & STORAGE")
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func usageRow(_ status: CacheStatus) -> some View {
+        let used = ByteCountFormatter.string(fromByteCount: status.usedBytes, countStyle: .file)
+        let limit = status.limitBytes <= 0 ? "Off" : ByteCountFormatter.string(fromByteCount: status.limitBytes, countStyle: .file)
+        return HStack {
+            Text("\(status.entryCount) entries · \(used) of \(limit)")
+                .font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("Cache usage: \(status.entryCount) entries, \(used) used of \(limit) limit")
+            Spacer()
+        }
+    }
+
     private func seriesColor(_ id: String) -> Color {
         let order = selectedIDs.sorted()
         let index = order.firstIndex(of: id) ?? 0
         return NativeOverlayPalette.color(index)
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.caption2.bold()).foregroundStyle(.secondary)
-            content()
-        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func field(_ title: String, _ value: String) -> some View {
