@@ -2,6 +2,7 @@ import Foundation
 
 public struct ProjectContext: Sendable {
     static let skippedRawExtensions: Set<String> = ["spe", "affm"]
+    public static let supportedRawExtensions: Set<String> = ["csv", "txt", "lvm"]
 
     public let root: URL
     public let rawRoot: URL
@@ -143,6 +144,19 @@ public struct ProjectContext: Sendable {
             // traversal rather than a name-based subtree prune.
             if Self.skippedRawExtensions.contains(url.pathExtension.lowercased()) {
                 continue
+            }
+            // Supported measurement extensions allowlist: only known data files (.csv, .txt, .lvm)
+            // enter the inventory. Symlinked directories are handled below by destination check.
+            let ext = url.pathExtension.lowercased()
+            let isPotentialSymlink = (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+            if !isPotentialSymlink && !Self.supportedRawExtensions.contains(ext) {
+                // If it is a directory, don't skip children — directories don't have a data extension.
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                    // Directories continue to traversal
+                } else {
+                    continue
+                }
             }
             // A symlink is never followed, resolved, opened, stat-ed, hashed,
             // or read: `readlink` touches only the link itself, so even a

@@ -116,6 +116,30 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.map(\.relativePath) == ["data/raw/shown.csv"])
 }
 
+@Test func discoveryIncludesOnlySupportedMeasurementExtensions() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let raw = root.appendingPathComponent("data/raw")
+    try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
+    try Data("meas1".utf8).write(to: raw.appendingPathComponent("device.csv"))
+    try Data("meas2".utf8).write(to: raw.appendingPathComponent("spec.txt"))
+    try Data("meas3".utf8).write(to: raw.appendingPathComponent("labview.lvm"))
+    try Data("meas4".utf8).write(to: raw.appendingPathComponent("UPPER.CSV"))
+    try Data("log".utf8).write(to: raw.appendingPathComponent("run.log"))
+    try Data("log".utf8).write(to: raw.appendingPathComponent(".intake.log"))
+    try Data("script".utf8).write(to: raw.appendingPathComponent("run.py"))
+    try Data("json".utf8).write(to: raw.appendingPathComponent("info.json"))
+
+    let sources = try ProjectContext.open(root).discoverSources()
+
+    #expect(sources.map(\.relativePath).sorted() == [
+        "data/raw/UPPER.CSV",
+        "data/raw/device.csv",
+        "data/raw/labview.lvm",
+        "data/raw/spec.txt"
+    ])
+}
+
 @Test func listsDiscoveredSymlinksLexicallyWithoutTargetAccess() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
