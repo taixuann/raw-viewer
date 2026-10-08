@@ -45,6 +45,7 @@ public enum InstrumentReader {
         let catalogFingerprint = catalog.fingerprint
         var results: [SourceInspectionResult] = []
         results.reserveCapacity(sources.count)
+        let maxConcurrency = max(2, min(ProcessInfo.processInfo.activeProcessorCount, 16))
         var index = 0
         while index < sources.count {
             if Task.isCancelled {
@@ -55,35 +56,51 @@ public enum InstrumentReader {
                 break
             }
             let end = min(index + progressBatchSize, sources.count)
-            var batch: [SourceInspectionResult] = []
-            for source in sources[index..<end] {
-                if Task.isCancelled {
-                    batch.append(SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription))
-                } else if let cache {
-                    // Cached inspection path: the cache secures the claimed
-                    // path first, then the producer computes the outcome from
-                    // those exact pinned prefix bytes/size without reopening.
-                    // Secure-open failure throws and falls back to the
-                    // ordinary uncached path below; nothing is cached then.
-                    let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
-                        try inspectPinned(source: source, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
+            let slice = Array(sources[index..<end])
+            let batchResults = await withTaskGroup(of: (Int, SourceInspectionResult).self) { group in
+                var concurrentTasks = 0
+                var batchOutcomes: [(Int, SourceInspectionResult)] = []
+                batchOutcomes.reserveCapacity(slice.count)
+                for (offset, source) in slice.enumerated() {
+                    if Task.isCancelled {
+                        batchOutcomes.append((offset, SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription)))
+                        continue
                     }
-                    if let cached {
-                        switch cached.outcome {
-                        case .supported(let inspection):
-                            batch.append(SourceInspectionResult(source: source, inspection: inspection, error: nil))
-                        case .blocked(let message):
-                            batch.append(SourceInspectionResult(source: source, inspection: nil, error: message))
+                    if concurrentTasks >= maxConcurrency {
+                        if let completed = await group.next() {
+                            batchOutcomes.append(completed)
+                            concurrentTasks -= 1
                         }
-                    } else {
-                        batch.append(inspect(source, project: project, catalog: catalog))
                     }
-                } else {
-                    batch.append(inspect(source, project: project, catalog: catalog))
+                    concurrentTasks += 1
+                    group.addTask {
+                        if Task.isCancelled {
+                            return (offset, SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription))
+                        }
+                        if let cache {
+                            let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
+                                try inspectPinned(source: source, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
+                            }
+                            if let cached {
+                                switch cached.outcome {
+                                case .supported(let inspection):
+                                    return (offset, SourceInspectionResult(source: source, inspection: inspection, error: nil))
+                                case .blocked(let message):
+                                    return (offset, SourceInspectionResult(source: source, inspection: nil, error: message))
+                                }
+                            }
+                        }
+                        return (offset, inspect(source, project: project, catalog: catalog))
+                    }
                 }
+                for await completed in group {
+                    batchOutcomes.append(completed)
+                }
+                batchOutcomes.sort { $0.0 < $1.0 }
+                return batchOutcomes.map(\.1)
             }
-            results.append(contentsOf: batch)
-            await onProgress?(batch, end)
+            results.append(contentsOf: batchResults)
+            await onProgress?(batchResults, end)
             index = end
         }
         return ReaderInspectionReport(results: results, profileIssues: catalog.issues)
