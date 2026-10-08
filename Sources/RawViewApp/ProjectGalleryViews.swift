@@ -63,7 +63,7 @@ struct ProjectSourcesSidebar: View {
             .onChange(of: facet) { _, _ in collapsed = [] }
             Divider()
             filterChips
-            Text("Select multiple with Shift or Command for comparison. Overlay needs one shared study manifest.")
+            Text("Select multiple with Shift or Command for comparison.")
                 .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)
                 .accessibilityLabel("Multi-select hint for comparison")
             List(selection: $selectedSourceIDs) {
@@ -284,7 +284,8 @@ struct ProjectGallery: View {
 
     private func exclusionSummary(_ group: FocusedOverlayGroup) -> String {
         let names = group.excluded.map { URL(fileURLWithPath: $0.path).lastPathComponent }.joined(separator: ", ")
-        return "Shared \(URL(fileURLWithPath: group.manifestPath).lastPathComponent): plotting the focused cohort (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)); excluded \(names). See the inspector for reasons. Selection unchanged."
+        let prefix = (group.manifestPath.isEmpty || group.manifestPath == "Comparison") ? "Compatible cohort" : "Shared \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
+        return "\(prefix): plotting the focused cohort (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)); excluded \(names). See the inspector for reasons. Selection unchanged."
     }
 
     @ViewBuilder
@@ -581,8 +582,19 @@ struct OverlayPlot: View {
 
     private func draw(_ series: [Series], xTitle: String, yTitle: String, in context: inout GraphicsContext, size: CGSize) {
         guard let xBounds = extrema(series, isX: true), let yBounds = extrema(series, isX: false) else { return }
-        let leftGutter = min(112, max(66, size.width * 0.24))
-        let plot = CGRect(x: leftGutter, y: 12, width: max(1, size.width - leftGutter - 18), height: max(1, size.height - 58))
+        let leftGutter = min(100, max(68, size.width * 0.16))
+        let targetRatio: CGFloat = 59.1 / 50.0
+        let availWidth = max(10, size.width - leftGutter - 20)
+        let availHeight = max(10, size.height - 16 - 54)
+        var plotW = availWidth
+        var plotH = plotW / targetRatio
+        if plotH > availHeight {
+            plotH = availHeight
+            plotW = plotH * targetRatio
+        }
+        let plotX = leftGutter + (availWidth - plotW) / 2
+        let plotY = 16 + (availHeight - plotH) / 2
+        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)
@@ -595,12 +607,12 @@ struct OverlayPlot: View {
             var tick = Path(); tick.move(to: CGPoint(x: px, y: plot.maxY)); tick.addLine(to: CGPoint(x: px, y: plot.maxY + 4))
             tick.move(to: CGPoint(x: plot.minX, y: py)); tick.addLine(to: CGPoint(x: plot.minX - 4, y: py))
             context.stroke(tick, with: .color(.primary), lineWidth: 0.7)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 10)), at: CGPoint(x: px, y: plot.maxY + 17))
-            context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 10)), at: CGPoint(x: plot.minX - 36, y: py))
+            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 9.5)), at: CGPoint(x: px, y: plot.maxY + 15))
+            context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 9.5)), at: CGPoint(x: plot.minX - 32, y: py))
         }
-        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 11)), at: CGPoint(x: plot.midX, y: size.height - 4))
+        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 11)), at: CGPoint(x: plot.midX, y: plot.maxY + 36))
         var yLabelContext = context
-        yLabelContext.translateBy(x: 10, y: plot.midY)
+        yLabelContext.translateBy(x: max(10, plot.minX - 48), y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
         yLabelContext.draw(Text(yTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 11)), at: .zero)
         var plotContext = context

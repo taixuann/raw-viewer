@@ -328,13 +328,23 @@ public enum OverlayEvaluator {
     /// incompatible or missing X/Y quantities/units block as well. Never picks a
     /// subgroup and never omits the focused source: callers keep the focused
     /// single-source plot when blocked.
-    public static func evaluate(measurements: [NormalizedMeasurement], manifests: [StudyManifest]) -> OverlayEligibility {
+    public static func evaluate(
+        measurements: [NormalizedMeasurement],
+        manifests: [StudyManifest] = [],
+        requireManifest: Bool = false
+    ) -> OverlayEligibility {
         guard measurements.count >= 2 else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")
         }
-        let gate = sharedManifest(measurements: measurements, manifests: manifests)
-        guard let shared = gate.shared else {
-            return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
+        let shared: String
+        if requireManifest {
+            let gate = sharedManifest(measurements: measurements, manifests: manifests)
+            guard let gateShared = gate.shared else {
+                return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
+            }
+            shared = gateShared
+        } else {
+            shared = "Comparison"
         }
         // Quantities and exact units: every X matches, every Y matches.
         // Per-source validation reuses the shared signature helper, so the
@@ -376,17 +386,28 @@ public enum OverlayEvaluator {
     /// excluded with per-source reasons. The focus is never omitted and the
     /// largest subgroup is never chosen. A nil or unselected focus falls back
     /// to the all-or-nothing comparison.
-    public static func evaluateFocused(measurements: [NormalizedMeasurement], manifests: [StudyManifest], focusedSourceID: String?) -> OverlayEligibility {
+    public static func evaluateFocused(
+        measurements: [NormalizedMeasurement],
+        manifests: [StudyManifest] = [],
+        focusedSourceID: String?,
+        requireManifest: Bool = false
+    ) -> OverlayEligibility {
         guard measurements.count >= 2 else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")
         }
         guard let focusID = focusedSourceID,
               measurements.contains(where: { $0.source.path == focusID }) else {
-            return evaluate(measurements: measurements, manifests: manifests)
+            return evaluate(measurements: measurements, manifests: manifests, requireManifest: requireManifest)
         }
-        let gate = sharedManifest(measurements: measurements, manifests: manifests)
-        guard let shared = gate.shared else {
-            return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
+        let shared: String
+        if requireManifest {
+            let gate = sharedManifest(measurements: measurements, manifests: manifests)
+            guard let gateShared = gate.shared else {
+                return .blocked(reason: gate.reason ?? "Selected sources do not share one exact manifest.")
+            }
+            shared = gateShared
+        } else {
+            shared = "Comparison"
         }
         guard let focus = measurements.first(where: { $0.source.path == focusID }) else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")

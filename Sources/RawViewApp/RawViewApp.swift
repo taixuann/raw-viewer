@@ -204,7 +204,7 @@ final class RawViewModel: ObservableObject {
         guard measurements.count == ids.count else {
             return .blocked(reason: "Not every selected source finished loading. The focused source remains shown.")
         }
-        return OverlayEvaluator.evaluateFocused(measurements: measurements, manifests: studyManifests, focusedSourceID: focusedSourceID)
+        return OverlayEvaluator.evaluateFocused(measurements: measurements, manifests: studyManifests, focusedSourceID: focusedSourceID, requireManifest: false)
     }
 
     func ensureSelectedLoaded() {
@@ -383,13 +383,8 @@ final class RawViewModel: ObservableObject {
                   await self.discoveryGate.isCurrent(generation) else { return }
             self.sources = discovered
             self.sourceStates = Dictionary(uniqueKeysWithValues: discovered.map { ($0.id, GallerySourceState()) })
-            // Manifests are existing project YAML (study_id + sources); loaded
-            // off-main so large projects never block the UI.
-            let loaded = await Task.detached(priority: .userInitiated) { ManifestIndex.load(project: context) }.value
-            guard !Task.isCancelled, requestID == self.activeLoadID,
-                  await self.discoveryGate.isCurrent(generation) else { return }
-            self.studyManifests = loaded.manifests
-            self.manifestIssues = loaded.issues
+            self.studyManifests = []
+            self.manifestIssues = []
             if discovered.isEmpty {
                 self.error = "No readable regular files were found under data/raw."
             } else {
@@ -517,7 +512,7 @@ struct RawViewShell: View {
                         inspections: Dictionary(uniqueKeysWithValues: model.sourceStates.compactMap { id, state in state.inspection.map { (id, $0) } }),
                         states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
                         selectedSourceIDs: $model.selectedSourceIDs)
-                    if !model.profileIssues.isEmpty || !model.manifestIssues.isEmpty {
+                    if !model.profileIssues.isEmpty {
                         profileIssueList
                     }
                     Spacer()
@@ -551,12 +546,6 @@ struct RawViewShell: View {
                     Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
-            if !model.manifestIssues.isEmpty {
-                Text("STUDY MANIFESTS").font(.caption2.bold()).foregroundStyle(.orange)
-                ForEach(Array(model.manifestIssues.enumerated()), id: \.offset) { _, issue in
-                    Text(issue).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-            }
         }
     }
 }
@@ -565,7 +554,7 @@ struct RawDetailView: View {
     @ObservedObject var model: RawViewModel
 
     var body: some View {
-        HStack(spacing: 0) {
+        HSplitView {
             ProjectGallery(sources: model.sources, states: model.sourceStates,
                            focusedSourceID: $model.focusedSourceID,
                            selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
@@ -574,9 +563,9 @@ struct RawDetailView: View {
                            xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                            xScale: $model.xScale, yScale: $model.yScale, retry: model.loadFocused)
                 .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
             inspector
-                .frame(width: 300)
+                .frame(minWidth: 260, idealWidth: 320, maxWidth: 650)
+                .frame(maxHeight: .infinity)
         }
     }
 
@@ -681,8 +670,19 @@ struct NativePlot: View {
         let finiteX = data.0.compactMap { $0 }
         let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
         guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
-        let leftGutter = min(112, max(66, size.width * 0.24))
-        let plot = CGRect(x: leftGutter, y: 12, width: max(1, size.width - leftGutter - 18), height: max(1, size.height - 58))
+        let leftGutter = min(100, max(68, size.width * 0.16))
+        let targetRatio: CGFloat = 59.1 / 50.0
+        let availWidth = max(10, size.width - leftGutter - 20)
+        let availHeight = max(10, size.height - 16 - 54)
+        var plotW = availWidth
+        var plotH = plotW / targetRatio
+        if plotH > availHeight {
+            plotH = availHeight
+            plotW = plotH * targetRatio
+        }
+        let plotX = leftGutter + (availWidth - plotW) / 2
+        let plotY = 16 + (availHeight - plotH) / 2
+        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
@@ -695,16 +695,16 @@ struct NativePlot: View {
             var tick = Path(); tick.move(to: CGPoint(x: px, y: plot.maxY)); tick.addLine(to: CGPoint(x: px, y: plot.maxY + 4))
             tick.move(to: CGPoint(x: plot.minX, y: py)); tick.addLine(to: CGPoint(x: plot.minX - 4, y: py))
             context.stroke(tick, with: .color(.primary), lineWidth: 0.7)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 10)), at: CGPoint(x: px, y: plot.maxY + 17))
-            context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativePlotStyle.fontFamily, size: 10)), at: CGPoint(x: plot.minX - 36, y: py))
+            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 9.5)), at: CGPoint(x: px, y: plot.maxY + 15))
+            context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativePlotStyle.fontFamily, size: 9.5)), at: CGPoint(x: plot.minX - 32, y: py))
         }
         let xChannel = measurement.channel(named: measurement.view.x ?? "")
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xChannel?.unit ?? "", absolute: xAbsolute, scale: xScale)
         let yChannel = measurement.view.y?.first.flatMap(measurement.channel(named:))
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yChannel?.unit ?? "", absolute: yAbsolute, scale: yScale)
-        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 11)), at: CGPoint(x: plot.midX, y: size.height - 4))
+        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 11)), at: CGPoint(x: plot.midX, y: plot.maxY + 36))
         var yLabelContext = context
-        yLabelContext.translateBy(x: 10, y: plot.midY)
+        yLabelContext.translateBy(x: max(10, plot.minX - 48), y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
         yLabelContext.draw(Text(yTitle).font(.custom(NativePlotStyle.fontFamily, size: 11)), at: .zero)
         var plotContext = context
@@ -942,9 +942,11 @@ struct InspectorPane: View {
             if case .blocked(let reason) = overlay {
                 Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
             } else if case .eligible(let path) = overlay {
-                Text("Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)").font(.caption2).foregroundStyle(.secondary)
+                let label = (path == "Comparison" || path.isEmpty) ? "Multi-source comparison" : "Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)"
+                Text(label).font(.caption2).foregroundStyle(.secondary)
             } else if case .partial(let group) = overlay {
-                Text("Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent): plotting focused cohort (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
+                let label = (group.manifestPath == "Comparison" || group.manifestPath.isEmpty) ? "Plotting compatible cohort" : "Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
+                Text("\(label) (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
                 ForEach(group.excluded, id: \.path) { exclusion in
                     Text("Excluded \(URL(fileURLWithPath: exclusion.path).lastPathComponent): \(exclusion.reason)").font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
                 }
