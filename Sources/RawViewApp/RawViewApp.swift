@@ -388,6 +388,12 @@ final class RawViewModel: ObservableObject {
             if discovered.isEmpty {
                 self.error = "No readable regular files were found under data/raw."
             } else {
+                if self.focusedSourceID == nil { self.focusedSourceID = discovered.first?.id }
+                if self.selectedSourceIDs.isEmpty, let first = discovered.first?.id {
+                    self.selectedSourceIDs = [first]
+                    self.focusedSourceID = OverlaySelection.focused(selected: self.selectedSourceIDs, current: self.focusedSourceID)
+                }
+                self.loadFocused()
                 self.startInspection(context)
             }
         }
