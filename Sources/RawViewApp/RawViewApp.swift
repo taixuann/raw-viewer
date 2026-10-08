@@ -126,8 +126,18 @@ final class RawViewModel: ObservableObject {
         if let id = focusedSourceID { sourceStates[id]?.isLoading = false }
     }
 
+    var isInspecting: Bool {
+        inspectionTask != nil && inspectedSources < max(1, inspectionTotal)
+    }
+
     private func refreshLoading() {
-        isLoading = discoveryTask != nil || inspectionTask != nil || loadTask != nil || overlayLoadTask != nil
+        let inspecting = isInspecting
+        let discovering = discoveryTask != nil
+        let loadingSingle = loadTask != nil
+        let loadingOverlay = overlayLoadTask != nil
+        isLoading = inspecting || discovering || loadingSingle || loadingOverlay
+        if !inspecting && loadingPhase == "Inspecting" { loadingPhase = "Idle" }
+        if !discovering && loadingPhase == "Discovering" { loadingPhase = "Idle" }
         if !isLoading { loadingPhase = "Idle" }
     }
 
@@ -564,7 +574,7 @@ struct RawViewShell: View {
                            xScale: $model.xScale, yScale: $model.yScale,
                            showInspector: $model.showInspector,
                            isLoading: model.isLoading,
-                           loadingStatus: model.isLoading ? (model.loadingPhase == "Inspecting" ? "Inspecting (\(model.inspectedSources)/\(model.inspectionTotal))…" : "\(model.loadingPhase)…") : nil,
+                           loadingStatus: model.isInspecting ? "Inspecting (\(model.inspectedSources)/\(model.inspectionTotal))…" : (model.isLoading && model.loadingPhase != "Idle" && model.loadingPhase != "Inspecting" ? "\(model.loadingPhase)…" : nil),
                            retry: model.loadFocused)
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             if model.showInspector {
@@ -586,26 +596,45 @@ struct RawViewShell: View {
     }
 
     private var sidebarPane: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("PROJECT SOURCES").font(.headline)
-                    Spacer()
-                    Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
-                        .help("Open project")
-                }
-                if let project = model.project {
-                    Text(project.root.lastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if model.isLoading && model.loadingPhase == "Discovering" {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("PROJECT SOURCES")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
+                    .buttonStyle(.borderless)
+                    .help("Open project")
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+
+            Divider()
+
+            if let project = model.project {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(project.root.lastPathComponent).font(.caption).bold().foregroundStyle(.primary).lineLimit(1)
+                    if model.isInspecting {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
+                                HStack {
+                                    Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
+                                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button("Cancel", action: model.cancelLoad)
+                                        .buttonStyle(.plain)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.red)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    } else if model.isLoading && model.loadingPhase == "Discovering" {
                         ProgressView {
                             Text("Discovering sources under data/raw…")
+                                .font(.system(size: 11))
                         }
                         Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
-                    } else if model.isLoading && model.loadingPhase == "Inspecting" {
-                        ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
-                            Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
-                        }
-                        Button("Cancel Inspection", action: model.cancelLoad).buttonStyle(.bordered)
                     } else if model.inspectionCancelled {
                         let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
                         if remaining > 0 {
@@ -615,9 +644,8 @@ struct RawViewShell: View {
                         }
                     }
                 }
-            }
-            .padding([.top, .horizontal], 12)
-            if let _ = model.project {
+                .padding(.horizontal, 14).padding(.top, 8)
+
                 ProjectSourcesSidebar(sources: model.sources,
                     inspections: model.inspections,
                     states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
@@ -630,10 +658,19 @@ struct RawViewShell: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding([.bottom, .horizontal], 12)
             } else {
-                ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
-                    .padding(12)
+                VStack(spacing: 12) {
+                    Spacer()
+                    ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
+                    Button("Open Project…", action: model.openProject)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -717,9 +754,9 @@ struct NativePlot: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? ""))
-                .font(.custom(NativePlotStyle.fontFamily, size: 8.5).bold())
+                .font(.custom(NativePlotStyle.fontFamily, size: 13.5).bold())
                 .lineLimit(1).truncationMode(.middle)
             switch transformed {
             case .failure(let failure):
@@ -733,14 +770,14 @@ struct NativePlot: View {
                     .overlay(alignment: .topTrailing) {
                         Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
                     }
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     ForEach(Array(data.1.enumerated()), id: \.offset) { index, item in
                         Label(item.0, systemImage: "line.diagonal")
-                            .foregroundStyle(palette(index)).font(.custom(NativePlotStyle.fontFamily, size: 7.0))
+                            .foregroundStyle(palette(index)).font(.custom(NativePlotStyle.fontFamily, size: 11.0))
                     }
                     Spacer()
                     Text("Drag to pan · Pinch to zoom · \(data.0.count) rows")
-                        .font(.custom(NativePlotStyle.fontFamily, size: 7.0)).foregroundStyle(.secondary)
+                        .font(.custom(NativePlotStyle.fontFamily, size: 10.5)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -757,11 +794,11 @@ struct NativePlot: View {
             return axisLabel(y, scale: yScale)
         }
         let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(24, CGFloat(maxChars) * 5.2)
-        let leftGutter = max(64, maxLabelWidth + 24)
-        let topGutter: CGFloat = 14
-        let bottomGutter: CGFloat = 38
-        let rightGutter: CGFloat = 16
+        let maxLabelWidth = max(30, CGFloat(maxChars) * 7.2)
+        let leftGutter = max(78, maxLabelWidth + 26)
+        let topGutter: CGFloat = 16
+        let bottomGutter: CGFloat = 46
+        let rightGutter: CGFloat = 20
         let targetRatio: CGFloat = 59.1 / 50.0
         let availWidth = max(10, size.width - leftGutter - rightGutter)
         let availHeight = max(10, size.height - topGutter - bottomGutter)
@@ -774,7 +811,7 @@ struct NativePlot: View {
         let plotX = leftGutter + (availWidth - plotW) / 2
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
+        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.9)
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
         for index in 0...4 {
@@ -782,23 +819,23 @@ struct NativePlot: View {
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
-            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 4.25))
-            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 4.25, y: py))
-            context.stroke(xTick, with: .color(.primary), lineWidth: 0.8)
-            context.stroke(yTick, with: .color(.primary), lineWidth: 0.8)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 7.5)), at: CGPoint(x: px, y: plot.maxY + 10), anchor: .center)
-            context.draw(Text(yLabels[index]).font(.custom(NativePlotStyle.fontFamily, size: 7.5)), at: CGPoint(x: plot.minX - 6, y: py), anchor: .trailing)
+            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 5))
+            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 5, y: py))
+            context.stroke(xTick, with: .color(.primary), lineWidth: 0.9)
+            context.stroke(yTick, with: .color(.primary), lineWidth: 0.9)
+            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
+            context.draw(Text(yLabels[index]).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
         let xChannel = measurement.channel(named: measurement.view.x ?? "")
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xChannel?.unit ?? "", absolute: xAbsolute, scale: xScale)
         let yChannel = measurement.view.y?.first.flatMap(measurement.channel(named:))
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yChannel?.unit ?? "", absolute: yAbsolute, scale: yScale)
-        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 8.0)), at: CGPoint(x: plot.midX, y: plot.maxY + 24), anchor: .center)
-        let yTitleX = max(10, plot.minX - 6 - maxLabelWidth - 10)
+        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
+        let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(.custom(NativePlotStyle.fontFamily, size: 8.0)), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(.custom(NativePlotStyle.fontFamily, size: 12.0).bold()), at: .zero, anchor: .center)
         var plotContext = context
         plotContext.clip(to: Path(plot))
         for (seriesIndex, item) in data.1.enumerated() {
@@ -985,18 +1022,46 @@ struct InspectorPane: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("INSPECTOR").font(.headline)
+        VStack(spacing: 0) {
+            HStack {
+                Text("INSPECTOR")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
-                dataSection
-                styleSection
-                seriesSection
-                axesSection
-                cacheSection
-                if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-            }.padding(14)
-        }.background(.background)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if measurement == nil && inspection == nil && source == nil {
+                        VStack(spacing: 12) {
+                            Spacer(minLength: 60)
+                            ContentUnavailableView("No Selection", systemImage: "sidebar.right",
+                                description: Text("Select a measurement source to inspect metadata and plot settings."))
+                            Spacer(minLength: 60)
+                        }
+                        .frame(maxWidth: .infinity)
+                        if cacheStatus != nil, onClearCache != nil {
+                            cacheSection
+                        }
+                    } else {
+                        dataSection
+                        styleSection
+                        seriesSection
+                        axesSection
+                        cacheSection
+                    }
+                    if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+                }
+                .padding(14)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(.background)
     }
 
     private var cacheSection: some View {

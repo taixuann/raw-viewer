@@ -297,22 +297,124 @@ struct ProjectSourcesSidebar: View {
         search.isEmpty || id.localizedCaseInsensitiveContains(search) || label.localizedCaseInsensitiveContains(search)
     }
 
-    private func sourceRow(_ source: RawSource) -> some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(focusedSourceID == source.id ? Color.accentColor : stateColor(states[source.id]))
-                .frame(width: 7, height: 7)
-                .accessibilityHidden(true)
-            Text(source.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
-            Spacer(minLength: 0)
-            if focusedSourceID == source.id {
-                Text("Focused").font(.caption2).foregroundStyle(.secondary)
-                    .accessibilityLabel("Focused source")
+    private struct DisplayableSourceInfo {
+        let title: String
+        let subtitle: String
+        let badge: String?
+    }
+
+    private func displayInfo(for source: RawSource) -> DisplayableSourceInfo {
+        let inspection = inspections[source.id]
+        let rawFilename = source.url.deletingPathExtension().lastPathComponent
+
+        // 1. Detect sample / device ID
+        var sampleID: String? = nil
+        if let dev = inspection?.deviceID, !dev.isEmpty, dev != "Unknown" {
+            sampleID = dev
+        } else if let openBracket = rawFilename.firstIndex(of: "["),
+                  let closeBracket = rawFilename[openBracket...].firstIndex(of: "]"),
+                  openBracket < closeBracket {
+            let extracted = String(rawFilename[rawFilename.index(after: openBracket)..<closeBracket])
+            if !extracted.isEmpty { sampleID = extracted }
+        }
+
+        // 2. Detect timestamp / run date
+        var timestampStr: String? = nil
+        if let ts = inspection?.timestamp, !ts.isEmpty {
+            timestampStr = ts
+        } else {
+            let parts = rawFilename.split(separator: "_")
+            if let first = parts.first, first.count >= 6, first.allSatisfy({ $0.isNumber || $0 == "-" }) {
+                timestampStr = String(first)
             }
         }
+
+        // 3. Detect mode or category
+        var modeBadge: String? = nil
+        if let mode = inspection?.applicationMode, !mode.isEmpty, mode != "Unknown" {
+            modeBadge = mode.replacingOccurrences(of: "_", with: " ")
+                            .replacingOccurrences(of: ".", with: " ")
+                            .capitalized
+        }
+
+        // 4. Extract sequence index (e.g. 001, run_01)
+        let seq = rawFilename.split(separator: "_").last.map(String.init) ?? ""
+        let isSeq = seq.count <= 4 && seq.allSatisfy({ $0.isNumber })
+
+        let primaryTitle: String
+        let secondaryTitle: String
+
+        if let sample = sampleID {
+            primaryTitle = sample
+            var subParts: [String] = []
+            if let ts = timestampStr { subParts.append(ts) }
+            if isSeq && !subParts.contains(seq) { subParts.append("#\(seq)") }
+            if subParts.isEmpty { subParts.append(rawFilename) }
+            secondaryTitle = subParts.joined(separator: " · ")
+        } else {
+            var clean = rawFilename
+            let patternsToStrip = [
+                "horiba-labram.raman_", "horiba-labram_hr_evolution_", "horiba-labram_",
+                "keithley-2400_", "keithley_2400_", "keithley_",
+                "renishaw_invia_", "renishaw_", "agilent_"
+            ]
+            for pat in patternsToStrip {
+                if clean.lowercased().contains(pat) {
+                    clean = clean.replacingOccurrences(of: pat, with: "", options: .caseInsensitive)
+                }
+            }
+            primaryTitle = clean
+            var subParts: [String] = []
+            if let ts = timestampStr { subParts.append(ts) }
+            if isSeq && !subParts.contains(seq) { subParts.append("#\(seq)") }
+            secondaryTitle = subParts.isEmpty ? (inspection?.instrumentName ?? "") : subParts.joined(separator: " · ")
+        }
+
+        return DisplayableSourceInfo(title: primaryTitle, subtitle: secondaryTitle, badge: modeBadge)
+    }
+
+    private func sourceRow(_ source: RawSource) -> some View {
+        let info = displayInfo(for: source)
+        let isFocused = focusedSourceID == source.id
+        return HStack(alignment: .center, spacing: 8) {
+            Circle()
+                .fill(isFocused ? Color.accentColor : stateColor(states[source.id]))
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(info.title)
+                        .font(.system(size: 12, weight: isFocused ? .bold : .medium))
+                        .foregroundStyle(isFocused ? Color.primary : Color.primary.opacity(0.95))
+                        .lineLimit(1)
+                    if let badge = info.badge {
+                        Text(badge)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5).padding(.vertical, 1.5)
+                            .background(Capsule().fill(.quaternary))
+                    }
+                    Spacer(minLength: 0)
+                }
+                if !info.subtitle.isEmpty {
+                    Text(info.subtitle)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if isFocused {
+                Text("Focused")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.accentColor.opacity(0.12)))
+            }
+        }
+        .padding(.vertical, 3)
         .tag(source.id)
-        .help(source.id)
-        .accessibilityLabel("\(source.url.lastPathComponent)\(focusedSourceID == source.id ? ", focused" : "")")
+        .help(source.url.lastPathComponent)
+        .accessibilityLabel("\(info.title), \(info.subtitle)\(isFocused ? ", focused" : "")")
     }
 
     private func stateColor(_ state: GallerySourceState?) -> Color {
@@ -375,9 +477,11 @@ struct ProjectGallery: View {
                 .keyboardShortcut("i", modifiers: .command)
                 .accessibilityLabel("Toggle Inspector")
             }
-            .padding(.horizontal, 20).padding(.vertical, 10)
+            .padding(.horizontal, 20)
+            .frame(height: 44)
             Divider()
             pane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack {
                 if let source = sources.first(where: { $0.id == focusedSourceID }) {
                     Text(source.url.lastPathComponent).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -389,6 +493,7 @@ struct ProjectGallery: View {
             }
             .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 6)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
     }
 
@@ -410,8 +515,13 @@ struct ProjectGallery: View {
     @ViewBuilder
     private var pane: some View {
         if sources.isEmpty {
-            ContentUnavailableView("No Sources", systemImage: "waveform.path.ecg",
-                description: Text("Open a project containing files under data/raw."))
+            VStack {
+                Spacer()
+                ContentUnavailableView("No Sources", systemImage: "waveform.path.ecg",
+                    description: Text("Open a project containing files under data/raw."))
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let source = sources.first(where: { $0.id == focusedSourceID }) {
             if tab == "Data" {
                 focusedDataPane(source)
@@ -419,8 +529,13 @@ struct ProjectGallery: View {
                 plotPane(focused: source)
             }
         } else {
-            ContentUnavailableView("Select a Source", systemImage: "waveform.path.ecg",
-                description: Text("Choose a source in the sidebar to view it here."))
+            VStack {
+                Spacer()
+                ContentUnavailableView("Select a Source", systemImage: "waveform.path.ecg",
+                    description: Text("Choose a source in the sidebar to view it here."))
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -531,16 +646,16 @@ struct ProjectGallery: View {
         private func cardSize(in geoSize: CGSize) -> CGSize {
             let availW = max(100, geoSize.width - 48)
             let availH = max(100, geoSize.height - 48)
-            let maxPlotW = max(100, availW - 120)
-            let maxPlotH = max(80, availH - 120)
+            let maxPlotW = max(100, availW - 145)
+            let maxPlotH = max(80, availH - 145)
             var plotW = maxPlotW
             var plotH = plotW / targetRatio
             if plotH > maxPlotH {
                 plotH = maxPlotH
                 plotW = plotH * targetRatio
             }
-            let cardW = plotW + 120
-            let cardH = plotH + 120
+            let cardW = plotW + 145
+            let cardH = plotH + 145
             return CGSize(width: max(280, cardW), height: max(240, cardH))
         }
 
@@ -675,9 +790,9 @@ struct OverlayPlot: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("\(measurements.count) sources · overlay in acquisition order")
-                .font(.custom(NativeOverlayPalette.fontFamily, size: 8.5).bold())
+                .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
                 .lineLimit(1).truncationMode(.middle)
                 .accessibilityLabel("\(measurements.count) sources overlaid")
             switch transformed {
@@ -713,16 +828,16 @@ struct OverlayPlot: View {
                     .accessibilityLabel("Overlay plot with \(data.2.count) series")
                     .accessibilityValue(accessibleSummary)
                 VStack(alignment: .leading, spacing: 4) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], alignment: .leading, spacing: 4) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], alignment: .leading, spacing: 4) {
                         ForEach(data.2) { item in
                             Label(item.label, systemImage: "line.diagonal")
                                 .foregroundStyle(palette(item.sourcePath, order: sourceOrder))
-                                .font(.custom(NativeOverlayPalette.fontFamily, size: 7.0)).fixedSize(horizontal: false, vertical: true)
+                                .font(.custom(NativeOverlayPalette.fontFamily, size: 11.0)).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(pointCount(data.2)) points across visible series · \(gapCount(data.2)) gaps")
-                        .font(.custom(NativeOverlayPalette.fontFamily, size: 7.0)).foregroundStyle(.secondary)
+                        .font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -737,11 +852,11 @@ struct OverlayPlot: View {
             return axisLabel(y, scale: yScale)
         }
         let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(24, CGFloat(maxChars) * 5.2)
-        let leftGutter = max(64, maxLabelWidth + 24)
-        let topGutter: CGFloat = 14
-        let bottomGutter: CGFloat = 38
-        let rightGutter: CGFloat = 16
+        let maxLabelWidth = max(30, CGFloat(maxChars) * 7.2)
+        let leftGutter = max(78, maxLabelWidth + 26)
+        let topGutter: CGFloat = 16
+        let bottomGutter: CGFloat = 46
+        let rightGutter: CGFloat = 20
         let targetRatio: CGFloat = 59.1 / 50.0
         let availWidth = max(10, size.width - leftGutter - rightGutter)
         let availHeight = max(10, size.height - topGutter - bottomGutter)
@@ -754,7 +869,7 @@ struct OverlayPlot: View {
         let plotX = leftGutter + (availWidth - plotW) / 2
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
+        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.9)
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)
         for index in 0...4 {
@@ -762,19 +877,19 @@ struct OverlayPlot: View {
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
-            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 4.25))
-            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 4.25, y: py))
-            context.stroke(xTick, with: .color(.primary), lineWidth: 0.8)
-            context.stroke(yTick, with: .color(.primary), lineWidth: 0.8)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 7.5)), at: CGPoint(x: px, y: plot.maxY + 10), anchor: .center)
-            context.draw(Text(yLabels[index]).font(.custom(NativeOverlayPalette.fontFamily, size: 7.5)), at: CGPoint(x: plot.minX - 6, y: py), anchor: .trailing)
+            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 5))
+            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 5, y: py))
+            context.stroke(xTick, with: .color(.primary), lineWidth: 0.9)
+            context.stroke(yTick, with: .color(.primary), lineWidth: 0.9)
+            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
+            context.draw(Text(yLabels[index]).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
-        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 8.0)), at: CGPoint(x: plot.midX, y: plot.maxY + 24), anchor: .center)
-        let yTitleX = max(10, plot.minX - 6 - maxLabelWidth - 10)
+        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
+        let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 8.0)), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 12.0).bold()), at: .zero, anchor: .center)
         var plotContext = context
         plotContext.clip(to: Path(plot))
         let sourceOrder = selectedSourceIDs.sorted()
