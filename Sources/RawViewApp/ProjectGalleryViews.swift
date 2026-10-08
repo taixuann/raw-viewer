@@ -508,16 +508,16 @@ struct ProjectGallery: View {
         private func cardSize(in geoSize: CGSize) -> CGSize {
             let availW = max(100, geoSize.width - 48)
             let availH = max(100, geoSize.height - 48)
-            let maxPlotW = max(100, availW - 135)
-            let maxPlotH = max(80, availH - 166)
+            let maxPlotW = max(100, availW - 120)
+            let maxPlotH = max(80, availH - 120)
             var plotW = maxPlotW
             var plotH = plotW / targetRatio
             if plotH > maxPlotH {
                 plotH = maxPlotH
                 plotW = plotH * targetRatio
             }
-            let cardW = plotW + 135
-            let cardH = plotH + 166
+            let cardW = plotW + 120
+            let cardH = plotH + 120
             return CGSize(width: max(280, cardW), height: max(240, cardH))
         }
 
@@ -652,9 +652,10 @@ struct OverlayPlot: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("\(measurements.count) sources · overlay in acquisition order")
-                .font(.headline).lineLimit(1).truncationMode(.middle)
+                .font(.custom(NativeOverlayPalette.fontFamily, size: 8.5).bold())
+                .lineLimit(1).truncationMode(.middle)
                 .accessibilityLabel("\(measurements.count) sources overlaid")
             switch transformed {
             case .failure(let failure):
@@ -689,16 +690,16 @@ struct OverlayPlot: View {
                     .accessibilityLabel("Overlay plot with \(data.2.count) series")
                     .accessibilityValue(accessibleSummary)
                 VStack(alignment: .leading, spacing: 4) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], alignment: .leading, spacing: 4) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], alignment: .leading, spacing: 4) {
                         ForEach(data.2) { item in
                             Label(item.label, systemImage: "line.diagonal")
                                 .foregroundStyle(palette(item.sourcePath, order: sourceOrder))
-                                .font(.caption).fixedSize(horizontal: false, vertical: true)
+                                .font(.custom(NativeOverlayPalette.fontFamily, size: 7.0)).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(pointCount(data.2)) points across visible series · \(gapCount(data.2)) gaps")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.custom(NativeOverlayPalette.fontFamily, size: 7.0)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -706,10 +707,21 @@ struct OverlayPlot: View {
 
     private func draw(_ series: [Series], xTitle: String, yTitle: String, in context: inout GraphicsContext, size: CGSize) {
         guard let xBounds = extrema(series, isX: true), let yBounds = extrema(series, isX: false) else { return }
-        let leftGutter = min(100, max(68, size.width * 0.16))
+        let yRangeTemp = viewport(expanded(yBounds), pan: pan.height, dimension: size.height, vertical: true)
+        let yLabels: [String] = (0...4).map { index in
+            let t = Double(index) / 4
+            let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
+            return axisLabel(y, scale: yScale)
+        }
+        let maxChars = yLabels.map(\.count).max() ?? 1
+        let maxLabelWidth = max(24, CGFloat(maxChars) * 5.2)
+        let leftGutter = max(64, maxLabelWidth + 24)
+        let topGutter: CGFloat = 14
+        let bottomGutter: CGFloat = 38
+        let rightGutter: CGFloat = 16
         let targetRatio: CGFloat = 59.1 / 50.0
-        let availWidth = max(10, size.width - leftGutter - 20)
-        let availHeight = max(10, size.height - 16 - 54)
+        let availWidth = max(10, size.width - leftGutter - rightGutter)
+        let availHeight = max(10, size.height - topGutter - bottomGutter)
         var plotW = availWidth
         var plotH = plotW / targetRatio
         if plotH > availHeight {
@@ -717,7 +729,7 @@ struct OverlayPlot: View {
             plotW = plotH * targetRatio
         }
         let plotX = leftGutter + (availWidth - plotW) / 2
-        let plotY = 16 + (availHeight - plotH) / 2
+        let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
         var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
@@ -725,20 +737,21 @@ struct OverlayPlot: View {
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
-            let y = yRange.lowerBound + t * (yRange.upperBound - yRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
-            var tick = Path(); tick.move(to: CGPoint(x: px, y: plot.maxY)); tick.addLine(to: CGPoint(x: px, y: plot.maxY + 4))
-            tick.move(to: CGPoint(x: plot.minX, y: py)); tick.addLine(to: CGPoint(x: plot.minX - 4, y: py))
-            context.stroke(tick, with: .color(.primary), lineWidth: 0.7)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 9.5)), at: CGPoint(x: px, y: plot.maxY + 15))
-            context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 9.5)), at: CGPoint(x: plot.minX - 32, y: py))
+            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 4.25))
+            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 4.25, y: py))
+            context.stroke(xTick, with: .color(.primary), lineWidth: 0.8)
+            context.stroke(yTick, with: .color(.primary), lineWidth: 0.8)
+            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativeOverlayPalette.fontFamily, size: 7.5)), at: CGPoint(x: px, y: plot.maxY + 10), anchor: .center)
+            context.draw(Text(yLabels[index]).font(.custom(NativeOverlayPalette.fontFamily, size: 7.5)), at: CGPoint(x: plot.minX - 6, y: py), anchor: .trailing)
         }
-        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 11)), at: CGPoint(x: plot.midX, y: plot.maxY + 36))
+        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 8.0)), at: CGPoint(x: plot.midX, y: plot.maxY + 24), anchor: .center)
+        let yTitleX = max(10, plot.minX - 6 - maxLabelWidth - 10)
         var yLabelContext = context
-        yLabelContext.translateBy(x: max(10, plot.minX - 48), y: plot.midY)
+        yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 11)), at: .zero)
+        yLabelContext.draw(Text(yTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 8.0)), at: .zero, anchor: .center)
         var plotContext = context
         plotContext.clip(to: Path(plot))
         let sourceOrder = selectedSourceIDs.sorted()

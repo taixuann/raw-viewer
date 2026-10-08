@@ -709,9 +709,10 @@ struct NativePlot: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? ""))
-                .font(.headline)
+                .font(.custom(NativePlotStyle.fontFamily, size: 8.5).bold())
+                .lineLimit(1).truncationMode(.middle)
             switch transformed {
             case .failure(let failure):
                 if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
@@ -724,14 +725,14 @@ struct NativePlot: View {
                     .overlay(alignment: .topTrailing) {
                         Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
                     }
-                HStack(spacing: 14) {
+                HStack(spacing: 12) {
                     ForEach(Array(data.1.enumerated()), id: \.offset) { index, item in
                         Label(item.0, systemImage: "line.diagonal")
-                            .foregroundStyle(palette(index)).font(.caption)
+                            .foregroundStyle(palette(index)).font(.custom(NativePlotStyle.fontFamily, size: 7.0))
                     }
                     Spacer()
-                    Text("Drag to pan · Pinch to zoom · \(data.0.count) ordered rows · \(gapCount(data)) gaps")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    Text("Drag to pan · Pinch to zoom · \(data.0.count) rows")
+                        .font(.custom(NativePlotStyle.fontFamily, size: 7.0)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -741,10 +742,18 @@ struct NativePlot: View {
         let finiteX = data.0.compactMap { $0 }
         let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
         guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
-        let leftGutter = min(100, max(68, size.width * 0.16))
-        let topGutter: CGFloat = 16
-        let bottomGutter: CGFloat = 54
-        let rightGutter: CGFloat = 20
+        let yRangeTemp = viewport(expanded(finiteY), pan: pan.height, dimension: size.height, vertical: true)
+        let yLabels: [String] = (0...4).map { index in
+            let t = Double(index) / 4
+            let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
+            return axisLabel(y, scale: yScale)
+        }
+        let maxChars = yLabels.map(\.count).max() ?? 1
+        let maxLabelWidth = max(24, CGFloat(maxChars) * 5.2)
+        let leftGutter = max(64, maxLabelWidth + 24)
+        let topGutter: CGFloat = 14
+        let bottomGutter: CGFloat = 38
+        let rightGutter: CGFloat = 16
         let targetRatio: CGFloat = 59.1 / 50.0
         let availWidth = max(10, size.width - leftGutter - rightGutter)
         let availHeight = max(10, size.height - topGutter - bottomGutter)
@@ -763,24 +772,25 @@ struct NativePlot: View {
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
-            let y = yRange.lowerBound + t * (yRange.upperBound - yRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
-            var tick = Path(); tick.move(to: CGPoint(x: px, y: plot.maxY)); tick.addLine(to: CGPoint(x: px, y: plot.maxY + 4))
-            tick.move(to: CGPoint(x: plot.minX, y: py)); tick.addLine(to: CGPoint(x: plot.minX - 4, y: py))
-            context.stroke(tick, with: .color(.primary), lineWidth: 0.7)
-            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 9.5)), at: CGPoint(x: px, y: plot.maxY + 15))
-            context.draw(Text(axisLabel(y, scale: yScale)).font(.custom(NativePlotStyle.fontFamily, size: 9.5)), at: CGPoint(x: plot.minX - 32, y: py))
+            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 4.25))
+            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 4.25, y: py))
+            context.stroke(xTick, with: .color(.primary), lineWidth: 0.8)
+            context.stroke(yTick, with: .color(.primary), lineWidth: 0.8)
+            context.draw(Text(axisLabel(x, scale: xScale)).font(.custom(NativePlotStyle.fontFamily, size: 7.5)), at: CGPoint(x: px, y: plot.maxY + 10), anchor: .center)
+            context.draw(Text(yLabels[index]).font(.custom(NativePlotStyle.fontFamily, size: 7.5)), at: CGPoint(x: plot.minX - 6, y: py), anchor: .trailing)
         }
         let xChannel = measurement.channel(named: measurement.view.x ?? "")
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xChannel?.unit ?? "", absolute: xAbsolute, scale: xScale)
         let yChannel = measurement.view.y?.first.flatMap(measurement.channel(named:))
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yChannel?.unit ?? "", absolute: yAbsolute, scale: yScale)
-        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 11)), at: CGPoint(x: plot.midX, y: plot.maxY + 36))
+        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 8.0)), at: CGPoint(x: plot.midX, y: plot.maxY + 24), anchor: .center)
+        let yTitleX = max(10, plot.minX - 6 - maxLabelWidth - 10)
         var yLabelContext = context
-        yLabelContext.translateBy(x: max(10, plot.minX - 48), y: plot.midY)
+        yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(.custom(NativePlotStyle.fontFamily, size: 11)), at: .zero)
+        yLabelContext.draw(Text(yTitle).font(.custom(NativePlotStyle.fontFamily, size: 8.0)), at: .zero, anchor: .center)
         var plotContext = context
         plotContext.clip(to: Path(plot))
         for (seriesIndex, item) in data.1.enumerated() {
