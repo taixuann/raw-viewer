@@ -444,21 +444,23 @@ final class RawViewModel: ObservableObject {
         inspectionTask = Task {
             let report = await InstrumentReader.inspectMany(targets, project: project, cache: cache,
                 onProgress: { results, completed in
+                    var dbRecords: [IndexDatabase.Record] = []
+                    for result in results {
+                        if let inspection = result.inspection {
+                            let mtime: Int64 = (try? result.source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
+                            dbRecords.append(IndexDatabase.Record(source: result.source, inspection: inspection, mtime: mtime))
+                        }
+                    }
+                    if let indexDB, !dbRecords.isEmpty {
+                        try? indexDB.upsertBatch(dbRecords)
+                    }
                     await MainActor.run {
                         guard requestID == self.inspectionID else { return }
-                        var dbRecords: [IndexDatabase.Record] = []
                         for result in results {
                             var state = self.sourceStates[result.id] ?? GallerySourceState()
                             state.inspection = result.inspection
                             state.error = result.error
                             self.sourceStates[result.id] = state
-                            if let inspection = result.inspection {
-                                let mtime: Int64 = (try? result.source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
-                                dbRecords.append(IndexDatabase.Record(source: result.source, inspection: inspection, mtime: mtime))
-                            }
-                        }
-                        if let indexDB, !dbRecords.isEmpty {
-                            try? indexDB.upsertBatch(dbRecords)
                         }
                         self.inspectedSources = baseCompleted + completed
                     }
