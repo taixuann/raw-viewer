@@ -139,6 +139,24 @@ raw-file paths, hashes, measurements, or sample inventories. Tests in this
 repository use synthetic fixtures; source-specific equivalence checks run
 locally against the selected project and are not included in shared docs.
 
+### Profile upgrade procedure
+
+1. Keep the Study-owned instrument profile unchanged. Create or update a
+   standalone viewer profile in `data/instruments/rawview/` with an explicit
+   supported `schema_version`.
+2. Declare only observed tabular layouts: extension, delimiter, encoding,
+   headers and aliases, quantities, units, and the channels used for plotting.
+   Use `filename_contains_all` only with observed basename tokens when broad
+   signatures need scoping or signatures overlap another instrument or layout.
+   A missing token leaves the file inventoried but unmatched with a
+   source-level diagnostic. Do not add transforms or inferred channels.
+3. Validate the profile with RawView's inspection and load path against
+   representative files. Confirm mode selection, row order and count, arrays,
+   units, and diagnostics for unmatched or malformed sources.
+4. Keep source-specific measurements and hashes in local validation evidence;
+   do not copy raw data, inventories, or hashes into the profile or shared
+   documentation.
+
 ## Matching one source
 
 1. The source extension must be declared by at least one valid profile. The

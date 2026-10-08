@@ -24,8 +24,28 @@ profiles are standalone, versioned top-level YAML (`schema_version: 1` or `2`);
 nested `raw_viewer` blocks are rejected.
 Existing unversioned profiles stay visible
 with an explicit upgrade diagnostic, block only the sources they claim, and
-are never rewritten. RawView never executes project code. GTIIT XPS,
-Autolab/IOP, and Oxford MFP layouts remain out of scope (see CONTRACT.md).
+are never rewritten. RawView never executes project code. The volatile PDA
+project uses these schema-v2 companion profiles:
+
+| Profile | Source layout | Plotted channels |
+|---|---|---|
+| `keithley-2400.yaml` | LabVIEW Measurement; `.lvm`/`.txt`/`.csv`, tab-separated | Voltage and current |
+| `autolab-usth.yaml` | NOVA ASCII `.txt`; semicolon-delimited, comma decimal | CV voltage/current, including the observed two-column layout; CA time/current; EIS frequency and all three impedance channels, including required magnitude |
+| `horiba-labram.yaml` | `.txt`; comment-header TSV with comma decimal or legacy semicolon table | Raman shift and intensity |
+| `iop-hanoi.yaml` | `.txt`/`.csv`; comma-separated first-row header | Wavelength and transmittance, including observed aliases |
+
+These profiles display values as recorded and apply no transforms. See
+[CONTRACT.md](CONTRACT.md#profile-upgrade-procedure) for profile ownership,
+schema requirements, and the upgrade procedure. The profiles use RawView's
+built-in readers; no project-side executable parser or runtime dependency is
+added.
+Some profiles require observed instrument tokens in a source basename; a file
+missing those tokens stays inventoried and receives an unmatched-source
+diagnostic.
+
+This project-specific profile set is limited to the four tabular families in
+the table; no profile is inferred for other instruments or layouts. `.spe`
+and `.affm` remain excluded, and Oxford `.ibw` support is deferred.
 
 The center switches between project-wide Plot and Data tabs. Each supported
 source keeps a matching figure and an ordered, untransformed table: every
