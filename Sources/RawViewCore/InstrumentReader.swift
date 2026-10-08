@@ -27,7 +27,7 @@ public struct ReaderInspectionReport: Sendable {
 /// reported on the affected source without blocking unrelated sources.
 public enum InstrumentReader {
     public static let version = "1.2.0"
-    static let progressBatchSize = 64
+    static let progressBatchSize = 256
     static let headerSampleBytes = 64 * 1024
     /// Malformed-input bounds: one source line and the accumulated header
     /// section each stay below 1 MiB. Complete value arrays, row counts, and

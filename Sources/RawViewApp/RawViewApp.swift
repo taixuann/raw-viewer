@@ -86,44 +86,8 @@ final class RawViewModel: ObservableObject {
     init() {
         let savedLimit = UserDefaults.standard.object(forKey: "rawView.cacheLimitBytes.v1") as? Int64
         cacheLimitBytes = savedLimit ?? MeasurementCache.defaultLimitBytes
-        if let bookmark = UserDefaults.standard.data(forKey: "rawView.projectBookmark.v1") {
-            var stale = false
-            if let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope,
-                                  relativeTo: nil, bookmarkDataIsStale: &stale) {
-                let scoped = url.startAccessingSecurityScopedResource()
-                if scoped { activeScopeURL = url }
-                do {
-                    install(try ProjectContext.open(url))
-                } catch {
-                    if scoped {
-                        url.stopAccessingSecurityScopedResource()
-                        activeScopeURL = nil
-                    }
-                    self.error = "The previously selected project could not be reopened: \(error.localizedDescription)"
-                }
-            } else if UserDefaults.standard.string(forKey: "rawView.lastProjectPath.v1") != nil {
-                restoreSavedPathIfPresent()
-            } else {
-                self.error = "The previously selected project could not be reopened. Choose a project containing a readable data/raw directory."
-            }
-            return
-        }
-        // No bookmark (openProject persists the path even when bookmark
-        // creation returns nil): the saved path is still tried. Silence only
-        // when both saved values are absent.
-        restoreSavedPathIfPresent()
-    }
-
-    /// Installs the project at the saved `lastProjectPath`, if any. Silent
-    /// when absent (first launch); otherwise installs or reports the same
-    /// actionable saved-project error as the bookmark path.
-    private func restoreSavedPathIfPresent() {
-        guard let path = UserDefaults.standard.string(forKey: "rawView.lastProjectPath.v1") else { return }
-        do {
-            install(try ProjectContext.open(URL(fileURLWithPath: path)))
-        } catch {
-            self.error = "The previously selected project could not be reopened: \(error.localizedDescription)"
-        }
+        // Never auto-reopen previous project on launch.
+        // User explicitly opens via the "Open Project" button.
     }
 
     func openProject() {
@@ -136,13 +100,10 @@ final class RawViewModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let openedProject = try ProjectContext.open(url)
-            let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
             _ = url.startAccessingSecurityScopedResource()
             activeScopeURL?.stopAccessingSecurityScopedResource()
             activeScopeURL = url
             install(openedProject)
-            if let bookmark { UserDefaults.standard.set(bookmark, forKey: "rawView.projectBookmark.v1") }
-            UserDefaults.standard.set(url.path, forKey: "rawView.lastProjectPath.v1")
         } catch { self.error = error.localizedDescription }
     }
 
@@ -411,42 +372,53 @@ final class RawViewModel: ObservableObject {
         profileIssues = []
         inspectionCancelled = false
 
-        // 1. Fast SQLite Cache Restoration:
-        let indexDB = try? IndexDatabase.open(at: context.indexDatabaseURL)
-        var cachedMap: [String: IndexDatabase.Record] = [:]
-        if let indexDB {
-            cachedMap = indexDB.lookupAll()
-        }
+        let capturedSources = sources
+        inspectionTotal = capturedSources.count
+        inspectedSources = 0
 
-        var uninspected: [RawSource] = []
-        var initialStates: [String: GallerySourceState] = [:]
-        var cachedCount = 0
+        // Perform fast SQLite Cache Restoration off the MainActor:
+        inspectionTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let indexDB = try? IndexDatabase.open(at: context.indexDatabaseURL)
+            let cachedMap = indexDB?.lookupAll() ?? [:]
 
-        for source in sources {
-            let mtime: Int64 = (try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
-            if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
-                var state = GallerySourceState()
-                state.inspection = record.asInspection
-                state.error = record.error
-                initialStates[source.id] = state
-                cachedCount += 1
-            } else {
-                initialStates[source.id] = GallerySourceState()
-                uninspected.append(source)
+            var uninspected: [RawSource] = []
+            var initialStates: [String: GallerySourceState] = [:]
+            var cachedCount = 0
+
+            for source in capturedSources {
+                if Task.isCancelled { return }
+                let mtime: Int64 = (try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0
+                if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
+                    var state = GallerySourceState()
+                    state.inspection = record.asInspection
+                    state.error = record.error
+                    initialStates[source.id] = state
+                    cachedCount += 1
+                } else {
+                    initialStates[source.id] = GallerySourceState()
+                    uninspected.append(source)
+                }
+            }
+
+            let finalStates = initialStates
+            let finalCached = cachedCount
+            let finalUninspected = uninspected
+
+            await MainActor.run {
+                guard requestID == self.inspectionID else { return }
+                self.sourceStates = finalStates
+                self.inspectedSources = finalCached
+
+                if finalUninspected.isEmpty {
+                    self.isLoading = false
+                    self.loadingPhase = "Idle"
+                    return
+                }
+
+                self.inspectSources(finalUninspected, project: context, requestID: requestID, baseCompleted: finalCached, indexDB: indexDB)
             }
         }
-
-        sourceStates = initialStates
-        inspectedSources = cachedCount
-        inspectionTotal = sources.count
-
-        if uninspected.isEmpty {
-            isLoading = false
-            loadingPhase = "Idle"
-            return
-        }
-
-        inspectSources(uninspected, project: context, requestID: requestID, baseCompleted: cachedCount, indexDB: indexDB)
     }
 
     /// Resumes a cancelled inspection for the sources still lacking results,
