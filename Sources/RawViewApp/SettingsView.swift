@@ -8,6 +8,8 @@ struct SettingsView: View {
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
     @AppStorage("defaultRenderStyle") private var defaultRenderStyle: String = "Line"
+    @AppStorage("defaultMarkType") private var defaultMarkType: String = "Line"
+    @AppStorage("defaultInterpolation") private var defaultInterpolation: String = "Linear"
     @AppStorage("defaultLineWidth") private var defaultLineWidth: Double = 1.4
     @AppStorage("defaultMarkerSize") private var defaultMarkerSize: Double = 4.5
     @AppStorage("isLazyInspectionEnabled") private var isLazyInspectionEnabled: Bool = true
@@ -35,7 +37,7 @@ struct SettingsView: View {
                 }
                 .tag("storage")
         }
-        .frame(width: 520, height: 380)
+        .frame(width: 520, height: 420)
         .padding(20)
     }
 
@@ -61,14 +63,25 @@ struct SettingsView: View {
             Section("Plot Defaults") {
                 Toggle("Use Nature Serif font for plot typography", isOn: $plotFontSerif)
 
-                Picker("Default Render Style:", selection: $defaultRenderStyle) {
-                    ForEach(PlotRenderStyle.allCases) { style in
-                        Text(style.rawValue).tag(style.rawValue)
+                Picker("Default Mark Type:", selection: $defaultMarkType) {
+                    ForEach(PlotMarkType.allCases) { mark in
+                        Text(mark.rawValue).tag(mark.rawValue)
                     }
                 }
-                .onChange(of: defaultRenderStyle) { _, newStyle in
-                    if let s = PlotRenderStyle(rawValue: newStyle) {
-                        model.renderStyle = s
+                .onChange(of: defaultMarkType) { _, newMark in
+                    if let m = PlotMarkType(rawValue: newMark) {
+                        model.markType = m
+                    }
+                }
+
+                Picker("Default Connection:", selection: $defaultInterpolation) {
+                    ForEach(PlotInterpolation.allCases) { interp in
+                        Text(interp.rawValue).tag(interp.rawValue)
+                    }
+                }
+                .onChange(of: defaultInterpolation) { _, newInterp in
+                    if let i = PlotInterpolation(rawValue: newInterp) {
+                        model.interpolation = i
                     }
                 }
 

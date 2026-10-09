@@ -535,7 +535,10 @@ struct ProjectGallery: View {
     let hidden: Set<String>
     let lineWidth: Double
     var renderStyle: PlotRenderStyle = .line
+    var markType: PlotMarkType = .line
+    var interpolation: PlotInterpolation = .linear
     var markerSize: Double = 4.5
+    var colorBySweepProgress: Bool = false
     let overlay: OverlayEligibility?
     @Binding var tab: String
     @Binding var xAbsolute: Bool
@@ -735,7 +738,10 @@ struct ProjectGallery: View {
                     OverlayPlot(measurements: visible, selectedSourceIDs: selectedIDs,
                                 focused: states[focused.id]?.measurement,
                                 lineWidth: lineWidth,
-                                renderStyle: renderStyle, markerSize: markerSize,
+                                renderStyle: renderStyle,
+                                markType: markType, interpolation: interpolation,
+                                markerSize: markerSize,
+                                colorBySweepProgress: colorBySweepProgress,
                                 xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                 xScale: xScale, yScale: yScale,
                                 comparisonTitle: comparisonTitle,
@@ -777,7 +783,10 @@ struct ProjectGallery: View {
                         OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
                                     focused: visible.first(where: { $0.source.path == focused.id }),
                                     lineWidth: lineWidth,
-                                    renderStyle: renderStyle, markerSize: markerSize,
+                                    renderStyle: renderStyle,
+                                    markType: markType, interpolation: interpolation,
+                                    markerSize: markerSize,
+                                    colorBySweepProgress: colorBySweepProgress,
                                     xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                     xScale: xScale, yScale: yScale,
                                     comparisonTitle: comparisonTitle,
@@ -809,7 +818,10 @@ struct ProjectGallery: View {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute,
                                yAbsolute: yAbsolute, xScale: xScale,
                                yScale: yScale, lineWidth: lineWidth,
-                               renderStyle: renderStyle, markerSize: markerSize,
+                               renderStyle: renderStyle,
+                               markType: markType, interpolation: interpolation,
+                               markerSize: markerSize,
+                               colorBySweepProgress: colorBySweepProgress,
                                showLegend: showLegend,
                                customSeriesLabels: customSeriesLabels,
                                legendOffset: $legendOffset)
@@ -911,7 +923,10 @@ struct OverlayPlot: View {
     let focused: NormalizedMeasurement?
     var lineWidth: Double = 1.4
     var renderStyle: PlotRenderStyle = .line
+    var markType: PlotMarkType = .line
+    var interpolation: PlotInterpolation = .linear
     var markerSize: Double = 4.5
+    var colorBySweepProgress: Bool = false
     let xAbsolute: Bool
     let yAbsolute: Bool
     let xScale: AxisScale
@@ -1023,7 +1038,10 @@ struct OverlayPlot: View {
                             NativePlot(measurement: focused, xAbsolute: xAbsolute,
                                        yAbsolute: yAbsolute, xScale: xScale,
                                        yScale: yScale, lineWidth: lineWidth,
-                                       renderStyle: renderStyle, markerSize: markerSize,
+                                       renderStyle: renderStyle,
+                                       markType: markType, interpolation: interpolation,
+                                       markerSize: markerSize,
+                                       colorBySweepProgress: colorBySweepProgress,
                                        showLegend: showLegend,
                                        customSeriesLabels: customSeriesLabels,
                                        legendOffset: $legendOffset)
@@ -1046,6 +1064,13 @@ struct OverlayPlot: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Overlay plot with \(data.series.count) series")
                     .accessibilityValue(accessibleSummary)
+
+                    if colorBySweepProgress {
+                        SweepColorbarView()
+                            .padding(.leading, 64)
+                            .padding(.top, 24)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
 
                     if showLegend {
                         let legendItems: [(color: Color, label: String)] = data.series.map { item in
@@ -1145,10 +1170,12 @@ struct OverlayPlot: View {
                     if !currentRun.isEmpty {
                         PlotRenderingEngine.renderRun(
                             points: currentRun,
-                            style: renderStyle,
+                            mark: markType,
+                            interpolation: interpolation,
                             color: color,
                             lineWidth: lineWidth,
                             markerSize: markerSize,
+                            colorBySweepProgress: colorBySweepProgress,
                             in: &plotContext
                         )
                         currentRun.removeAll(keepingCapacity: true)
@@ -1164,10 +1191,12 @@ struct OverlayPlot: View {
             if !currentRun.isEmpty {
                 PlotRenderingEngine.renderRun(
                     points: currentRun,
-                    style: renderStyle,
+                    mark: markType,
+                    interpolation: interpolation,
                     color: color,
                     lineWidth: lineWidth,
                     markerSize: markerSize,
+                    colorBySweepProgress: colorBySweepProgress,
                     in: &plotContext
                 )
             }

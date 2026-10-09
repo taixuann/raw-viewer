@@ -92,6 +92,13 @@ final class RawViewModel: ObservableObject {
         }
     }
     @Published var renderStyle: PlotRenderStyle = .line
+    @Published var markType: PlotMarkType = .line {
+        didSet { UserDefaults.standard.set(markType.rawValue, forKey: "defaultMarkType") }
+    }
+    @Published var interpolation: PlotInterpolation = .linear {
+        didSet { UserDefaults.standard.set(interpolation.rawValue, forKey: "defaultInterpolation") }
+    }
+    @Published var colorBySweepProgress: Bool = false
     @Published var markerSize: Double = 4.5 {
         didSet {
             let clamped = min(max(markerSize, 1.0), 20.0)
@@ -218,6 +225,71 @@ final class RawViewModel: ObservableObject {
             activeSnapshotID = nil
             comparisonTitle = ""
         }
+    }
+
+    func exportCurrentFigure() {
+        let name: String
+        if selectedSourceIDs.count >= 2 {
+            name = "Overlay_Export"
+        } else if let focused = focusedSourceID {
+            name = URL(fileURLWithPath: focused).deletingPathExtension().lastPathComponent
+        } else {
+            name = "Figure_Export"
+        }
+
+        if selectedSourceIDs.count >= 2 {
+            let cohort = selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
+            let visible = cohort.filter { !hiddenSeries.contains($0.source.path) }
+            let exportView = OverlayPlot(
+                measurements: visible,
+                selectedSourceIDs: selectedSourceIDs,
+                focused: focusedSourceID.flatMap { sourceStates[$0]?.measurement },
+                lineWidth: lineWidth,
+                renderStyle: renderStyle,
+                markType: markType,
+                interpolation: interpolation,
+                markerSize: markerSize,
+                colorBySweepProgress: colorBySweepProgress,
+                xAbsolute: xAbsolute,
+                yAbsolute: yAbsolute,
+                xScale: xScale,
+                yScale: yScale,
+                comparisonTitle: comparisonTitle,
+                showLegend: showLegend,
+                customSeriesLabels: customSeriesLabels,
+                legendOffset: .constant(.zero)
+            )
+            FigureExporter.promptExportFigure(view: exportView, defaultName: name)
+        } else if let focused = focusedSourceID, let measurement = sourceStates[focused]?.measurement {
+            let exportView = NativePlot(
+                measurement: measurement,
+                xAbsolute: xAbsolute,
+                yAbsolute: yAbsolute,
+                xScale: xScale,
+                yScale: yScale,
+                lineWidth: lineWidth,
+                renderStyle: renderStyle,
+                markType: markType,
+                interpolation: interpolation,
+                markerSize: markerSize,
+                colorBySweepProgress: colorBySweepProgress,
+                showLegend: showLegend,
+                customSeriesLabels: customSeriesLabels,
+                legendOffset: .constant(.zero)
+            )
+            FigureExporter.promptExportFigure(view: exportView, defaultName: name)
+        }
+    }
+
+    func exportCurrentData() {
+        let name: String
+        if let focused = focusedSourceID {
+            name = URL(fileURLWithPath: focused).deletingPathExtension().lastPathComponent + ".csv"
+        } else {
+            name = "data_export.csv"
+        }
+        let measurement = focusedSourceID.flatMap { sourceStates[$0]?.measurement }
+        FigureExporter.promptExportData(measurement: measurement, defaultName: name)
     }
     // Independent cancellation identities: inventory, bulk inspection, and the
     // focused-source load each own their task slot, so changing focus cancels
@@ -346,6 +418,16 @@ final class RawViewModel: ObservableObject {
         if let savedStyleRaw = UserDefaults.standard.string(forKey: "defaultRenderStyle"),
            let savedStyle = PlotRenderStyle(rawValue: savedStyleRaw) {
             renderStyle = savedStyle
+            markType = savedStyle.markType
+            interpolation = savedStyle.interpolation
+        }
+        if let savedMarkRaw = UserDefaults.standard.string(forKey: "defaultMarkType"),
+           let savedMark = PlotMarkType(rawValue: savedMarkRaw) {
+            markType = savedMark
+        }
+        if let savedInterpRaw = UserDefaults.standard.string(forKey: "defaultInterpolation"),
+           let savedInterp = PlotInterpolation(rawValue: savedInterpRaw) {
+            interpolation = savedInterp
         }
         // Never auto-reopen previous project on launch.
         // User explicitly opens via the "Open Project" button.
@@ -911,7 +993,10 @@ struct RawViewShell: View {
                            selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
                            lineWidth: model.lineWidth,
                            renderStyle: model.renderStyle,
+                           markType: model.markType,
+                           interpolation: model.interpolation,
                            markerSize: model.markerSize,
+                           colorBySweepProgress: model.colorBySweepProgress,
                            overlay: model.overlayResult(),
                            tab: $model.tab,
                            xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
@@ -1068,7 +1153,11 @@ struct RawViewShell: View {
                              states: model.sourceStates,
                              selectedIDs: model.selectedSourceIDs, focusedID: $model.focusedSourceID,
                              hidden: $model.hiddenSeries, lineWidth: $model.lineWidth,
-                             renderStyle: $model.renderStyle, markerSize: $model.markerSize,
+                             renderStyle: $model.renderStyle,
+                             markType: $model.markType,
+                             interpolation: $model.interpolation,
+                             markerSize: $model.markerSize,
+                             colorBySweepProgress: $model.colorBySweepProgress,
                              xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                              xScale: $model.xScale, yScale: $model.yScale,
                              overlay: model.overlayResult(),
@@ -1086,7 +1175,9 @@ struct RawViewShell: View {
                                  if let id = model.focusedSourceID {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
                                  }
-                             })
+                             },
+                             onExportFigure: { model.exportCurrentFigure() },
+                             onExportData: { model.exportCurrentData() })
     }
 
     private var cacheStatus: InspectorPane.CacheStatus? {
@@ -1108,7 +1199,10 @@ struct NativePlot: View {
     let yScale: AxisScale
     var lineWidth: Double = 1.4
     var renderStyle: PlotRenderStyle = .line
+    var markType: PlotMarkType = .line
+    var interpolation: PlotInterpolation = .linear
     var markerSize: Double = 4.5
+    var colorBySweepProgress: Bool = false
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -1180,6 +1274,13 @@ struct NativePlot: View {
                         .contentShape(Rectangle())
                         .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                         .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
+
+                    if colorBySweepProgress {
+                        SweepColorbarView()
+                            .padding(.leading, 64)
+                            .padding(.top, 24)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
 
                     if showLegend {
                         let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
@@ -1288,10 +1389,12 @@ struct NativePlot: View {
                 }
                 PlotRenderingEngine.renderRun(
                     points: runPoints,
-                    style: renderStyle,
+                    mark: markType,
+                    interpolation: interpolation,
                     color: color,
                     lineWidth: lineWidth,
                     markerSize: markerSize,
+                    colorBySweepProgress: colorBySweepProgress,
                     in: &plotContext
                 )
             }
@@ -1437,7 +1540,10 @@ struct InspectorPane: View {
     @Binding var hidden: Set<String>
     @Binding var lineWidth: Double
     @Binding var renderStyle: PlotRenderStyle
+    @Binding var markType: PlotMarkType
+    @Binding var interpolation: PlotInterpolation
     @Binding var markerSize: Double
+    @Binding var colorBySweepProgress: Bool
     @Binding var xAbsolute: Bool
     @Binding var yAbsolute: Bool
     @Binding var xScale: AxisScale
@@ -1454,12 +1560,15 @@ struct InspectorPane: View {
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
+    var onExportFigure: (() -> Void)? = nil
+    var onExportData: (() -> Void)? = nil
 
     @State private var isSeriesExpanded = true
     @State private var isDataMappingExpanded = true
     @State private var isStyleExpanded = true
     @State private var isAxesExpanded = false
     @State private var isMetadataExpanded = false
+    @State private var isExportExpanded = true
     @State private var isCacheExpanded = false
 
     struct CacheStatus {
@@ -1505,6 +1614,7 @@ struct InspectorPane: View {
                         styleSection
                         axesSection
                         metadataSection
+                        exportSection
                         cacheSection
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -1738,63 +1848,86 @@ struct InspectorPane: View {
         DisclosureGroup(isExpanded: $isStyleExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Render Mode")
+                    Text("Mark Type")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.primary)
-                    Picker("Render Mode", selection: $renderStyle) {
-                        ForEach(PlotRenderStyle.allCases) { style in
-                            Text(style.rawValue).tag(style)
+                    Picker("Mark Type", selection: $markType) {
+                        ForEach(PlotMarkType.allCases) { mark in
+                            Text(mark.rawValue).tag(mark)
                         }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text("Line width")
-                            .font(.system(size: 11, weight: .medium))
+                if markType != .dots {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connection")
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Spacer()
-                        TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11).monospacedDigit())
-                            .frame(width: 44)
-                            .multilineTextAlignment(.trailing)
-                        Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
-                            .labelsHidden()
-                            .controlSize(.small)
-                        Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Picker("Connection", selection: $interpolation) {
+                            ForEach(PlotInterpolation.allCases) { interp in
+                                Text(interp.rawValue).tag(interp)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
                     }
-                    Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
-                        .controlSize(.small)
-                }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text("Dot size")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11).monospacedDigit())
-                            .frame(width: 44)
-                            .multilineTextAlignment(.trailing)
-                        Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
-                            .labelsHidden()
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text("Line width")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11).monospacedDigit())
+                                .frame(width: 44)
+                                .multilineTextAlignment(.trailing)
+                            Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
+                                .labelsHidden()
+                                .controlSize(.small)
+                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
                             .controlSize(.small)
-                        Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
-                    Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
-                        .controlSize(.small)
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
                 }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
+
+                if markType != .line {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text("Dot size")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11).monospacedDigit())
+                                .frame(width: 44)
+                                .multilineTextAlignment(.trailing)
+                            Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
+                                .labelsHidden()
+                                .controlSize(.small)
+                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
+                            .controlSize(.small)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
+                }
+
+                Toggle(isOn: $colorBySweepProgress) {
+                    Text("Color by Sweep Progress")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
 
                 Toggle(isOn: $showLegend) {
                     Text("Show Legend")
@@ -1806,10 +1939,38 @@ struct InspectorPane: View {
                     legendOffset = .zero
                 }
                 .font(.caption2)
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(!showLegend || legendOffset == .zero)
             }
             .padding(.top, 4)
         } label: {
             Text("PLOT STYLING")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.85))
+        }
+    }
+
+    private var exportSection: some View {
+        DisclosureGroup(isExpanded: $isExportExpanded) {
+            VStack(spacing: 8) {
+                Button(action: { onExportFigure?() }) {
+                    Label("Export Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(action: { onExportData?() }) {
+                    Label("Export Clean Data (CSV)…", systemImage: "tablecells")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("EXPORT")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.primary.opacity(0.85))
         }

@@ -70,6 +70,7 @@ enum CoreSelfCheck {
         try await manyShortRowsSelfCheck()
         try await genericTableFallbackSelfCheck()
         try await activeProjectTestSelfCheck()
+        try plotStyleAndExportSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -1982,5 +1983,23 @@ enum CoreSelfCheck {
             precondition(!meas.channels.isEmpty, "Measurement channels should not be empty")
             precondition(meas.channels.first!.values.count > 0, "Measurement values should be loaded")
         }
+    }
+
+    static func plotStyleAndExportSelfCheck() throws {
+        precondition(PlotMarkType.line.rawValue == "Line")
+        precondition(PlotMarkType.dots.rawValue == "Dots")
+        precondition(PlotMarkType.lineAndDots.rawValue == "Both")
+
+        precondition(PlotInterpolation.linear.rawValue == "Linear")
+        precondition(PlotInterpolation.spline.rawValue == "Spline")
+        precondition(PlotInterpolation.step.rawValue == "Step")
+
+        // Legacy compatibility mappings
+        precondition(PlotRenderStyle.line.markType == .line)
+        precondition(PlotRenderStyle.line.interpolation == .linear)
+        precondition(PlotRenderStyle.spline.markType == .line)
+        precondition(PlotRenderStyle.spline.interpolation == .spline)
+        precondition(PlotRenderStyle.scatter.markType == .dots)
+        precondition(PlotRenderStyle.lineAndScatter.markType == .lineAndDots)
     }
 }
