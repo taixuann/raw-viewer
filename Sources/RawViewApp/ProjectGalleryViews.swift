@@ -3,25 +3,34 @@ import RawViewCore
 
 struct DraggableLegendView: View {
     let items: [(color: Color, label: String)]
+    var fontSize: CGFloat = 10.0
+    var lineWidth: CGFloat = 1.4
     @Binding var offset: CGSize
     @State private var dragStart: CGSize = .zero
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(spacing: 6) {
                         Capsule()
                             .fill(item.color)
-                            .frame(width: 14, height: 2.5)
+                            .frame(width: 14, height: max(1.5, min(3.0, lineWidth)))
                         Text(item.label)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: fontSize, weight: .regular))
                             .foregroundStyle(.primary)
                     }
                 }
             }
             .padding(6)
-            .background(Color.clear)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.ultraThinMaterial.opacity(0.85))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
             .contentShape(Rectangle())
             .offset(offset)
             .gesture(
@@ -561,6 +570,7 @@ struct ProjectGallery: View {
     var projectSnapshotPackages: [RawViewModel.ProjectSnapshotPackage] = []
     var onSelectSnapshotPackage: ((RawViewModel.ProjectSnapshotPackage) -> Void)? = nil
     var comparisonTitle: String = ""
+    @Binding var selectedPreset: ScientificPreset
     @Binding var showLegend: Bool
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -574,6 +584,43 @@ struct ProjectGallery: View {
                 }
                 .pickerStyle(.segmented).frame(width: 150)
                 .accessibilityLabel("Plot or Data view")
+
+                Divider().frame(height: 16)
+
+                Menu {
+                    Section("Standard Journals (Closed Box)") {
+                        ForEach([ScientificPreset.natureSingle, .scienceSingle, .acsSingle, .ieeeSingle], id: \.id) { p in
+                            Button {
+                                selectedPreset = p
+                            } label: {
+                                if selectedPreset.id == p.id {
+                                    Label(p.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(p.displayName)
+                                }
+                            }
+                        }
+                    }
+
+                    Section("Open L-Frames (2-Axis)") {
+                        ForEach([ScientificPreset.natureOpen, .scienceOpen], id: \.id) { p in
+                            Button {
+                                selectedPreset = p
+                            } label: {
+                                if selectedPreset.id == p.id {
+                                    Label(p.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(p.displayName)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(selectedPreset.displayName, systemImage: "doc.richtext")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .menuStyle(.borderlessButton)
+                .help("Select scientific publication preset")
 
                 Divider().frame(height: 16)
 
@@ -795,7 +842,7 @@ struct ProjectGallery: View {
                     description: Text("Every selected series is hidden. Show at least one series in the inspector."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                CenteredFigureView {
+                CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio)) {
                     OverlayPlot(measurements: visible, selectedSourceIDs: selectedIDs,
                                 focused: states[focused.id]?.measurement,
                                 lineWidth: lineWidth,
@@ -806,6 +853,7 @@ struct ProjectGallery: View {
                                 xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                 xScale: xScale, yScale: yScale,
                                 comparisonTitle: comparisonTitle,
+                                preset: selectedPreset,
                                 showLegend: showLegend,
                                 customSeriesLabels: customSeriesLabels,
                                 legendOffset: $legendOffset)
@@ -840,7 +888,7 @@ struct ProjectGallery: View {
                         description: Text("Every selected series is hidden. Show at least one series in the inspector."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    CenteredFigureView {
+                    CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio)) {
                         OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
                                     focused: visible.first(where: { $0.source.path == focused.id }),
                                     lineWidth: lineWidth,
@@ -851,6 +899,7 @@ struct ProjectGallery: View {
                                     xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                     xScale: xScale, yScale: yScale,
                                     comparisonTitle: comparisonTitle,
+                                    preset: selectedPreset,
                                     showLegend: showLegend,
                                     customSeriesLabels: customSeriesLabels,
                                     legendOffset: $legendOffset)
@@ -875,7 +924,7 @@ struct ProjectGallery: View {
                     description: Text("The profile reports metadata only; its data remains available in the Data tab."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                CenteredFigureView {
+                CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio)) {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute,
                                yAbsolute: yAbsolute, xScale: xScale,
                                yScale: yScale, lineWidth: lineWidth,
@@ -883,6 +932,7 @@ struct ProjectGallery: View {
                                markType: markType, interpolation: interpolation,
                                markerSize: markerSize,
                                colorBySweepProgress: colorBySweepProgress,
+                               preset: selectedPreset,
                                showLegend: showLegend,
                                customSeriesLabels: customSeriesLabels,
                                legendOffset: $legendOffset)
@@ -896,9 +946,8 @@ struct ProjectGallery: View {
     }
 
     private struct CenteredFigureView<Content: View>: View {
+        var targetRatio: CGFloat = 59.1 / 50.0
         @ViewBuilder let content: () -> Content
-
-        private let targetRatio: CGFloat = 59.1 / 50.0
 
         private func cardSize(in geoSize: CGSize) -> CGSize {
             let availW = max(100, geoSize.width - 48)
@@ -993,6 +1042,7 @@ struct OverlayPlot: View {
     let xScale: AxisScale
     let yScale: AxisScale
     var comparisonTitle: String = ""
+    var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -1004,8 +1054,9 @@ struct OverlayPlot: View {
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
-        if plotFontSerif {
-            let f = Font.custom(NativeOverlayPalette.fontFamily, size: size)
+        let useSerif = preset.isSerif || plotFontSerif
+        if useSerif {
+            let f = Font.custom("Times New Roman", size: size)
             return bold ? f.bold() : f
         } else {
             return bold ? Font.system(size: size, weight: .bold) : Font.system(size: size)
@@ -1139,9 +1190,14 @@ struct OverlayPlot: View {
                             let name = (custom != nil && !custom!.isEmpty) ? custom! : item.label
                             return (palette(item.sourcePath, order: sourceOrder), name)
                         }
-                        DraggableLegendView(items: legendItems, offset: $legendOffset)
-                            .padding(.trailing, 28)
-                            .padding(.top, 24)
+                        DraggableLegendView(
+                            items: legendItems,
+                            fontSize: max(8.5, CGFloat(preset.legendPt) * 1.35 * headerFontScale),
+                            lineWidth: CGFloat(lineWidth),
+                            offset: $legendOffset
+                        )
+                        .padding(.trailing, 28)
+                        .padding(.top, 24)
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -1166,7 +1222,7 @@ struct OverlayPlot: View {
             let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
             return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
         }
-        let targetRatio: CGFloat = 59.1 / 50.0
+        let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
         let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
 
@@ -1189,36 +1245,46 @@ struct OverlayPlot: View {
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
 
-        // Canonical Nature-single closed 4-sided bounding box (1.0 pt)
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: PlotRenderingEngine.spineLineWidth)
+        let spineWidth = CGFloat(preset.spineThicknessPt)
+        if preset.isOpenFrame {
+            var lFrame = Path()
+            lFrame.move(to: CGPoint(x: plot.minX, y: plot.minY))
+            lFrame.addLine(to: CGPoint(x: plot.minX, y: plot.maxY))
+            lFrame.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY))
+            context.stroke(lFrame, with: .color(.primary), lineWidth: spineWidth)
+        } else {
+            var frame = Path()
+            frame.addRect(plot)
+            context.stroke(frame, with: .color(.primary), lineWidth: spineWidth)
+        }
+
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)
-        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale)
+        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
 
-            // Canonical Nature outward ticks (1.0 pt thickness, visible scaled length)
             var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
             var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
-            context.stroke(xTick, with: .color(.primary), lineWidth: PlotRenderingEngine.tickLineWidth)
-            context.stroke(yTick, with: .color(.primary), lineWidth: PlotRenderingEngine.tickLineWidth)
+            context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
+            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-            context.draw(Text(yLabels[index]).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: CGFloat(preset.tickLabelPt) * 1.4 * fontScale)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+            context.draw(Text(yLabels[index]).font(plotFont(size: CGFloat(preset.tickLabelPt) * 1.4 * fontScale)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        // Axis titles: regular weight (not bold), matching standard scientific publishing
-        context.draw(Text(xTitle).font(plotFont(size: 12.5 * fontScale, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + (11.5 * fontScale) + 6.0), anchor: .top)
+        let axisLabelSize = CGFloat(preset.axisLabelPt) * 1.4 * fontScale
+        context.draw(Text(xTitle).font(plotFont(size: axisLabelSize, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + (CGFloat(preset.tickLabelPt) * 1.4 * fontScale) + 6.0), anchor: .top)
         let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(plotFont(size: 12.5 * fontScale, bold: false)), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(plotFont(size: axisLabelSize, bold: false)), at: .zero, anchor: .center)
 
         var plotContext = context
         plotContext.clip(to: Path(plot))

@@ -7,11 +7,6 @@ struct SettingsView: View {
     @AppStorage("appTheme") private var appTheme: String = "System"
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
-    @AppStorage("defaultRenderStyle") private var defaultRenderStyle: String = "Line"
-    @AppStorage("defaultMarkType") private var defaultMarkType: String = "Line"
-    @AppStorage("defaultInterpolation") private var defaultInterpolation: String = "Linear"
-    @AppStorage("defaultLineWidth") private var defaultLineWidth: Double = 1.4
-    @AppStorage("defaultMarkerSize") private var defaultMarkerSize: Double = 4.5
     @AppStorage("isLazyInspectionEnabled") private var isLazyInspectionEnabled: Bool = true
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
     @AppStorage("cacheLimitMB") private var cacheLimitMB: Int = 2048
@@ -58,60 +53,8 @@ struct SettingsView: View {
                         .monospacedDigit()
                         .frame(width: 45, alignment: .trailing)
                 }
-            }
 
-            Section("Plot Defaults") {
-                Toggle("Use Nature Serif font for plot typography", isOn: $plotFontSerif)
-
-                Picker("Default Mark Type:", selection: $defaultMarkType) {
-                    ForEach(PlotMarkType.allCases) { mark in
-                        Text(mark.rawValue).tag(mark.rawValue)
-                    }
-                }
-                .onChange(of: defaultMarkType) { _, newMark in
-                    if let m = PlotMarkType(rawValue: newMark) {
-                        model.markType = m
-                    }
-                }
-
-                Picker("Default Connection:", selection: $defaultInterpolation) {
-                    ForEach(PlotInterpolation.allCases) { interp in
-                        Text(interp.rawValue).tag(interp.rawValue)
-                    }
-                }
-                .onChange(of: defaultInterpolation) { _, newInterp in
-                    if let i = PlotInterpolation(rawValue: newInterp) {
-                        model.interpolation = i
-                    }
-                }
-
-                HStack {
-                    Text("Default Line Width:")
-                    TextField("1.4", value: $defaultLineWidth, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 50)
-                    Stepper("", value: $defaultLineWidth, in: 0.2...10.0, step: 0.1)
-                        .labelsHidden()
-                        .controlSize(.small)
-                    Text("pt").foregroundStyle(.secondary)
-                }
-                .onChange(of: defaultLineWidth) { _, newWidth in
-                    model.lineWidth = newWidth
-                }
-
-                HStack {
-                    Text("Default Dot Size:")
-                    TextField("4.5", value: $defaultMarkerSize, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 50)
-                    Stepper("", value: $defaultMarkerSize, in: 2.0...10.0, step: 0.5)
-                        .labelsHidden()
-                        .controlSize(.small)
-                    Text("pt").foregroundStyle(.secondary)
-                }
-                .onChange(of: defaultMarkerSize) { _, newSize in
-                    model.markerSize = newSize
-                }
+                Toggle("Default to Serif font for scientific plots", isOn: $plotFontSerif)
             }
         }
         .formStyle(.grouped)

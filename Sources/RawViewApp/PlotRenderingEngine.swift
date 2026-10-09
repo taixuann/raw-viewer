@@ -4,13 +4,18 @@ import RawViewCore
 /// Unified 2D rendering and geometry engine for Nature-compliant scientific plots.
 enum PlotRenderingEngine {
 
-    /// Standard line widths and tick lengths for Nature-compliant scientific plots
+    /// Standard line widths and tick lengths for scientific plots
     static let spineLineWidth: CGFloat = 1.0
     static let tickLineWidth: CGFloat = 1.0
 
     /// Outward tick length scaled to viewport readability on Retina monitors
-    static func tickLength(fontScale: CGFloat) -> CGFloat {
-        max(6.0, 5.2 * fontScale)
+    static func tickLength(fontScale: CGFloat, preset: ScientificPreset = .natureSingle) -> CGFloat {
+        max(3.5, CGFloat(preset.tickLengthPt) * fontScale)
+    }
+
+    /// Spine and tick thickness in pt for a given scientific preset
+    static func spineThickness(preset: ScientificPreset = .natureSingle) -> CGFloat {
+        CGFloat(preset.spineThicknessPt)
     }
 
     /// Compute dynamic font scale from viewport width and user preferences.

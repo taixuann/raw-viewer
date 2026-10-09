@@ -143,6 +143,7 @@ final class RawViewModel: ObservableObject {
     @Published var showLegend = true
     @Published var customSeriesLabels: [String: String] = [:]
     @Published var legendOffset: CGSize = .zero
+    @Published var selectedPreset: ScientificPreset = .natureSingle
     @Published var snapshots: [PlotSnapshot] = []
     @Published var activeSnapshotID: UUID? = nil
     @Published var comparisonTitle: String = "" {
@@ -237,6 +238,7 @@ final class RawViewModel: ObservableObject {
             name = "Figure_Export"
         }
 
+        let exportSize = CGSize(width: 800, height: 800 / selectedPreset.aspectRatio)
         if selectedSourceIDs.count >= 2 {
             let cohort = selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
             let visible = cohort.filter { !hiddenSeries.contains($0.source.path) }
@@ -255,11 +257,12 @@ final class RawViewModel: ObservableObject {
                 xScale: xScale,
                 yScale: yScale,
                 comparisonTitle: comparisonTitle,
+                preset: selectedPreset,
                 showLegend: showLegend,
                 customSeriesLabels: customSeriesLabels,
                 legendOffset: .constant(.zero)
             )
-            FigureExporter.promptExportFigure(view: exportView, defaultName: name)
+            FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize)
         } else if let focused = focusedSourceID, let measurement = sourceStates[focused]?.measurement {
             let exportView = NativePlot(
                 measurement: measurement,
@@ -273,11 +276,12 @@ final class RawViewModel: ObservableObject {
                 interpolation: interpolation,
                 markerSize: markerSize,
                 colorBySweepProgress: colorBySweepProgress,
+                preset: selectedPreset,
                 showLegend: showLegend,
                 customSeriesLabels: customSeriesLabels,
                 legendOffset: .constant(.zero)
             )
-            FigureExporter.promptExportFigure(view: exportView, defaultName: name)
+            FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize)
         }
     }
 
@@ -334,6 +338,7 @@ final class RawViewModel: ObservableObject {
         guard !cleanName.isEmpty else { return }
 
         do {
+            let exportSize = CGSize(width: 800, height: 800 / selectedPreset.aspectRatio)
             if selectedSourceIDs.count >= 2 {
                 let cohort = selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
                 let visible = cohort.filter { !hiddenSeries.contains($0.source.path) }
@@ -352,6 +357,7 @@ final class RawViewModel: ObservableObject {
                     xScale: xScale,
                     yScale: yScale,
                     comparisonTitle: comparisonTitle,
+                    preset: selectedPreset,
                     showLegend: showLegend,
                     customSeriesLabels: customSeriesLabels,
                     legendOffset: .constant(.zero)
@@ -360,7 +366,8 @@ final class RawViewModel: ObservableObject {
                     projectRoot: project.root,
                     packageName: cleanName,
                     sourcePaths: visible.map(\.source.path),
-                    view: exportView
+                    view: exportView,
+                    size: exportSize
                 )
                 refreshProjectSnapshotPackages()
                 NSWorkspace.shared.activateFileViewerSelecting([savedDir])
@@ -377,6 +384,7 @@ final class RawViewModel: ObservableObject {
                     interpolation: interpolation,
                     markerSize: markerSize,
                     colorBySweepProgress: colorBySweepProgress,
+                    preset: selectedPreset,
                     showLegend: showLegend,
                     customSeriesLabels: customSeriesLabels,
                     legendOffset: .constant(.zero)
@@ -385,7 +393,8 @@ final class RawViewModel: ObservableObject {
                     projectRoot: project.root,
                     packageName: cleanName,
                     sourcePaths: [measurement.source.path],
-                    view: exportView
+                    view: exportView,
+                    size: exportSize
                 )
                 refreshProjectSnapshotPackages()
                 NSWorkspace.shared.activateFileViewerSelecting([savedDir])
@@ -1169,6 +1178,7 @@ struct RawViewShell: View {
                            projectSnapshotPackages: model.projectSnapshotPackages,
                            onSelectSnapshotPackage: { model.loadSnapshotPackage($0) },
                            comparisonTitle: model.comparisonTitle,
+                           selectedPreset: $model.selectedPreset,
                            showLegend: $model.showLegend,
                            customSeriesLabels: model.customSeriesLabels,
                            legendOffset: $model.legendOffset)
@@ -1347,6 +1357,7 @@ struct NativePlot: View {
     var interpolation: PlotInterpolation = .linear
     var markerSize: Double = 4.5
     var colorBySweepProgress: Bool = false
+    var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -1358,8 +1369,9 @@ struct NativePlot: View {
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
-        if plotFontSerif {
-            let f = Font.custom(NativePlotStyle.fontFamily, size: size)
+        let useSerif = preset.isSerif || plotFontSerif
+        if useSerif {
+            let f = Font.custom("Times New Roman", size: size)
             return bold ? f.bold() : f
         } else {
             return bold ? Font.system(size: size, weight: .bold) : Font.system(size: size)
@@ -1432,9 +1444,14 @@ struct NativePlot: View {
                             let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
                             return (palette(index), name)
                         }
-                        DraggableLegendView(items: legendItems, offset: $legendOffset)
-                            .padding(.trailing, 28)
-                            .padding(.top, 24)
+                        DraggableLegendView(
+                            items: legendItems,
+                            fontSize: max(8.5, CGFloat(preset.legendPt) * 1.35 * headerFontScale),
+                            lineWidth: CGFloat(lineWidth),
+                            offset: $legendOffset
+                        )
+                        .padding(.trailing, 28)
+                        .padding(.top, 24)
                     }
                 }
                 HStack(spacing: 14) {
@@ -1463,7 +1480,7 @@ struct NativePlot: View {
             let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
             return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
         }
-        let targetRatio: CGFloat = 59.1 / 50.0
+        let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
         let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
 
@@ -1486,36 +1503,46 @@ struct NativePlot: View {
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
 
-        // Canonical Nature-single closed 4-sided bounding box (1.0 pt)
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: PlotRenderingEngine.spineLineWidth)
+        let spineWidth = CGFloat(preset.spineThicknessPt)
+        if preset.isOpenFrame {
+            var lFrame = Path()
+            lFrame.move(to: CGPoint(x: plot.minX, y: plot.minY))
+            lFrame.addLine(to: CGPoint(x: plot.minX, y: plot.maxY))
+            lFrame.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY))
+            context.stroke(lFrame, with: .color(.primary), lineWidth: spineWidth)
+        } else {
+            var frame = Path()
+            frame.addRect(plot)
+            context.stroke(frame, with: .color(.primary), lineWidth: spineWidth)
+        }
+
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
-        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale)
+        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
 
-            // Canonical Nature outward ticks (1.0 pt thickness, visible scaled length)
             var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
             var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
-            context.stroke(xTick, with: .color(.primary), lineWidth: PlotRenderingEngine.tickLineWidth)
-            context.stroke(yTick, with: .color(.primary), lineWidth: PlotRenderingEngine.tickLineWidth)
+            context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
+            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-            context.draw(Text(yLabels[index]).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: CGFloat(preset.tickLabelPt) * 1.4 * fontScale)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+            context.draw(Text(yLabels[index]).font(plotFont(size: CGFloat(preset.tickLabelPt) * 1.4 * fontScale)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        // Axis titles: regular weight (not bold), matching standard scientific publishing
-        context.draw(Text(xTitle).font(plotFont(size: 12.5 * fontScale, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + (11.5 * fontScale) + 6.0), anchor: .top)
+        let axisLabelSize = CGFloat(preset.axisLabelPt) * 1.4 * fontScale
+        context.draw(Text(xTitle).font(plotFont(size: axisLabelSize, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + (CGFloat(preset.tickLabelPt) * 1.4 * fontScale) + 6.0), anchor: .top)
         let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(plotFont(size: 12.5 * fontScale, bold: false)), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(plotFont(size: axisLabelSize, bold: false)), at: .zero, anchor: .center)
 
         var plotContext = context
         plotContext.clip(to: Path(plot))
