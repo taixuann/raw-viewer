@@ -81,6 +81,7 @@ final class RawViewModel: ObservableObject {
     @Published var inspectionTotal = 0
     @Published var loadingPhase = "Idle"
     @Published var inspectionCancelled = false
+    @Published var isLazyInspectionEnabled: Bool = UserDefaults.standard.object(forKey: "isLazyInspectionEnabled") as? Bool ?? true
     @Published var tab = "Plot"
     @Published var xAbsolute = false
     @Published var yAbsolute = false
@@ -443,8 +444,27 @@ final class RawViewModel: ObservableObject {
                 self?.refreshLoading()
             }
             do {
+                guard let self else { return }
+                if self.sourceStates[id]?.inspection == nil {
+                    let singleReport = await InstrumentReader.inspectMany([source], project: project, cache: focusCache)
+                    guard taskID == self.activeLoadID else { return }
+                    if let result = singleReport.results.first {
+                        var state = self.sourceStates[id] ?? GallerySourceState()
+                        state.inspection = result.inspection
+                        state.error = result.error
+                        self.sourceStates[id] = state
+                        if let inspection = result.inspection {
+                            self.inspections[id] = inspection
+                            let mtime: Int64 = source.mtime != 0 ? source.mtime : ((try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
+                            let record = IndexDatabase.Record(source: source, inspection: inspection, mtime: mtime)
+                            if let indexDB = try? IndexDatabase.open(at: project.indexDatabaseURL) {
+                                try? indexDB.upsertBatch([record])
+                            }
+                        }
+                    }
+                }
                 let measurement = try await InstrumentReader.load(source.url, project: project, cache: focusCache)
-                guard taskID == self?.activeLoadID, let self else { return }
+                guard taskID == self.activeLoadID else { return }
                 var state = self.sourceStates[id] ?? GallerySourceState()
                 state.measurement = measurement
                 state.isLoading = false
@@ -574,7 +594,7 @@ final class RawViewModel: ObservableObject {
                 self.inspections = finalStates.compactMapValues(\.inspection)
                 self.inspectedSources = finalCached
 
-                if finalUninspected.isEmpty {
+                if finalUninspected.isEmpty || self.isLazyInspectionEnabled {
                     self.isLoading = false
                     self.loadingPhase = "Idle"
                     return
@@ -801,6 +821,22 @@ struct RawViewShell: View {
                             Text("Inspection cancelled · \(remaining) remaining")
                                 .font(.caption).foregroundStyle(.secondary)
                             Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
+                        }
+                    } else {
+                        let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
+                        if remaining > 0, !model.isInspecting {
+                            HStack {
+                                Text("\(remaining) unindexed")
+                                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Index All") {
+                                    _ = model.resumeInspection()
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                            }
+                            .padding(.top, 2)
                         }
                     }
                 }
