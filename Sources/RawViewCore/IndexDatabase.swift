@@ -252,6 +252,15 @@ public final class IndexDatabase: @unchecked Sendable {
         )
     }
 
+    public func deleteAll() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let db else { return }
+        guard sqlite3_exec(db, "DELETE FROM sources;", nil, nil, nil) == SQLITE_OK else {
+            throw NSError(domain: "IndexDatabase", code: 5, userInfo: [NSLocalizedDescriptionKey: "Failed to clear sources table"])
+        }
+    }
+
     private func bindOptionalText(_ stmt: OpaquePointer, index: Int32, value: String?) {
         if let value {
             sqlite3_bind_text(stmt, index, (value as NSString).utf8String, -1, nil)

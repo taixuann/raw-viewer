@@ -3,6 +3,7 @@ import SwiftUI
 import RawViewCore
 
 struct SettingsView: View {
+    @ObservedObject var model: RawViewModel
     @AppStorage("appTheme") private var appTheme: String = "System"
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
@@ -32,7 +33,7 @@ struct SettingsView: View {
                 }
                 .tag("storage")
         }
-        .frame(width: 480, height: 320)
+        .frame(width: 520, height: 380)
         .padding(20)
     }
 
@@ -70,6 +71,9 @@ struct SettingsView: View {
                         .labelsHidden()
                         .controlSize(.small)
                     Text("pt").foregroundStyle(.secondary)
+                }
+                .onChange(of: defaultLineWidth) { _, newWidth in
+                    model.lineWidth = newWidth
                 }
             }
         }
@@ -109,17 +113,36 @@ struct SettingsView: View {
 
     private var storageTab: some View {
         Form {
-            Section("Database Index") {
-                LabeledContent("Index Format:", value: "SQLite WAL")
-                LabeledContent("Path:", value: "data/.rawview/index.db")
-                Text("Index files store parsed headers, sampling stats, and SHA256 fingerprints per research project.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section("Database Index (SQLite WAL)") {
+                if let stats = model.databaseStats {
+                    LabeledContent("Active Project:", value: model.project?.root.lastPathComponent ?? "–")
+                    LabeledContent("Database Size:", value: ByteCountFormatter.string(fromByteCount: stats.fileSizeBytes, countStyle: .file))
+                    LabeledContent("Indexed Records:", value: "\(stats.indexedCount) of \(stats.totalSources) sources")
+
+                    HStack {
+                        if model.isInspecting {
+                            ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
+                                Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal)…")
+                                    .font(.caption)
+                            }
+                        } else {
+                            Button("Re-index Project") {
+                                model.reindexAllSources()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.top, 4)
+                } else {
+                    Text("No project currently open. Open a project to inspect its SQLite database index.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            Section("Disk Cache Limits") {
+            Section("Disk & Memory Cache Limits") {
                 HStack {
-                    Text("Max RAM/Disk Cache:")
+                    Text("Max Cache Limit:")
                     Picker("", selection: $cacheLimitMB) {
                         Text("512 MB").tag(512)
                         Text("1 GB").tag(1024)
@@ -128,15 +151,29 @@ struct SettingsView: View {
                         Text("8 GB").tag(8192)
                     }
                     .onChange(of: cacheLimitMB) { _, newMB in
-                        UserDefaults.standard.set(Int64(newMB) * 1024 * 1024, forKey: "cacheLimitBytes")
+                        let bytes = Int64(newMB) * 1024 * 1024
+                        model.cacheLimitBytes = bytes
                     }
                 }
 
-                if let message = cacheClearedMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.green)
+                if let usage = model.cacheUsage {
+                    LabeledContent("Cache Usage:", value: "\(ByteCountFormatter.string(fromByteCount: usage.usedBytes, countStyle: .file)) across \(usage.entryCount) files")
                 }
+
+                HStack {
+                    Button("Clear Cache Files") {
+                        model.clearCacheFiles()
+                        cacheClearedMessage = "Cache cleared successfully."
+                    }
+                    .buttonStyle(.bordered)
+
+                    if let message = cacheClearedMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .formStyle(.grouped)

@@ -5,13 +5,29 @@ import RawViewCore
 
 @main
 struct RawViewApp: App {
+    @StateObject private var model = RawViewModel()
+
+    init() {
+        let theme = UserDefaults.standard.string(forKey: "appTheme") ?? "System"
+        switch theme {
+        case "Light":
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case "Dark":
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:
+            NSApp.appearance = nil
+        }
+    }
+
     var body: some Scene {
-        WindowGroup("RawView") { RawViewShell() }
-            .defaultSize(width: 1320, height: 820)
-            .windowToolbarStyle(.unified)
+        WindowGroup("RawView") {
+            RawViewShell(model: model)
+        }
+        .defaultSize(width: 1320, height: 820)
+        .windowToolbarStyle(.unified)
 
         Settings {
-            SettingsView()
+            SettingsView(model: model)
         }
     }
 }
@@ -259,9 +275,62 @@ final class RawViewModel: ObservableObject {
         }
     }
 
+    struct DatabaseStats {
+        let path: String
+        let fileSizeBytes: Int64
+        let indexedCount: Int
+        let totalSources: Int
+    }
+
+    var databaseStats: DatabaseStats? {
+        guard let project else { return nil }
+        let dbURL = project.indexDatabaseURL
+        let size = (try? dbURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+        let count = (try? IndexDatabase.open(at: dbURL))?.lookupAll().count ?? 0
+        return DatabaseStats(
+            path: dbURL.path,
+            fileSizeBytes: size,
+            indexedCount: count,
+            totalSources: sources.count
+        )
+    }
+
+    func reindexAllSources() {
+        guard let project else { return }
+        inspectionTask?.cancel()
+        inspectionTask = nil
+
+        if let db = try? IndexDatabase.open(at: project.indexDatabaseURL) {
+            try? db.deleteAll()
+        }
+
+        for source in sources {
+            var state = sourceStates[source.id] ?? GallerySourceState()
+            state.inspection = nil
+            state.error = nil
+            sourceStates[source.id] = state
+        }
+        inspections.removeAll()
+
+        inspectionID = UUID()
+        let requestID = inspectionID
+        inspectionCancelled = false
+        isLoading = true
+        loadingPhase = "Inspecting"
+        inspectionTotal = sources.count
+        inspectedSources = 0
+
+        let indexDB = try? IndexDatabase.open(at: project.indexDatabaseURL)
+        inspectSources(sources, project: project, requestID: requestID, baseCompleted: 0, indexDB: indexDB)
+    }
+
     init() {
         let savedLimit = UserDefaults.standard.object(forKey: "rawView.cacheLimitBytes.v1") as? Int64
         cacheLimitBytes = savedLimit ?? MeasurementCache.defaultLimitBytes
+        let savedLineWidth = UserDefaults.standard.double(forKey: "defaultLineWidth")
+        if savedLineWidth > 0 {
+            lineWidth = savedLineWidth
+        }
         // Never auto-reopen previous project on launch.
         // User explicitly opens via the "Open Project" button.
     }
@@ -814,7 +883,7 @@ struct GallerySourceState {
 }
 
 struct RawViewShell: View {
-    @StateObject private var model = RawViewModel()
+    @ObservedObject var model: RawViewModel
 
     var body: some View {
         HSplitView {
@@ -1025,6 +1094,16 @@ struct NativePlot: View {
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
     @State private var dragStart = CGSize.zero
+    @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
+
+    private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
+        if plotFontSerif {
+            let f = Font.custom(NativePlotStyle.fontFamily, size: size)
+            return bold ? f.bold() : f
+        } else {
+            return bold ? Font.system(size: size, weight: .bold) : Font.system(size: size)
+        }
+    }
 
     private var transformed: Result<([Double?], [(String, [Double?])]), PlotFailure> {
         guard let xName = measurement.view.x, let yNames = measurement.view.y,
@@ -1054,7 +1133,7 @@ struct NativePlot: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
                 Text(defaultTitle)
-                    .font(.custom(NativePlotStyle.fontFamily, size: 13.5).bold())
+                    .font(plotFont(size: 13.5, bold: true))
                     .lineLimit(1).truncationMode(.middle)
                 Spacer()
                 Button {
@@ -1092,7 +1171,7 @@ struct NativePlot: View {
                 HStack(spacing: 14) {
                     Spacer()
                     Text("Drag to pan · Pinch to zoom · \(data.0.count) rows")
-                        .font(.custom(NativePlotStyle.fontFamily, size: 10.5)).foregroundStyle(.secondary)
+                        .font(plotFont(size: 10.5)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -1145,18 +1224,18 @@ struct NativePlot: View {
             var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 5, y: py))
             context.stroke(xTick, with: .color(.primary), lineWidth: 0.9)
             context.stroke(yTick, with: .color(.primary), lineWidth: 0.9)
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
-            context.draw(Text(yLabels[index]).font(.custom(NativePlotStyle.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
+            context.draw(Text(yLabels[index]).font(plotFont(size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        context.draw(Text(xTitle).font(.custom(NativePlotStyle.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
+        context.draw(Text(xTitle).font(plotFont(size: 12.0, bold: true)), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
         let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(.custom(NativePlotStyle.fontFamily, size: 12.0).bold()), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(plotFont(size: 12.0, bold: true)), at: .zero, anchor: .center)
         var plotContext = context
         plotContext.clip(to: Path(plot))
         for (seriesIndex, item) in data.1.enumerated() {
