@@ -555,6 +555,11 @@ struct ProjectGallery: View {
     var onSelectSnapshot: ((PlotSnapshot) -> Void)? = nil
     var onToggleSnapshot: ((PlotSnapshot) -> Void)? = nil
     var onDeleteSnapshot: ((PlotSnapshot) -> Void)? = nil
+    var onExportFigure: (() -> Void)? = nil
+    var onExportData: (() -> Void)? = nil
+    var onSaveSnapshotPackage: (() -> Void)? = nil
+    var projectSnapshotPackages: [RawViewModel.ProjectSnapshotPackage] = []
+    var onSelectSnapshotPackage: ((RawViewModel.ProjectSnapshotPackage) -> Void)? = nil
     var comparisonTitle: String = ""
     @Binding var showLegend: Bool
     var customSeriesLabels: [String: String] = [:]
@@ -576,7 +581,14 @@ struct ProjectGallery: View {
                     Button {
                         onSaveSnapshot?()
                     } label: {
-                        Label("Save Current View as Snapshot", systemImage: "camera.badge.ellipsis")
+                        Label("Save Current View as Memory Snapshot", systemImage: "camera.badge.ellipsis")
+                    }
+                    .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+
+                    Button {
+                        onSaveSnapshotPackage?()
+                    } label: {
+                        Label("Save Snapshot Package (data/snapshot/…)", systemImage: "shippingbox")
                     }
                     .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
 
@@ -610,6 +622,19 @@ struct ProjectGallery: View {
                             }
                         }
                     }
+
+                    if !projectSnapshotPackages.isEmpty {
+                        Divider()
+                        Section("Project Packages (data/snapshot/)") {
+                            ForEach(projectSnapshotPackages) { pkg in
+                                Button {
+                                    onSelectSnapshotPackage?(pkg)
+                                } label: {
+                                    Label(pkg.name, systemImage: "shippingbox.fill")
+                                }
+                            }
+                        }
+                    }
                 } label: {
                     let activeSnap = snapshots.first(where: { $0.id == activeSnapshotID })
                     Label(
@@ -622,6 +647,42 @@ struct ProjectGallery: View {
                 .menuStyle(.borderedButton)
                 .controlSize(.small)
                 .help("Manage plot snapshots and comparisons")
+
+                Menu {
+                    let isOverlay = selectedIDs.count >= 2
+                    Section(isOverlay ? "OVERLAY FIGURE (\(selectedIDs.count) SOURCES)" : "SINGLE FIGURE") {
+                        Button {
+                            onExportFigure?()
+                        } label: {
+                            Label(isOverlay ? "Export Overlay Figure (PNG / PDF)…" : "Export Single Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
+                        }
+                    }
+
+                    Section("DATA TABLE") {
+                        Button {
+                            onExportData?()
+                        } label: {
+                            Label("Export Data Table (CSV)…", systemImage: "tablecells")
+                        }
+                    }
+
+                    Divider()
+
+                    Section("SNAPSHOT PACKAGE") {
+                        Button {
+                            onSaveSnapshotPackage?()
+                        } label: {
+                            Label("Save Snapshot Package (data/snapshot/…)", systemImage: "shippingbox")
+                        }
+                        .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+                    }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .menuStyle(.borderedButton)
+                .controlSize(.small)
+                .help("Export figure, data table, or snapshot package")
 
                 if isLoading {
                     HStack(spacing: 6) {

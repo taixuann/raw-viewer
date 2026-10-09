@@ -135,4 +135,41 @@ enum FigureExporter {
             alert.runModal()
         }
     }
+
+    /// Exports a self-contained snapshot package to `data/snapshot/<packageName>/`
+    /// containing `list.yaml`, `figure.png` (300 DPI Retina), and `figure.pdf` (vector PDF).
+    static func exportSnapshotPackage<V: View>(
+        projectRoot: URL,
+        packageName: String,
+        sourcePaths: [String],
+        view: V,
+        size: CGSize = CGSize(width: 960, height: 600)
+    ) throws -> URL {
+        let snapshotDir = projectRoot.appendingPathComponent("data/snapshot").appendingPathComponent(packageName)
+        try FileManager.default.createDirectory(at: snapshotDir, withIntermediateDirectories: true)
+
+        let pngURL = snapshotDir.appendingPathComponent("figure.png")
+        let pdfURL = snapshotDir.appendingPathComponent("figure.pdf")
+        let yamlURL = snapshotDir.appendingPathComponent("list.yaml")
+
+        try exportPNG(view: view, size: size, scale: 3.0, to: pngURL)
+        try exportPDF(view: view, size: size, to: pdfURL)
+
+        let isoDate = ISO8601DateFormatter().string(from: Date())
+        var yamlLines: [String] = []
+        yamlLines.append("# RawView Snapshot Package")
+        yamlLines.append("snapshot: \"\(packageName)\"")
+        yamlLines.append("created_at: \"\(isoDate)\"")
+        yamlLines.append("images:")
+        yamlLines.append("  - figure.png")
+        yamlLines.append("  - figure.pdf")
+        yamlLines.append("sources:")
+        for src in sourcePaths {
+            yamlLines.append("  - \(src)")
+        }
+        let yamlContent = yamlLines.joined(separator: "\n") + "\n"
+        try yamlContent.write(to: yamlURL, atomically: true, encoding: .utf8)
+
+        return snapshotDir
+    }
 }

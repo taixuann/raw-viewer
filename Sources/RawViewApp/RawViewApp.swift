@@ -291,6 +291,157 @@ final class RawViewModel: ObservableObject {
         let measurement = focusedSourceID.flatMap { sourceStates[$0]?.measurement }
         FigureExporter.promptExportData(measurement: measurement, defaultName: name)
     }
+
+    struct ProjectSnapshotPackage: Identifiable, Sendable {
+        let id: String
+        let name: String
+        let sources: [String]
+        let directoryURL: URL
+    }
+    @Published var projectSnapshotPackages: [ProjectSnapshotPackage] = []
+
+    func saveSnapshotPackage() {
+        guard let project = project else { return }
+        let defaultName: String
+        let timeStr = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: " ", with: "_")
+        if selectedSourceIDs.count >= 2 {
+            defaultName = "overlay_\(selectedSourceIDs.count)_\(timeStr)"
+        } else if let focused = focusedSourceID {
+            let base = URL(fileURLWithPath: focused).deletingPathExtension().lastPathComponent
+            defaultName = "\(base)_\(timeStr)"
+        } else {
+            defaultName = "snapshot_\(timeStr)"
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Save Snapshot Package"
+        alert.informativeText = "Saves list.yaml, high-resolution PNG (300 DPI Retina), and vector PDF to data/snapshot/<name>/"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        input.stringValue = defaultName
+        alert.accessoryView = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let cleanName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        guard !cleanName.isEmpty else { return }
+
+        do {
+            if selectedSourceIDs.count >= 2 {
+                let cohort = selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
+                let visible = cohort.filter { !hiddenSeries.contains($0.source.path) }
+                let exportView = OverlayPlot(
+                    measurements: visible,
+                    selectedSourceIDs: selectedSourceIDs,
+                    focused: focusedSourceID.flatMap { sourceStates[$0]?.measurement },
+                    lineWidth: lineWidth,
+                    renderStyle: renderStyle,
+                    markType: markType,
+                    interpolation: interpolation,
+                    markerSize: markerSize,
+                    colorBySweepProgress: colorBySweepProgress,
+                    xAbsolute: xAbsolute,
+                    yAbsolute: yAbsolute,
+                    xScale: xScale,
+                    yScale: yScale,
+                    comparisonTitle: comparisonTitle,
+                    showLegend: showLegend,
+                    customSeriesLabels: customSeriesLabels,
+                    legendOffset: .constant(.zero)
+                )
+                let savedDir = try FigureExporter.exportSnapshotPackage(
+                    projectRoot: project.root,
+                    packageName: cleanName,
+                    sourcePaths: visible.map(\.source.path),
+                    view: exportView
+                )
+                refreshProjectSnapshotPackages()
+                NSWorkspace.shared.activateFileViewerSelecting([savedDir])
+            } else if let focused = focusedSourceID, let measurement = sourceStates[focused]?.measurement {
+                let exportView = NativePlot(
+                    measurement: measurement,
+                    xAbsolute: xAbsolute,
+                    yAbsolute: yAbsolute,
+                    xScale: xScale,
+                    yScale: yScale,
+                    lineWidth: lineWidth,
+                    renderStyle: renderStyle,
+                    markType: markType,
+                    interpolation: interpolation,
+                    markerSize: markerSize,
+                    colorBySweepProgress: colorBySweepProgress,
+                    showLegend: showLegend,
+                    customSeriesLabels: customSeriesLabels,
+                    legendOffset: .constant(.zero)
+                )
+                let savedDir = try FigureExporter.exportSnapshotPackage(
+                    projectRoot: project.root,
+                    packageName: cleanName,
+                    sourcePaths: [measurement.source.path],
+                    view: exportView
+                )
+                refreshProjectSnapshotPackages()
+                NSWorkspace.shared.activateFileViewerSelecting([savedDir])
+            }
+        } catch {
+            self.error = "Failed to save snapshot package: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshProjectSnapshotPackages() {
+        guard let project = project else {
+            projectSnapshotPackages = []
+            return
+        }
+        let snapshotsRoot = project.root.appendingPathComponent("data/snapshot")
+        guard let items = try? FileManager.default.contentsOfDirectory(at: snapshotsRoot, includingPropertiesForKeys: nil) else {
+            projectSnapshotPackages = []
+            return
+        }
+        var packages: [ProjectSnapshotPackage] = []
+        for item in items where item.hasDirectoryPath {
+            let listYAML = item.appendingPathComponent("list.yaml")
+            guard let content = try? String(contentsOf: listYAML, encoding: .utf8) else { continue }
+            var sources: [String] = []
+            var inSources = false
+            for line in content.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.starts(with: "sources:") {
+                    inSources = true
+                    continue
+                }
+                if inSources {
+                    if trimmed.starts(with: "- ") {
+                        let path = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                        if !path.isEmpty { sources.append(path) }
+                    } else if !trimmed.isEmpty && !trimmed.starts(with: "#") {
+                        inSources = false
+                    }
+                }
+            }
+            let name = item.lastPathComponent
+            packages.append(ProjectSnapshotPackage(id: name, name: name, sources: sources, directoryURL: item))
+        }
+        projectSnapshotPackages = packages.sorted(by: { $0.name < $1.name })
+    }
+
+    func loadSnapshotPackage(_ pkg: ProjectSnapshotPackage) {
+        let matchingIDs = pkg.sources.compactMap { relPath in
+            sources.first(where: { $0.relativePath == relPath || $0.id == relPath || $0.url.path.hasSuffix(relPath) })?.id
+        }
+        if !matchingIDs.isEmpty {
+            updateSelection(Set(matchingIDs))
+            comparisonTitle = pkg.name
+            ensureSelectedLoaded()
+        }
+    }
     // Independent cancellation identities: inventory, bulk inspection, and the
     // focused-source load each own their task slot, so changing focus cancels
     // only the focused load and never drops in-flight inspection results.
@@ -699,6 +850,7 @@ final class RawViewModel: ObservableObject {
         sourceStates = [:]
         inspectionCancelled = false
         rebuildCache()
+        refreshProjectSnapshotPackages()
         // Discovery runs through the cancellable core seam off the main actor so
         // large raw directories never block the UI. Cancellation propagates to
         // the worker; the gate token drops stale results when the user reselects.
@@ -1011,6 +1163,11 @@ struct RawViewShell: View {
                            onSelectSnapshot: { model.loadSnapshot($0) },
                            onToggleSnapshot: { model.toggleSnapshot($0) },
                            onDeleteSnapshot: { model.deleteSnapshot($0) },
+                           onExportFigure: { model.exportCurrentFigure() },
+                           onExportData: { model.exportCurrentData() },
+                           onSaveSnapshotPackage: { model.saveSnapshotPackage() },
+                           projectSnapshotPackages: model.projectSnapshotPackages,
+                           onSelectSnapshotPackage: { model.loadSnapshotPackage($0) },
                            comparisonTitle: model.comparisonTitle,
                            showLegend: $model.showLegend,
                            customSeriesLabels: model.customSeriesLabels,
@@ -1162,9 +1319,6 @@ struct RawViewShell: View {
                              xScale: $model.xScale, yScale: $model.yScale,
                              overlay: model.overlayResult(),
                              onRetry: model.loadFocused,
-                             cacheStatus: cacheStatus,
-                             onClearCache: { model.clearCacheFiles(); model.loadFocused() },
-                             onLimitChange: { model.cacheLimitBytes = $0 },
                              showLegend: $model.showLegend,
                              customSeriesLabels: $model.customSeriesLabels,
                              legendOffset: $model.legendOffset,
@@ -1175,17 +1329,7 @@ struct RawViewShell: View {
                                  if let id = model.focusedSourceID {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
                                  }
-                             },
-                             onExportFigure: { model.exportCurrentFigure() },
-                             onExportData: { model.exportCurrentData() })
-    }
-
-    private var cacheStatus: InspectorPane.CacheStatus? {
-        guard model.project != nil else { return nil }
-        let usage = model.cacheUsage ?? MeasurementCache.Usage(usedBytes: 0, entryCount: 0,
-                                                               limitBytes: model.cacheLimitBytes, root: "")
-        return InspectorPane.CacheStatus(usedBytes: usage.usedBytes, entryCount: usage.entryCount,
-                                         limitBytes: model.cacheLimitBytes)
+                             })
     }
 }
 
@@ -1550,9 +1694,6 @@ struct InspectorPane: View {
     @Binding var yScale: AxisScale
     let overlay: OverlayEligibility?
     let onRetry: () -> Void
-    var cacheStatus: CacheStatus? = nil
-    var onClearCache: (() -> Void)? = nil
-    var onLimitChange: ((Int64) -> Void)? = nil
     @Binding var showLegend: Bool
     @Binding var customSeriesLabels: [String: String]
     @Binding var legendOffset: CGSize
@@ -1560,22 +1701,12 @@ struct InspectorPane: View {
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
-    var onExportFigure: (() -> Void)? = nil
-    var onExportData: (() -> Void)? = nil
 
     @State private var isSeriesExpanded = true
     @State private var isDataMappingExpanded = true
     @State private var isStyleExpanded = true
     @State private var isAxesExpanded = false
     @State private var isMetadataExpanded = false
-    @State private var isExportExpanded = true
-    @State private var isCacheExpanded = false
-
-    struct CacheStatus {
-        var usedBytes: Int64
-        var entryCount: Int
-        var limitBytes: Int64
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1601,9 +1732,6 @@ struct InspectorPane: View {
                             Spacer(minLength: 60)
                         }
                         .frame(maxWidth: .infinity)
-                        if cacheStatus != nil, onClearCache != nil {
-                            cacheSection
-                        }
                     } else {
                         if !selectedIDs.isEmpty {
                             seriesSection
@@ -1614,8 +1742,6 @@ struct InspectorPane: View {
                         styleSection
                         axesSection
                         metadataSection
-                        exportSection
-                        cacheSection
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 }
@@ -1951,30 +2077,7 @@ struct InspectorPane: View {
         }
     }
 
-    private var exportSection: some View {
-        DisclosureGroup(isExpanded: $isExportExpanded) {
-            VStack(spacing: 8) {
-                Button(action: { onExportFigure?() }) {
-                    Label("Export Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
 
-                Button(action: { onExportData?() }) {
-                    Label("Export Clean Data (CSV)…", systemImage: "tablecells")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("EXPORT")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.85))
-        }
-    }
 
     private var axesSection: some View {
         DisclosureGroup(isExpanded: $isAxesExpanded) {
@@ -2043,53 +2146,7 @@ struct InspectorPane: View {
         }
     }
 
-    private var cacheSection: some View {
-        DisclosureGroup(isExpanded: $isCacheExpanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let cacheStatus, let onClearCache {
-                    usageRow(cacheStatus)
-                    HStack {
-                        Button("Clear cache") { onClearCache() }
-                            .help("Remove all RawView cache entries for this project. Raw files and profiles are never modified.")
-                            .accessibilityLabel("Clear RawView cache")
-                        Spacer()
-                    }
-                    Picker("Cache limit", selection: Binding(
-                        get: { cacheStatus.limitBytes },
-                        set: { newLimit in onLimitChange?(newLimit) }
-                    )) {
-                        Text("Off").tag(Int64(0))
-                        Text("128 MiB").tag(Int64(128 * 1024 * 1024))
-                        Text("512 MiB").tag(Int64(512 * 1024 * 1024))
-                        Text("2 GiB").tag(Int64(2 * 1024 * 1024 * 1024))
-                    }
-                    .labelsHidden()
-                    .accessibilityLabel("Cache disk limit")
-                    Text("Verified entries stay in a private app-local cache; RawView ignores project-controlled cache files.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    Text("No project open.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("CACHE & STORAGE")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.85))
-        }
-    }
 
-    private func usageRow(_ status: CacheStatus) -> some View {
-        let used = ByteCountFormatter.string(fromByteCount: status.usedBytes, countStyle: .file)
-        let limit = status.limitBytes <= 0 ? "Off" : ByteCountFormatter.string(fromByteCount: status.limitBytes, countStyle: .file)
-        return HStack {
-            Text("\(status.entryCount) entries · \(used) of \(limit)")
-                .font(.caption).foregroundStyle(.secondary)
-                .accessibilityLabel("Cache usage: \(status.entryCount) entries, \(used) used of \(limit) limit")
-            Spacer()
-        }
-    }
 
     private func seriesColor(_ id: String) -> Color {
         let order = selectedIDs.sorted()
