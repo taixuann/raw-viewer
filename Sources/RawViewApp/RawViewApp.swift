@@ -6,28 +6,27 @@ import RawViewCore
 @main
 struct RawViewApp: App {
     @StateObject private var model = RawViewModel()
+    @AppStorage("appTheme") private var appTheme: String = "System"
 
-    init() {
-        let theme = UserDefaults.standard.string(forKey: "appTheme") ?? "System"
-        switch theme {
-        case "Light":
-            NSApp.appearance = NSAppearance(named: .aqua)
-        case "Dark":
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-        default:
-            NSApp.appearance = nil
+    private var preferredScheme: ColorScheme? {
+        switch appTheme {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
         }
     }
 
     var body: some Scene {
         WindowGroup("RawView") {
             RawViewShell(model: model)
+                .preferredColorScheme(preferredScheme)
         }
         .defaultSize(width: 1320, height: 820)
         .windowToolbarStyle(.unified)
 
         Settings {
             SettingsView(model: model)
+                .preferredColorScheme(preferredScheme)
         }
     }
 }

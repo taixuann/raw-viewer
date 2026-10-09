@@ -46,9 +46,6 @@ struct SettingsView: View {
                     Text("Dark").tag("Dark")
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: appTheme) { _, newTheme in
-                    applyTheme(newTheme)
-                }
 
                 HStack {
                     Text("Font Size Preset:")
@@ -177,16 +174,5 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-    }
-
-    private func applyTheme(_ theme: String) {
-        switch theme {
-        case "Light":
-            NSApp.appearance = NSAppearance(named: .aqua)
-        case "Dark":
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-        default:
-            NSApp.appearance = nil
-        }
     }
 }
