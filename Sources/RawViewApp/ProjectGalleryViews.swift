@@ -541,7 +541,9 @@ struct ProjectGallery: View {
     var activeSnapshotID: UUID? = nil
     var onSaveSnapshot: (() -> Void)? = nil
     var onSelectSnapshot: ((PlotSnapshot) -> Void)? = nil
+    var onToggleSnapshot: ((PlotSnapshot) -> Void)? = nil
     var onDeleteSnapshot: ((PlotSnapshot) -> Void)? = nil
+    var comparisonTitle: String = ""
     @Binding var showLegend: Bool
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -558,58 +560,56 @@ struct ProjectGallery: View {
 
                 Divider().frame(height: 16)
 
-                Button {
-                    onSaveSnapshot?()
-                } label: {
-                    Label("Snapshot", systemImage: "camera")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Save current overlay and plot view as a snapshot")
-                .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+                Menu {
+                    Button {
+                        onSaveSnapshot?()
+                    } label: {
+                        Label("Save Current View as Snapshot", systemImage: "camera.badge.ellipsis")
+                    }
+                    .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
 
-                if !snapshots.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 5) {
-                            ForEach(snapshots) { snap in
-                                let isActive = activeSnapshotID == snap.id
-                                HStack(spacing: 4) {
-                                    Button {
-                                        onSelectSnapshot?(snap)
-                                    } label: {
-                                        Text(snap.name)
-                                            .font(.system(size: 11, weight: isActive ? .semibold : .regular))
-                                            .foregroundStyle(isActive ? .primary : .secondary)
-                                            .lineLimit(1)
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    Button {
-                                        onDeleteSnapshot?(snap)
-                                    } label: {
-                                        Image(systemName: "xmark")
-                                            .font(.system(size: 8, weight: .bold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Delete snapshot")
+                    if !snapshots.isEmpty {
+                        Divider()
+                        ForEach(snapshots) { snap in
+                            let isActive = activeSnapshotID == snap.id
+                            Button {
+                                if isActive {
+                                    onToggleSnapshot?(snap)
+                                } else {
+                                    onSelectSnapshot?(snap)
                                 }
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Capsule()
-                                        .fill(isActive ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.10))
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(isActive ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
-                                )
+                            } label: {
+                                if isActive {
+                                    Label("\(snap.name) (Active — click to toggle off)", systemImage: "checkmark.circle.fill")
+                                } else {
+                                    Label(snap.name, systemImage: "photo")
+                                }
+                            }
+                        }
+
+                        Divider()
+                        Menu("Delete Snapshot") {
+                            ForEach(snapshots) { snap in
+                                Button(role: .destructive) {
+                                    onDeleteSnapshot?(snap)
+                                } label: {
+                                    Text(snap.name)
+                                }
                             }
                         }
                     }
-                    .frame(maxWidth: 320)
+                } label: {
+                    let activeSnap = snapshots.first(where: { $0.id == activeSnapshotID })
+                    Label(
+                        activeSnap != nil ? activeSnap!.name : (snapshots.isEmpty ? "Snapshot" : "Snapshots (\(snapshots.count))"),
+                        systemImage: activeSnapshotID != nil ? "camera.fill" : "camera"
+                    )
+                    .font(.system(size: 11, weight: activeSnapshotID != nil ? .semibold : .medium))
+                    .foregroundStyle(activeSnapshotID != nil ? Color.accentColor : Color.primary)
                 }
+                .menuStyle(.borderedButton)
+                .controlSize(.small)
+                .help("Manage plot snapshots and comparisons")
 
                 if isLoading {
                     HStack(spacing: 6) {
@@ -728,6 +728,7 @@ struct ProjectGallery: View {
                                 lineWidth: lineWidth,
                                 xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                 xScale: xScale, yScale: yScale,
+                                comparisonTitle: comparisonTitle,
                                 showLegend: showLegend,
                                 customSeriesLabels: customSeriesLabels,
                                 legendOffset: $legendOffset)
@@ -768,6 +769,7 @@ struct ProjectGallery: View {
                                     lineWidth: lineWidth,
                                     xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                     xScale: xScale, yScale: yScale,
+                                    comparisonTitle: comparisonTitle,
                                     showLegend: showLegend,
                                     customSeriesLabels: customSeriesLabels,
                                     legendOffset: $legendOffset)
@@ -900,6 +902,7 @@ struct OverlayPlot: View {
     let yAbsolute: Bool
     let xScale: AxisScale
     let yScale: AxisScale
+    var comparisonTitle: String = ""
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -964,12 +967,13 @@ struct OverlayPlot: View {
 
     var body: some View {
         let defaultTitle = "\(measurements.count) sources · overlay in acquisition order"
+        let displayTitle = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultTitle : comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
-                Text(defaultTitle)
+                Text(displayTitle)
                     .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
                     .lineLimit(1).truncationMode(.middle)
-                    .accessibilityLabel("\(measurements.count) sources overlaid")
+                    .accessibilityLabel(displayTitle)
                 Spacer()
                 Button {
                     zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero

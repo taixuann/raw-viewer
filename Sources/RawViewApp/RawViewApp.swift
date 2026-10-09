@@ -93,6 +93,25 @@ final class RawViewModel: ObservableObject {
     @Published var legendOffset: CGSize = .zero
     @Published var snapshots: [PlotSnapshot] = []
     @Published var activeSnapshotID: UUID? = nil
+    @Published var comparisonTitle: String = "" {
+        didSet {
+            if let activeID = activeSnapshotID, let idx = snapshots.firstIndex(where: { $0.id == activeID }) {
+                let trimmed = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    snapshots[idx].name = trimmed
+                }
+            }
+        }
+    }
+
+    func toggleSnapshot(_ snap: PlotSnapshot) {
+        if activeSnapshotID == snap.id {
+            activeSnapshotID = nil
+            comparisonTitle = ""
+        } else {
+            loadSnapshot(snap)
+        }
+    }
 
     func saveSnapshot() {
         guard !selectedSourceIDs.isEmpty || focusedSourceID != nil else { return }
@@ -100,7 +119,10 @@ final class RawViewModel: ObservableObject {
         timeFormatter.dateFormat = "HH:mm"
         let timeStr = timeFormatter.string(from: Date())
         let name: String
-        if selectedSourceIDs.count >= 2 {
+        let custom = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty {
+            name = custom
+        } else if selectedSourceIDs.count >= 2 {
             name = "Overlay (\(selectedSourceIDs.count)) · \(timeStr)"
         } else if let focused = focusedSourceID {
             let base = URL(fileURLWithPath: focused).deletingPathExtension().lastPathComponent
@@ -123,10 +145,12 @@ final class RawViewModel: ObservableObject {
         )
         snapshots.append(snap)
         activeSnapshotID = snap.id
+        comparisonTitle = name
     }
 
     func loadSnapshot(_ snap: PlotSnapshot) {
         activeSnapshotID = snap.id
+        comparisonTitle = snap.name
         selectedSourceIDs = snap.selectedSourceIDs
         focusedSourceID = snap.focusedSourceID
         customSeriesLabels = snap.customSeriesLabels
@@ -147,6 +171,7 @@ final class RawViewModel: ObservableObject {
         snapshots.removeAll { $0.id == snap.id }
         if activeSnapshotID == snap.id {
             activeSnapshotID = nil
+            comparisonTitle = ""
         }
     }
     // Independent cancellation identities: inventory, bulk inspection, and the
@@ -263,6 +288,12 @@ final class RawViewModel: ObservableObject {
     /// Deterministic multi-source selection: keep focus while selected,
     /// otherwise take the sorted first. Loads all selected without stale results.
     func updateSelection(_ ids: Set<String>) {
+        if let activeID = activeSnapshotID, let snap = snapshots.first(where: { $0.id == activeID }) {
+            if snap.selectedSourceIDs != ids {
+                activeSnapshotID = nil
+                comparisonTitle = ""
+            }
+        }
         cancelOverlayLoad()
         selectedSourceIDs = ids
         focusedSourceID = OverlaySelection.focused(selected: ids, current: focusedSourceID)
@@ -699,7 +730,9 @@ struct RawViewShell: View {
                            activeSnapshotID: model.activeSnapshotID,
                            onSaveSnapshot: { model.saveSnapshot() },
                            onSelectSnapshot: { model.loadSnapshot($0) },
+                           onToggleSnapshot: { model.toggleSnapshot($0) },
                            onDeleteSnapshot: { model.deleteSnapshot($0) },
+                           comparisonTitle: model.comparisonTitle,
                            showLegend: $model.showLegend,
                            customSeriesLabels: model.customSeriesLabels,
                            legendOffset: $model.legendOffset)
@@ -834,7 +867,10 @@ struct RawViewShell: View {
                              onLimitChange: { model.cacheLimitBytes = $0 },
                              showLegend: $model.showLegend,
                              customSeriesLabels: $model.customSeriesLabels,
-                             legendOffset: $model.legendOffset)
+                             legendOffset: $model.legendOffset,
+                             comparisonTitle: $model.comparisonTitle,
+                             onSaveSnapshot: { model.saveSnapshot() },
+                             activeSnapshotID: model.activeSnapshotID)
     }
 
     private var cacheStatus: InspectorPane.CacheStatus? {
@@ -1173,6 +1209,9 @@ struct InspectorPane: View {
     @Binding var showLegend: Bool
     @Binding var customSeriesLabels: [String: String]
     @Binding var legendOffset: CGSize
+    @Binding var comparisonTitle: String
+    var onSaveSnapshot: (() -> Void)? = nil
+    var activeSnapshotID: UUID? = nil
 
     @State private var isSeriesExpanded = true
     @State private var isStyleExpanded = true
@@ -1234,6 +1273,31 @@ struct InspectorPane: View {
     private var seriesSection: some View {
         DisclosureGroup(isExpanded: $isSeriesExpanded) {
             VStack(alignment: .leading, spacing: 8) {
+                if selectedIDs.count >= 2 || activeSnapshotID != nil {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SNAPSHOT / COMPARISON TITLE")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            TextField("Comparison Title…", text: $comparisonTitle)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11))
+                            if let onSaveSnapshot {
+                                Button {
+                                    onSaveSnapshot()
+                                } label: {
+                                    Image(systemName: "camera")
+                                        .font(.system(size: 11))
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Save snapshot with this title")
+                            }
+                        }
+                    }
+                    .padding(.bottom, 2)
+                }
+
                 if selectedIDs.isEmpty {
                     Text("No sources selected.").font(.caption).foregroundStyle(.secondary)
                 } else {
