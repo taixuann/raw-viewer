@@ -882,9 +882,21 @@ struct NativePlot: View {
     var body: some View {
         let defaultTitle = measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? "")
         return VStack(alignment: .leading, spacing: 8) {
-            Text(defaultTitle)
-                .font(.custom(NativePlotStyle.fontFamily, size: 13.5).bold())
-                .lineLimit(1).truncationMode(.middle)
+            HStack(alignment: .center) {
+                Text(defaultTitle)
+                    .font(.custom(NativePlotStyle.fontFamily, size: 13.5).bold())
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button {
+                    zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
+                } label: {
+                    Label("Reset plot", systemImage: "arrow.counterclockwise")
+                        .font(.caption2)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Reset plot zoom and pan")
+            }
             switch transformed {
             case .failure(let failure):
                 if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
@@ -895,9 +907,6 @@ struct NativePlot: View {
                         .contentShape(Rectangle())
                         .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                         .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
-                        .overlay(alignment: .topTrailing) {
-                            Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
-                        }
 
                     if showLegend {
                         let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in

@@ -965,10 +965,22 @@ struct OverlayPlot: View {
     var body: some View {
         let defaultTitle = "\(measurements.count) sources · overlay in acquisition order"
         return VStack(alignment: .leading, spacing: 8) {
-            Text(defaultTitle)
-                .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
-                .lineLimit(1).truncationMode(.middle)
-                .accessibilityLabel("\(measurements.count) sources overlaid")
+            HStack(alignment: .center) {
+                Text(defaultTitle)
+                    .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
+                    .lineLimit(1).truncationMode(.middle)
+                    .accessibilityLabel("\(measurements.count) sources overlaid")
+                Spacer()
+                Button {
+                    zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
+                } label: {
+                    Label("Reset plot", systemImage: "arrow.counterclockwise")
+                        .font(.caption2)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Reset plot zoom and pan")
+            }
             switch transformed {
             case .failure(let failure):
                 if case .message(let message) = failure {
@@ -1000,10 +1012,6 @@ struct OverlayPlot: View {
                     .contentShape(Rectangle())
                     .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                     .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
-                    .overlay(alignment: .topTrailing) {
-                        Button("Reset plot") { zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero }.buttonStyle(.bordered).padding(8)
-                            .accessibilityLabel("Reset plot zoom and pan")
-                    }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Overlay plot with \(data.series.count) series")
                     .accessibilityValue(accessibleSummary)
