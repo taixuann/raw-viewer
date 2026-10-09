@@ -91,6 +91,15 @@ final class RawViewModel: ObservableObject {
             }
         }
     }
+    @Published var renderStyle: PlotRenderStyle = .line
+    @Published var markerSize: Double = 4.5 {
+        didSet {
+            let clamped = min(max(markerSize, 1.0), 20.0)
+            if markerSize != clamped {
+                markerSize = clamped
+            }
+        }
+    }
     @Published var studyManifests: [StudyManifest] = []
     @Published var manifestIssues: [String] = []
     @Published var isLoading = false
@@ -329,6 +338,14 @@ final class RawViewModel: ObservableObject {
         let savedLineWidth = UserDefaults.standard.double(forKey: "defaultLineWidth")
         if savedLineWidth > 0 {
             lineWidth = savedLineWidth
+        }
+        let savedMarkerSize = UserDefaults.standard.double(forKey: "defaultMarkerSize")
+        if savedMarkerSize > 0 {
+            markerSize = savedMarkerSize
+        }
+        if let savedStyleRaw = UserDefaults.standard.string(forKey: "defaultRenderStyle"),
+           let savedStyle = PlotRenderStyle(rawValue: savedStyleRaw) {
+            renderStyle = savedStyle
         }
         // Never auto-reopen previous project on launch.
         // User explicitly opens via the "Open Project" button.
@@ -892,7 +909,10 @@ struct RawViewShell: View {
             ProjectGallery(sources: model.sources, states: model.sourceStates,
                            focusedSourceID: $model.focusedSourceID,
                            selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
-                           lineWidth: model.lineWidth, overlay: model.overlayResult(),
+                           lineWidth: model.lineWidth,
+                           renderStyle: model.renderStyle,
+                           markerSize: model.markerSize,
+                           overlay: model.overlayResult(),
                            tab: $model.tab,
                            xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                            xScale: $model.xScale, yScale: $model.yScale,
@@ -1048,6 +1068,7 @@ struct RawViewShell: View {
                              states: model.sourceStates,
                              selectedIDs: model.selectedSourceIDs, focusedID: $model.focusedSourceID,
                              hidden: $model.hiddenSeries, lineWidth: $model.lineWidth,
+                             renderStyle: $model.renderStyle, markerSize: $model.markerSize,
                              xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                              xScale: $model.xScale, yScale: $model.yScale,
                              overlay: model.overlayResult(),
@@ -1086,6 +1107,8 @@ struct NativePlot: View {
     let xScale: AxisScale
     let yScale: AxisScale
     var lineWidth: Double = 1.4
+    var renderStyle: PlotRenderStyle = .line
+    var markerSize: Double = 4.5
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
@@ -1402,6 +1425,8 @@ struct InspectorPane: View {
     @Binding var focusedID: String?
     @Binding var hidden: Set<String>
     @Binding var lineWidth: Double
+    @Binding var renderStyle: PlotRenderStyle
+    @Binding var markerSize: Double
     @Binding var xAbsolute: Bool
     @Binding var yAbsolute: Bool
     @Binding var xScale: AxisScale
@@ -1700,7 +1725,18 @@ struct InspectorPane: View {
 
     private var styleSection: some View {
         DisclosureGroup(isExpanded: $isStyleExpanded) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Render Mode").font(.caption).foregroundStyle(.secondary)
+                    Picker("Render Mode", selection: $renderStyle) {
+                        ForEach(PlotRenderStyle.allCases) { style in
+                            Text(style.rawValue).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
                 HStack(spacing: 8) {
                     Text("Line width").font(.caption)
                     Spacer()
@@ -1710,6 +1746,20 @@ struct InspectorPane: View {
                         .frame(width: 50)
                         .multilineTextAlignment(.trailing)
                     Stepper("", value: $lineWidth, in: 0.2...10.0, step: 0.1)
+                        .labelsHidden()
+                        .controlSize(.small)
+                    Text("pt").font(.caption2).foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Text("Dot size").font(.caption)
+                    Spacer()
+                    TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 50)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: $markerSize, in: 1.0...20.0, step: 0.5)
                         .labelsHidden()
                         .controlSize(.small)
                     Text("pt").font(.caption2).foregroundStyle(.secondary)

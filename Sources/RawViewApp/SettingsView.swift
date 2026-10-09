@@ -7,7 +7,9 @@ struct SettingsView: View {
     @AppStorage("appTheme") private var appTheme: String = "System"
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
+    @AppStorage("defaultRenderStyle") private var defaultRenderStyle: String = "Line"
     @AppStorage("defaultLineWidth") private var defaultLineWidth: Double = 1.4
+    @AppStorage("defaultMarkerSize") private var defaultMarkerSize: Double = 4.5
     @AppStorage("isLazyInspectionEnabled") private var isLazyInspectionEnabled: Bool = true
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
     @AppStorage("cacheLimitMB") private var cacheLimitMB: Int = 2048
@@ -59,6 +61,17 @@ struct SettingsView: View {
             Section("Plot Defaults") {
                 Toggle("Use Nature Serif font for plot typography", isOn: $plotFontSerif)
 
+                Picker("Default Render Style:", selection: $defaultRenderStyle) {
+                    ForEach(PlotRenderStyle.allCases) { style in
+                        Text(style.rawValue).tag(style.rawValue)
+                    }
+                }
+                .onChange(of: defaultRenderStyle) { _, newStyle in
+                    if let s = PlotRenderStyle(rawValue: newStyle) {
+                        model.renderStyle = s
+                    }
+                }
+
                 HStack {
                     Text("Default Line Width:")
                     TextField("1.4", value: $defaultLineWidth, format: .number.precision(.fractionLength(1)))
@@ -71,6 +84,20 @@ struct SettingsView: View {
                 }
                 .onChange(of: defaultLineWidth) { _, newWidth in
                     model.lineWidth = newWidth
+                }
+
+                HStack {
+                    Text("Default Dot Size:")
+                    TextField("4.5", value: $defaultMarkerSize, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 50)
+                    Stepper("", value: $defaultMarkerSize, in: 1.0...20.0, step: 0.5)
+                        .labelsHidden()
+                        .controlSize(.small)
+                    Text("pt").foregroundStyle(.secondary)
+                }
+                .onChange(of: defaultMarkerSize) { _, newSize in
+                    model.markerSize = newSize
                 }
             }
         }

@@ -534,6 +534,8 @@ struct ProjectGallery: View {
     let selectedIDs: Set<String>
     let hidden: Set<String>
     let lineWidth: Double
+    var renderStyle: PlotRenderStyle = .line
+    var markerSize: Double = 4.5
     let overlay: OverlayEligibility?
     @Binding var tab: String
     @Binding var xAbsolute: Bool
@@ -733,6 +735,7 @@ struct ProjectGallery: View {
                     OverlayPlot(measurements: visible, selectedSourceIDs: selectedIDs,
                                 focused: states[focused.id]?.measurement,
                                 lineWidth: lineWidth,
+                                renderStyle: renderStyle, markerSize: markerSize,
                                 xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                 xScale: xScale, yScale: yScale,
                                 comparisonTitle: comparisonTitle,
@@ -774,6 +777,7 @@ struct ProjectGallery: View {
                         OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
                                     focused: visible.first(where: { $0.source.path == focused.id }),
                                     lineWidth: lineWidth,
+                                    renderStyle: renderStyle, markerSize: markerSize,
                                     xAbsolute: xAbsolute, yAbsolute: yAbsolute,
                                     xScale: xScale, yScale: yScale,
                                     comparisonTitle: comparisonTitle,
@@ -805,6 +809,7 @@ struct ProjectGallery: View {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute,
                                yAbsolute: yAbsolute, xScale: xScale,
                                yScale: yScale, lineWidth: lineWidth,
+                               renderStyle: renderStyle, markerSize: markerSize,
                                showLegend: showLegend,
                                customSeriesLabels: customSeriesLabels,
                                legendOffset: $legendOffset)
@@ -905,6 +910,8 @@ struct OverlayPlot: View {
     let selectedSourceIDs: Set<String>
     let focused: NormalizedMeasurement?
     var lineWidth: Double = 1.4
+    var renderStyle: PlotRenderStyle = .line
+    var markerSize: Double = 4.5
     let xAbsolute: Bool
     let yAbsolute: Bool
     let xScale: AxisScale
@@ -1004,6 +1011,7 @@ struct OverlayPlot: View {
                             NativePlot(measurement: focused, xAbsolute: xAbsolute,
                                        yAbsolute: yAbsolute, xScale: xScale,
                                        yScale: yScale, lineWidth: lineWidth,
+                                       renderStyle: renderStyle, markerSize: markerSize,
                                        showLegend: showLegend,
                                        customSeriesLabels: customSeriesLabels,
                                        legendOffset: $legendOffset)
