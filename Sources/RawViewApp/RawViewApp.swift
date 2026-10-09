@@ -1632,8 +1632,8 @@ struct InspectorPane: View {
         } label: {
             HStack(spacing: 6) {
                 Text("SERIES")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.primary.opacity(0.85))
                 Text("\(selectedIDs.count)")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -1738,7 +1738,9 @@ struct InspectorPane: View {
         DisclosureGroup(isExpanded: $isStyleExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Render Mode").font(.caption).foregroundStyle(.secondary)
+                    Text("Render Mode")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
                     Picker("Render Mode", selection: $renderStyle) {
                         ForEach(PlotRenderStyle.allCases) { style in
                             Text(style.rawValue).tag(style)
@@ -1750,42 +1752,55 @@ struct InspectorPane: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text("Line width").font(.caption)
+                        Text("Line width")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
                         Spacer()
                         TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
                             .textFieldStyle(.roundedBorder)
-                            .font(.caption.monospacedDigit())
+                            .font(.system(size: 11).monospacedDigit())
                             .frame(width: 44)
                             .multilineTextAlignment(.trailing)
                         Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
                             .labelsHidden()
                             .controlSize(.small)
-                        Text("pt").font(.caption2).foregroundStyle(.secondary)
+                        Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
                         .controlSize(.small)
                 }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text("Dot size").font(.caption)
+                        Text("Dot size")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
                         Spacer()
                         TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
                             .textFieldStyle(.roundedBorder)
-                            .font(.caption.monospacedDigit())
+                            .font(.system(size: 11).monospacedDigit())
                             .frame(width: 44)
                             .multilineTextAlignment(.trailing)
                         Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
                             .labelsHidden()
                             .controlSize(.small)
-                        Text("pt").font(.caption2).foregroundStyle(.secondary)
+                        Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
                         .controlSize(.small)
                 }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
 
-                Toggle("Show Legend", isOn: $showLegend)
-                    .font(.caption)
+                Toggle(isOn: $showLegend) {
+                    Text("Show Legend")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
 
                 Button("Reset Legend Position") {
                     legendOffset = .zero
@@ -1795,8 +1810,8 @@ struct InspectorPane: View {
             .padding(.top, 4)
         } label: {
             Text("PLOT STYLING")
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.85))
         }
     }
 
@@ -1811,14 +1826,16 @@ struct InspectorPane: View {
             .padding(.top, 4)
         } label: {
             Text("AXES")
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.85))
         }
     }
 
     private func axisControl(_ name: String, absolute: Binding<Bool>, scale: Binding<AxisScale>) -> some View {
         HStack(spacing: 6) {
-            Text(name).font(.caption).bold().frame(width: 12, alignment: .leading)
+            Text(name)
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 14, alignment: .leading)
             Toggle("Absolute", isOn: absolute).labelsHidden()
                 .help("Display absolute values before applying the scale")
                 .accessibilityLabel("\(name) absolute values")
@@ -1860,8 +1877,8 @@ struct InspectorPane: View {
             .padding(.top, 4)
         } label: {
             Text("SOURCE METADATA")
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.85))
         }
     }
 
@@ -1897,8 +1914,8 @@ struct InspectorPane: View {
             .padding(.top, 4)
         } label: {
             Text("CACHE & STORAGE")
-                .font(.caption2.bold())
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.85))
         }
     }
 
@@ -1921,8 +1938,8 @@ struct InspectorPane: View {
 
     private func field(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
-            Text(value).font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 11)).foregroundStyle(.primary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
