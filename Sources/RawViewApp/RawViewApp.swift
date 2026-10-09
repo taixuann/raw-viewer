@@ -243,6 +243,22 @@ final class RawViewModel: ObservableObject {
         refreshCacheUsage()
     }
 
+    func updateGenericColumnMapping(sourceID: String, xCol: Int, yCol: Int) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else { return }
+        do {
+            let updated = try GenericTableReader.loadMeasurement(
+                url: source.url,
+                sourceID: source.relativePath,
+                xColumnIndex: xCol,
+                yColumnIndex: yCol
+            )
+            sourceStates[sourceID]?.measurement = updated
+            objectWillChange.send()
+        } catch {
+            self.error = "Failed to remap columns: \(error.localizedDescription)"
+        }
+    }
+
     init() {
         let savedLimit = UserDefaults.standard.object(forKey: "rawView.cacheLimitBytes.v1") as? Int64
         cacheLimitBytes = savedLimit ?? MeasurementCache.defaultLimitBytes
@@ -976,7 +992,12 @@ struct RawViewShell: View {
                              legendOffset: $model.legendOffset,
                              comparisonTitle: $model.comparisonTitle,
                              onSaveSnapshot: { model.saveSnapshot() },
-                             activeSnapshotID: model.activeSnapshotID)
+                             activeSnapshotID: model.activeSnapshotID,
+                             onSelectGenericColumns: { x, y in
+                                 if let id = model.focusedSourceID {
+                                     model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
+                                 }
+                             })
     }
 
     private var cacheStatus: InspectorPane.CacheStatus? {
@@ -1318,8 +1339,10 @@ struct InspectorPane: View {
     @Binding var comparisonTitle: String
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
+    var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
 
     @State private var isSeriesExpanded = true
+    @State private var isDataMappingExpanded = true
     @State private var isStyleExpanded = true
     @State private var isAxesExpanded = false
     @State private var isMetadataExpanded = false
@@ -1362,6 +1385,9 @@ struct InspectorPane: View {
                         if !selectedIDs.isEmpty {
                             seriesSection
                         }
+                        if measurement?.instrument.id == "generic-table" {
+                            dataMappingSection
+                        }
                         styleSection
                         axesSection
                         metadataSection
@@ -1374,6 +1400,70 @@ struct InspectorPane: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.background)
+    }
+
+    private var dataMappingSection: some View {
+        guard let measurement, measurement.instrument.id == "generic-table" else {
+            return AnyView(EmptyView())
+        }
+        let channels = measurement.channels
+        let xCurrent = channels.firstIndex(where: { $0.name == measurement.view.x }) ?? 0
+        let yCurrent = channels.firstIndex(where: { $0.name == measurement.view.y?.first }) ?? min(1, max(0, channels.count - 1))
+
+        return AnyView(
+            DisclosureGroup(isExpanded: $isDataMappingExpanded) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Auto-detected Delimited Table")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    if channels.count >= 2 {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("X AXIS COLUMN")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            Picker("X Column", selection: Binding(
+                                get: { xCurrent },
+                                set: { newX in onSelectGenericColumns?(newX, yCurrent) }
+                            )) {
+                                ForEach(0..<channels.count, id: \.self) { idx in
+                                    Text("[\(idx)] \(channels[idx].label)").tag(idx)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Y AXIS COLUMN")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            Picker("Y Column", selection: Binding(
+                                get: { yCurrent },
+                                set: { newY in onSelectGenericColumns?(xCurrent, newY) }
+                            )) {
+                                ForEach(0..<channels.count, id: \.self) { idx in
+                                    Text("[\(idx)] \(channels[idx].label)").tag(idx)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                HStack {
+                    Text("DATA MAPPING")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Generic Table")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        )
     }
 
     private var seriesSection: some View {
