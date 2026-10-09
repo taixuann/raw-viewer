@@ -9,6 +9,10 @@ struct RawViewApp: App {
         WindowGroup("RawView") { RawViewShell() }
             .defaultSize(width: 1320, height: 820)
             .windowToolbarStyle(.unified)
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
