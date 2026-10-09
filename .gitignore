@@ -4,3 +4,6 @@
 .DS_Store
 .aqg/
 RawView-Installer.dmg
+*.zip
+dist/
+release/

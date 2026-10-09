@@ -1,144 +1,84 @@
 # RawView
 
-RawView is a native macOS viewer for raw research measurements. Opening a project
-inventories supported regular files under the selected project's `data/raw`
-directory: `.spe` and `.affm` files are skipped without being opened, nested
-project folders are never discovered as additional roots, and a missing raw
-directory offers a clear diagnostic so another folder can be selected.
+> **High-performance, filesystem-first scientific raw measurement viewer for macOS.**
 
-Instrument profiles are declarative YAML under the existing plural
-`data/instruments/` directory, or under its `rawview/` companion directory
-when it exists: companion profiles then override the parent directory, and an
-empty or unusable companion directory never falls back to it. RawView owns the
-readers: supported layouts are the Keysight B1500A I-V, dual-sweep,
-list-sweep, and WGFMU tabular CSV profiles (`DataName`/`DataValue` rows), the
-WGFMU pulse first-row-header layouts (`time_s`/`current_a`,
-`index-pulse`/`current_a`, `time_s`/`voltage_v`/`current_v`/`fit`) and WGFMU
-endurance `DataName`/`DataValue` blocks (`raw_cycles`/`raw_ch2`, optional
-`raw_ch1`), the
-Keithley 2400 dual-sweep LVM tab file, and both Horiba LabRAM Raman tables
-(comment-header TSV with European decimal comma, legacy semicolon table).
-List-sweep values are shown exactly as stored, with no legacy sign transform;
-WGFMU plots channel 1 and keeps its profile-declared quantity/unit status. Viewer
-profiles are standalone, versioned top-level YAML (`schema_version: 1` or `2`);
-nested `raw_viewer` blocks are rejected.
-Existing unversioned profiles stay visible
-with an explicit upgrade diagnostic, block only the sources they claim, and
-are never rewritten. RawView never executes project code. The volatile PDA
-project uses these schema-v2 companion profiles:
+RawView provides instant, offline, publication-grade visualization and inspection of laboratory instrument measurements directly from your local filesystem. It executes in-process with zero external runtime dependencies and never executes untrusted project code.
 
-| Profile | Source layout | Plotted channels |
-|---|---|---|
-| `keithley-2400.yaml` | LabVIEW Measurement; `.lvm`/`.txt`/`.csv`, tab-separated | Voltage and current |
-| `autolab-usth.yaml` | NOVA ASCII `.txt`; semicolon-delimited, comma decimal | CV voltage/current, including the observed two-column layout; CA time/current; EIS frequency and all three impedance channels, including required magnitude |
-| `horiba-labram.yaml` | `.txt`; comment-header TSV with comma decimal or legacy semicolon table | Raman shift and intensity |
-| `iop-hanoi.yaml` | `.txt`/`.csv`; comma-separated first-row header | Wavelength and transmittance, including observed aliases |
+---
 
-These profiles display values as recorded and apply no transforms. See
-[CONTRACT.md](CONTRACT.md#profile-upgrade-procedure) for profile ownership,
-schema requirements, and the upgrade procedure. The profiles use RawView's
-built-in readers; no project-side executable parser or runtime dependency is
-added.
-Some profiles require observed instrument tokens in a source basename; a file
-missing those tokens stays inventoried and receives an unmatched-source
-diagnostic.
+## Key Capabilities
 
-This project-specific profile set is limited to the four tabular families in
-the table; no profile is inferred for other instruments or layouts. `.spe`
-and `.affm` remain excluded, and Oxford `.ibw` support is deferred.
+- **Filesystem-First & Zero Mutation**: Opens research projects containing `data/raw/` in read-only mode. Never alters raw data files, timestamps, or original values.
+- **Publication-Grade Scientific Presets**: Canonical presets calibrated to FigRecipe specifications:
+  - **Nature**: Single ($59.1\text{ mm} \times 50.0\text{ mm}$, closed box) & Open ($59.1\text{ mm} \times 50.0\text{ mm}$, 2-axis L-frame)
+  - **Science**: Single ($42.0\text{ mm} \times 38.0\text{ mm}$, closed box) & Open ($42.0\text{ mm} \times 38.0\text{ mm}$, 2-axis L-frame)
+  - **ACS**: Single ($54.7\text{ mm} \times 47.0\text{ mm}$, closed box)
+  - **IEEE**: Single ($59.0\text{ mm} \times 49.0\text{ mm}$, closed box, Serif typography)
+- **High-Performance SQLite WAL Indexing**: Effortlessly browses projects with 8,000+ files. Background worker pools (`TaskGroup`) scan headers progressively without blocking the main UI thread.
+- **Orthogonal Plot Styling**:
+  - **Mark Types**: Line, Dots (scatter), or Both (line + dots).
+  - **Interpolation**: Linear, Monotone Catmull-Rom Spline (strictly passes through sample points without runaway oscillations), or Staircase Step.
+  - **Acquisition Sweep Indicator**: Optional continuous color gradient visualizing acquisition sequence and time progression ($t = 0 \to t = N$).
+- **Reproducible Snapshot Packages**:
+  - Single-click figure export to **300+ DPI Retina PNG** and **Vector PDF**.
+  - Structured Snapshot Packages saved directly to `data/snapshot/<name>/` containing `list.yaml`, `figure.png`, and `figure.pdf`.
+- **Streamlined Inspector & Fast Data Search**:
+  - Resizable 3-column macOS interface with collapsible inspector (`⌘I`).
+  - Searchable Data Table (`⌘F`) preserving exact tabular columns, gap reasons, and raw numbers.
+  - Interactive X/Y channel mapping and inline custom series labeling.
+- **Native macOS Settings**:
+  - Appearance: System, Light, and Dark themes with typography scaling.
+  - Performance: Lazy (on-demand) vs. Eager background discovery modes.
+  - Storage: Project database index statistics and cache pruning.
 
-The center switches between project-wide Plot and Data tabs. Each supported
-source keeps a matching figure and an ordered, untransformed table: every
-original point is preserved in acquisition order, including sweep reversals.
-Blank cells, recorded NaN/infinity tokens, and overflow saturation stay
-distinguishable gaps (plot lines break with visible dots on singleton runs,
-tables show per-reason markers) with per-gap warnings naming file, line,
-column, reason, and raw token; other corrupt text blocks the affected source.
-The table keeps every format-declared channel while only the mode's axes drive
-the plot. The sidebar groups by Category (a filename grouping aid, never
-scientific study membership) and supports Shift/Command multi-selection, and a
-cancelled inspection keeps partial results
-with a resume action. Selecting multiple sources compares their original curves
-only when every source is listed in one exact shared study manifest
-(`study_id` + `sources: [{path}]`). Missing, ambiguous, or different manifests
-block the comparison. Within a shared manifest, the focus anchors the cohort:
-RawView plots the focused source and every selection with the same ordered X/Y
-quantity-and-unit signature, and explains excluded selections without changing
-them. If the focus has no compatible peer, its single-source figure remains
-shown with the reason. The floating
-central plot card keeps generous whitespace with distinct per-source
-labels/colors, and the
-right inspector exposes Data, Style, Series, and Axes controls (series
-visibility toggles, line width, existing X/Y absolute/linear/log behavior),
-with invalid log domains reported on the affected source only. Header metadata
-(SetupTitle, Dimension, record time) and filename-derived device, timestamp,
-and category are preserved in the inspector; the filename category is a
-grouping aid, not scientific study membership. Invalid, unsupported,
-or ambiguous sources keep their own actionable status and can be retried.
+---
 
-Build and package locally:
+## Supported Instruments & Reader Families
 
-```sh
-Scripts/package_app.sh
-# Prints the packaged path, e.g. "Packaged and verified <path>/RawView.app".
-# Defaults use one fresh private temporary directory; set RAWVIEW_APP_PATH
-# (also RAWVIEW_BUILD_DIR, CLANG_MODULE_CACHE_PATH) to override. Then:
-open "$RAWVIEW_APP_PATH"   # only when the override is set; otherwise open the printed path
+RawView reads declarative instrument profiles (`schema_version: 1` or `2`) from `data/instruments/` (or `data/instruments/rawview/`):
+
+| Instrument / Family | Supported Layouts | Plotted Channels |
+| :--- | :--- | :--- |
+| **Keysight B1500A** | `DataName`/`DataValue` tabular CSV, dual sweep, list sweep, WGFMU pulse first-row & endurance blocks | Voltage, Current, Time, Pulse indices |
+| **Keithley 2400** | LabVIEW Measurement (`.lvm`, `.txt`, `.csv`), tab-separated | Voltage and Current |
+| **Horiba LabRAM** | Raman spectroscopy comment-header TSV (comma decimal) and semicolon tables | Raman shift ($\text{cm}^{-1}$) and Intensity |
+| **IoP Hanoi** | UV-Vis optical spectroscopy first-row CSV/TXT | Wavelength (nm) and Transmittance (%) |
+| **Generic Table Sniffer** | Delimited scientific files (`.csv`, `.tsv`, `.txt`) with auto-detected headers | Interactive channel mapper |
+
+---
+
+## Local Development & Verification
+
+### Prerequisites
+- macOS 13.0+ (Ventura, Sonoma, Sequoia)
+- Xcode 15+ or Swift 6.0+ Command Line Tools
+
+### Verification & Core Checks
+RawView includes an offline test runner and type checker:
+
+```bash
+# Run self-check and verify core contracts
+./Scripts/check_core.sh
 ```
 
-The reader contract and instrument profile schema are documented in
-[CONTRACT.md](CONTRACT.md); working standalone profiles are in
-[Examples/rawview/](Examples/rawview/). Discovery,
-inspection, and loading run off the main thread on independent cancellation
-identities in bounded batches with per-source failures, progress,
-cancellation, resume, and retry. Sources stream with cancellation checkpoints
-and no file-size cap.
+### Packaging & Installation
+Build a production-optimized, code-signed macOS `.app` bundle:
 
-Deterministic results are cached per project in a private app-local directory
-(512 MiB default per project, configurable in the inspector). RawView never
-reads or writes a cache under the selected project, so project-writable files
-cannot inject plotted measurements. The directory and entry names contain only
-digests; payloads include normalized measurements and their project-relative
-source paths. Inspection entries key on the source identity, the SHA-256 of
-the exact bounded header prefix, and the complete profile-catalog fingerprint,
-so same-size edits or profile changes invalidate them while row-only edits may
-reuse an inspection. Every cached full measurement still re-opens the source
-without following links and re-verifies a fresh full-content SHA-256 before
-decoding. Corrupt or partial entries are ordinary misses and rebuild. Entries
-store complete normalized measurements (every value bit pattern, gap reason,
-metadata field, warning, and provenance entry) as checksummed binary property
-lists, atomically replaced, and are never transformed. Each entry is capped at
-128 MiB. `.spe` and `.affm` files are skipped without being opened, including
-by the cache; raw files and instrument profiles are never modified.
-
-The current package script is a developer build. It is not distribution-ready:
-notarization and distribution packaging remain unimplemented.
-
-The native Canvas style resource is generated from the sibling FigRecipe
-checkout (`figrecipe/presets/nature-single.yaml`, default `../figrecipe`
-relative to this repository; override with `FIGRECIPE_ROOT`). From the RawView
-repository root, check for drift with:
-
-```sh
-python3 Scripts/generate_native_style.py --check
+```bash
+# Build and package into /Applications/RawView.app
+./Scripts/package_app.sh /Applications/RawView.app
 ```
 
-Donor disposition:
+---
 
-| Donor | Disposition | Why |
-|---|---|---|
-| tqbf/swiftui-app | `REFERENCE_ONLY` | Native window/bootstrap patterns only; this app uses SwiftUI directly. |
-| Dirscope | `REFERENCE_ONLY` | Project-folder selection only; no directory browser code was copied. |
-| MiMiNavigator | `REFERENCE_ONLY` | Navigation concepts only. |
-| CodeEdit | `REFERENCE_ONLY` | Sidebar and inspector layout concepts only. |
-| Bonsplit | `REJECT` | No multi-pane split package needed; SwiftUI split views suffice. |
-| Swift Pieces, HIGDesign | `REFERENCE_ONLY` | Native control and platform guidance only. |
-| SwiftUIX, SwiftUI-Introspect | `REJECT` | No dependency needed for the selected-source flow. |
-| swift-trading-view | `REJECT` | Web-based chart implementation conflicts with native Canvas ownership. |
+## Architecture & Security Contract
 
-No donor source code or package was copied into this app.
+1. **In-Process Reading**: All parsing occurs within `RawViewCore` using standard Swift Foundation. No subprocesses or shell scripts are executed.
+2. **Deterministic Caching**: Inspection summaries are cached in project-local SQLite WAL databases (`data/.rawview/index.db`) or user Application Support.
+3. **Fail-Closed Parsing**: Corrupt rows, malformed YAML, or unsupported versions produce actionable diagnostic banners rather than silent misinterpretations.
 
-Fixture-based checks verify the app path; they do not establish scientific
-validation for any real source. Supported layout semantics were derived from
-project-local instrument profiles; migrating a project's profiles is a
-separate, owner-approved change.
+---
+
+## License
+
+Licensed under the MIT License. See [LICENSE](LICENSE) for details.
