@@ -64,7 +64,14 @@ final class RawViewModel: ObservableObject {
     @Published var focusedSourceID: String?
     @Published var selectedSourceIDs: Set<String> = []
     @Published var hiddenSeries: Set<String> = []
-    @Published var lineWidth: Double = 1.4
+    @Published var lineWidth: Double = 1.4 {
+        didSet {
+            let clamped = min(max(lineWidth, 0.2), 10.0)
+            if lineWidth != clamped {
+                lineWidth = clamped
+            }
+        }
+    }
     @Published var studyManifests: [StudyManifest] = []
     @Published var manifestIssues: [String] = []
     @Published var isLoading = false
@@ -1356,16 +1363,18 @@ struct InspectorPane: View {
     private var styleSection: some View {
         DisclosureGroup(isExpanded: $isStyleExpanded) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
+                HStack(spacing: 8) {
                     Text("Line width").font(.caption)
-                    Slider(value: $lineWidth, in: 0.5...3.0, step: 0.1) {
-                        EmptyView()
-                    }
-                    .labelsHidden()
-                    Text(String(format: "%.1f pt", lineWidth))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36, alignment: .trailing)
+                    Spacer()
+                    TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 50)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: $lineWidth, in: 0.2...10.0, step: 0.1)
+                        .labelsHidden()
+                        .controlSize(.small)
+                    Text("pt").font(.caption2).foregroundStyle(.secondary)
                 }
 
                 Toggle("Show Legend", isOn: $showLegend)
