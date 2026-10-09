@@ -69,6 +69,7 @@ enum CoreSelfCheck {
         try await cachePreflightSelfCheck()
         try await manyShortRowsSelfCheck()
         try await genericTableFallbackSelfCheck()
+        try await activeProjectTestSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -1962,5 +1963,24 @@ enum CoreSelfCheck {
         let yChannel = measurement.channel(named: measurement.view.y?.first ?? "")
         precondition(xChannel?.values.count == 4)
         precondition(yChannel?.values.count == 4)
+    }
+
+    static func activeProjectTestSelfCheck() async throws {
+        let testRoot = URL(fileURLWithPath: "/Users/tai/research-projects/active-projects/test", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: testRoot.path) else { return }
+        let project = try ProjectContext.open(testRoot)
+        let discovered = try await project.discoverSourcesAsync()
+        precondition(discovered.count >= 2, "Expected at least 2 raw sources in active-projects/test, found \(discovered.count)")
+
+        let inspectionReport = await InstrumentReader.inspectMany(discovered, project: project, cache: nil)
+        for res in inspectionReport.results {
+            guard let insp = res.inspection else {
+                fatalError("Source \(res.source.relativePath) failed inspection: \(res.error ?? "unknown")")
+            }
+            precondition(insp.instrumentID == "generic-table", "Expected generic-table profile for \(res.source.relativePath)")
+            let meas = try await InstrumentReader.load(res.source.url, project: project, cache: nil)
+            precondition(!meas.channels.isEmpty, "Measurement channels should not be empty")
+            precondition(meas.channels.first!.values.count > 0, "Measurement values should be loaded")
+        }
     }
 }
