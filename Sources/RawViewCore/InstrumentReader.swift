@@ -185,6 +185,10 @@ public enum InstrumentReader {
             let pending: Data
             switch encoded.resolution {
             case .failed(let message):
+                if let measurement = try? GenericTableReader.loadMeasurement(url: source, sourceID: relativePath) {
+                    try? handle.close()
+                    return measurement
+                }
                 try? handle.close()
                 if message.contains("could not be decoded") {
                     throw ReaderError.invalidSource("\(relativePath): \(message)")
@@ -345,6 +349,26 @@ public enum InstrumentReader {
         let encoded = resolveEncoded(prefix: prefix, catalog: catalog, extension: fileExtension, basename: basename)
         switch encoded.resolution {
         case .failed(let message):
+            if let generic = try? GenericTableReader.inspect(url: source.url) {
+                let facts = parseFilename(basename)
+                let delimName = generic.delimiter == "\t" ? "TSV" : (generic.delimiter == "," ? "CSV" : (generic.delimiter == ";" ? "Semicolon" : "Whitespace"))
+                let inspection = SourceInspection(
+                    source: relativePath, size: descriptorSize,
+                    instrumentID: "generic-table",
+                    instrumentName: "Generic Table (\(delimName))",
+                    applicationMode: "table-view",
+                    timestamp: facts.timestamp,
+                    deviceID: facts.deviceID,
+                    category: facts.category,
+                    supportStatus: "supported",
+                    validationState: "generic table; unprofiled",
+                    readerVersion: version,
+                    profileID: "generic-table",
+                    profileHash: "generic-fallback",
+                    error: nil
+                )
+                return .supported(inspection)
+            }
             if message.contains("could not be decoded") {
                 return .blocked("\(relativePath): \(message)")
             }

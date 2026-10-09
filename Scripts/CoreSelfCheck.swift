@@ -68,6 +68,7 @@ enum CoreSelfCheck {
         try await fifoProfileSelfCheck()
         try await cachePreflightSelfCheck()
         try await manyShortRowsSelfCheck()
+        try await genericTableFallbackSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -1930,4 +1931,36 @@ enum CoreSelfCheck {
           x: x
           y: [y]
     """
+
+    static func genericTableFallbackSelfCheck() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-generic-check-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("data/raw"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let csvContent = """
+        time,voltage,current
+        0.1,1.0,0.01
+        0.2,2.0,0.02
+        0.3,3.0,0.03
+        0.4,4.0,0.04
+        """
+        let csvURL = root.appendingPathComponent("data/raw/unprofiled.csv")
+        try csvContent.write(to: csvURL, atomically: true, encoding: .utf8)
+
+        let project = try ProjectContext.open(root)
+        let source = RawSource(relativePath: "data/raw/unprofiled.csv", url: csvURL, byteSize: Int64(csvContent.utf8.count))
+        let inspectionReport = await InstrumentReader.inspectMany([source], project: project, cache: nil)
+        guard let insp = inspectionReport.results.first?.inspection else {
+            fatalError("Expected unprofiled CSV to be supported via generic table fallback")
+        }
+        precondition(insp.instrumentID == "generic-table")
+        precondition(insp.profileID == "generic-table")
+
+        let measurement = try await InstrumentReader.load(source.url, project: project, cache: nil)
+        precondition(measurement.instrument.id == "generic-table")
+        let xChannel = measurement.channel(named: measurement.view.x ?? "")
+        let yChannel = measurement.channel(named: measurement.view.y?.first ?? "")
+        precondition(xChannel?.values.count == 4)
+        precondition(yChannel?.values.count == 4)
+    }
 }
