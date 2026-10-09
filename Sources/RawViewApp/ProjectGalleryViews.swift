@@ -924,6 +924,17 @@ struct OverlayPlot: View {
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
     @State private var dragStart = CGSize.zero
+    @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
+    @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
+
+    private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
+        if plotFontSerif {
+            let f = Font.custom(NativeOverlayPalette.fontFamily, size: size)
+            return bold ? f.bold() : f
+        } else {
+            return bold ? Font.system(size: size, weight: .bold) : Font.system(size: size)
+        }
+    }
 
     private struct Series: Identifiable {
         let sourcePath: String
@@ -980,12 +991,13 @@ struct OverlayPlot: View {
     }
 
     var body: some View {
+        let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500, uiFontSize: uiFontSize)
         let defaultTitle = "\(measurements.count) sources · overlay in acquisition order"
         let displayTitle = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultTitle : comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
                 Text(displayTitle)
-                    .font(.custom(NativeOverlayPalette.fontFamily, size: 13.5).bold())
+                    .font(plotFont(size: 14.0 * headerFontScale, bold: true))
                     .lineLimit(1).truncationMode(.middle)
                     .accessibilityLabel(displayTitle)
                 Spacer()
@@ -1048,7 +1060,7 @@ struct OverlayPlot: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(pointCount(data.series)) points across visible series · \(gapCount(data.series)) gaps")
-                        .font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)).foregroundStyle(.secondary)
+                        .font(plotFont(size: 10.5 * headerFontScale)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -1068,13 +1080,17 @@ struct OverlayPlot: View {
             let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
             return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
         }
-        let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(30, CGFloat(maxChars) * 7.2)
-        let leftGutter = max(78, maxLabelWidth + 26)
-        let topGutter: CGFloat = 16
-        let bottomGutter: CGFloat = 46
-        let rightGutter: CGFloat = 20
         let targetRatio: CGFloat = 59.1 / 50.0
+        let approxPlotWidth = max(200, size.width - 120)
+        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
+
+        let maxChars = yLabels.map(\.count).max() ?? 1
+        let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
+        let leftGutter = max(84 * fontScale, maxLabelWidth + 30 * fontScale)
+        let topGutter: CGFloat = 20 * fontScale
+        let bottomGutter: CGFloat = 54 * fontScale
+        let rightGutter: CGFloat = 22 * fontScale
+
         let availWidth = max(10, size.width - leftGutter - rightGutter)
         let availHeight = max(10, size.height - topGutter - bottomGutter)
         var plotW = availWidth
@@ -1086,7 +1102,9 @@ struct OverlayPlot: View {
         let plotX = leftGutter + (availWidth - plotW) / 2
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.9)
+
+        // Canonical Nature-single closed 4-sided bounding box (0.28 mm = 0.8 pt)
+        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)
         for index in 0...4 {
@@ -1094,55 +1112,62 @@ struct OverlayPlot: View {
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
-            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 5))
-            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 5, y: py))
-            context.stroke(xTick, with: .color(.primary), lineWidth: 0.9)
-            context.stroke(yTick, with: .color(.primary), lineWidth: 0.9)
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: px, y: plot.maxY + 12), anchor: .center)
-            context.draw(Text(yLabels[index]).font(.custom(NativeOverlayPalette.fontFamily, size: 10.5)), at: CGPoint(x: plot.minX - 7, y: py), anchor: .trailing)
+
+            // Canonical Nature outward ticks (1.5 mm = 4.25 pt, thickness 0.28 mm = 0.8 pt)
+            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 4.25))
+            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 4.25, y: py))
+            context.stroke(xTick, with: .color(.primary), lineWidth: 0.8)
+            context.stroke(yTick, with: .color(.primary), lineWidth: 0.8)
+
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: px, y: plot.maxY + 6.5), anchor: .top)
+            context.draw(Text(yLabels[index]).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: plot.minX - 6.5, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        context.draw(Text(xTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 12.0).bold()), at: CGPoint(x: plot.midX, y: plot.maxY + 32), anchor: .center)
-        let yTitleX = max(12, plot.minX - 7 - maxLabelWidth - 12)
+        context.draw(Text(xTitle).font(plotFont(size: 13.0 * fontScale, bold: true)), at: CGPoint(x: plot.midX, y: plot.maxY + 6.5 + (11.5 * fontScale) + 6.0), anchor: .top)
+        let yTitleX = max(14 * fontScale, plot.minX - 6.5 - maxLabelWidth - (12 * fontScale))
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(.custom(NativeOverlayPalette.fontFamily, size: 12.0).bold()), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(plotFont(size: 13.0 * fontScale, bold: true)), at: .zero, anchor: .center)
+
         var plotContext = context
         plotContext.clip(to: Path(plot))
         let sourceOrder = selectedSourceIDs.sorted()
         for item in series {
             let color = palette(item.sourcePath, order: sourceOrder)
-            var line = Path()
-            var runCount = 0
-            var lastPoint: CGPoint?
+            var currentRun: [CGPoint] = []
             for index in item.x.indices {
                 guard index < item.y.count, let rawX = item.x[index], let rawY = item.y[index] else {
-                    if runCount == 1, let point = lastPoint {
-                        plotContext.fill(Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)), with: .color(color))
-                    } else if runCount > 1 {
-                        plotContext.stroke(line, with: .color(color), lineWidth: lineWidth)
+                    if !currentRun.isEmpty {
+                        PlotRenderingEngine.renderRun(
+                            points: currentRun,
+                            style: renderStyle,
+                            color: color,
+                            lineWidth: lineWidth,
+                            markerSize: markerSize,
+                            in: &plotContext
+                        )
+                        currentRun.removeAll(keepingCapacity: true)
                     }
-                    line = Path()
-                    runCount = 0
-                    lastPoint = nil
                     continue
                 }
                 let x = transformedValue(rawX, absolute: xAbsolute, scale: xScale)
                 let y = transformedValue(rawY, absolute: yAbsolute, scale: yScale)
                 let tx = (x - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
                 let ty = (y - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
-                let point = CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height)
-                if runCount == 0 { line.move(to: point) } else { line.addLine(to: point) }
-                runCount += 1
-                lastPoint = point
+                currentRun.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
             }
-            if runCount == 1, let point = lastPoint {
-                plotContext.fill(Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)), with: .color(color))
-            } else if runCount > 1 {
-                plotContext.stroke(line, with: .color(color), lineWidth: lineWidth)
+            if !currentRun.isEmpty {
+                PlotRenderingEngine.renderRun(
+                    points: currentRun,
+                    style: renderStyle,
+                    color: color,
+                    lineWidth: lineWidth,
+                    markerSize: markerSize,
+                    in: &plotContext
+                )
             }
         }
     }
