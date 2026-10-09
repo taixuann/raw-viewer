@@ -85,8 +85,23 @@ final class RawViewModel: ObservableObject {
     @Published var inspectionTotal = 0
     @Published var loadingPhase = "Idle"
     @Published var inspectionCancelled = false
-    @Published var isLazyInspectionEnabled: Bool = UserDefaults.standard.object(forKey: "isLazyInspectionEnabled") as? Bool ?? true
-    @Published var maxComparisonAutoLoad: Int = UserDefaults.standard.object(forKey: "maxComparisonAutoLoad") as? Int ?? 15
+    var isLazyInspectionEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "isLazyInspectionEnabled") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "isLazyInspectionEnabled")
+            objectWillChange.send()
+        }
+    }
+    var maxComparisonAutoLoad: Int {
+        get { UserDefaults.standard.object(forKey: "maxComparisonAutoLoad") as? Int ?? 15 }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "maxComparisonAutoLoad")
+            objectWillChange.send()
+        }
+    }
+    var unindexedCount: Int {
+        max(0, sources.count - inspections.count)
+    }
     @Published var tab = "Plot"
     @Published var xAbsolute = false
     @Published var yAbsolute = false
@@ -555,14 +570,58 @@ final class RawViewModel: ObservableObject {
         inspectionTask = nil
         inspectionID = UUID()
         let requestID = inspectionID
-        isLoading = true
-        error = nil
-        loadingPhase = "Inspecting"
         profileIssues = []
         inspectionCancelled = false
 
         let capturedSources = sources
         inspectionTotal = capturedSources.count
+
+        if isLazyInspectionEnabled {
+            // Lazy inspection mode: Do not bulk inspect or show ongoing progress bar.
+            // Rapidly restore pre-indexed entries from SQLite cache off the main thread.
+            isLoading = false
+            loadingPhase = "Idle"
+            inspectedSources = 0
+
+            Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self else { return }
+                let indexDB = try? IndexDatabase.open(at: context.indexDatabaseURL)
+                let cachedMap = indexDB?.lookupAll() ?? [:]
+
+                var initialStates: [String: GallerySourceState] = [:]
+                var cachedCount = 0
+
+                for source in capturedSources {
+                    if Task.isCancelled { return }
+                    let mtime: Int64 = source.mtime != 0 ? source.mtime : ((try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
+                    if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
+                        var state = GallerySourceState()
+                        state.inspection = record.asInspection
+                        state.error = record.error
+                        initialStates[source.id] = state
+                        cachedCount += 1
+                    } else {
+                        initialStates[source.id] = GallerySourceState()
+                    }
+                }
+
+                let finalStates = initialStates
+                let finalCached = cachedCount
+                await MainActor.run {
+                    guard requestID == self.inspectionID else { return }
+                    self.sourceStates = finalStates
+                    self.inspections = finalStates.compactMapValues(\.inspection)
+                    self.inspectedSources = finalCached
+                    self.refreshLoading()
+                }
+            }
+            return
+        }
+
+        // Full non-lazy inspection mode:
+        isLoading = true
+        error = nil
+        loadingPhase = "Inspecting"
         inspectedSources = 0
 
         // Perform fast SQLite Cache Restoration off the MainActor:
@@ -600,9 +659,11 @@ final class RawViewModel: ObservableObject {
                 self.inspections = finalStates.compactMapValues(\.inspection)
                 self.inspectedSources = finalCached
 
-                if finalUninspected.isEmpty || self.isLazyInspectionEnabled {
+                if finalUninspected.isEmpty {
+                    self.inspectionTask = nil
                     self.isLoading = false
                     self.loadingPhase = "Idle"
+                    self.refreshLoading()
                     return
                 }
 
@@ -689,7 +750,10 @@ final class RawViewModel: ObservableObject {
                 }
             }
             self.profileIssues = report.profileIssues
+            self.inspectedSources = self.inspectionTotal
             self.inspectionTask = nil
+            self.isLoading = false
+            self.loadingPhase = "Idle"
             self.refreshLoading()
             if self.focusedSourceID == nil { self.focusedSourceID = self.sources.first?.id }
             if self.selectedSourceIDs.isEmpty, let first = self.sources.first?.id {
@@ -822,14 +886,14 @@ struct RawViewShell: View {
                         }
                         Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
                     } else if model.inspectionCancelled {
-                        let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
+                        let remaining = model.unindexedCount
                         if remaining > 0 {
                             Text("Inspection cancelled · \(remaining) remaining")
                                 .font(.caption).foregroundStyle(.secondary)
                             Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
                         }
-                    } else {
-                        let remaining = model.sources.filter { model.sourceStates[$0.id]?.inspection == nil }.count
+                    } else if !model.isLazyInspectionEnabled {
+                        let remaining = model.unindexedCount
                         if remaining > 0, !model.isInspecting {
                             HStack {
                                 Text("\(remaining) unindexed")
