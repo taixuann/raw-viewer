@@ -7,12 +7,11 @@ enum PlotRenderingEngine {
     /// Compute dynamic font scale from viewport width and user preferences.
     static func fontScale(plotWidth: CGFloat, uiFontSize: Double) -> CGFloat {
         let baseScale = max(1.0, min(1.6, plotWidth / 480.0))
-        let userScale = max(0.8, min(2.0, CGFloat(uiFontSize) / 12.0))
-        return baseScale * userScale
+        return baseScale * (CGFloat(uiFontSize) / 12.0)
     }
 
     /// Convert a sequence of 2D data points into a smooth Catmull-Rom cubic Bezier path.
-    /// Passes directly through all sample points without high-degree polynomial runaway oscillations.
+    /// Passes directly through all sample points without runaway oscillations.
     static func catmullRomPath(points: [CGPoint]) -> Path {
         var path = Path()
         guard !points.isEmpty else { return path }
@@ -33,17 +32,32 @@ enum PlotRenderingEngine {
             let p2 = points[i + 1]
             let p3 = (i + 2 < points.count) ? points[i + 2] : p2
 
-            let cp1 = CGPoint(
-                x: p1.x + (p2.x - p0.x) / 6.0,
-                y: p1.y + (p2.y - p0.y) / 6.0
-            )
-            let cp2 = CGPoint(
-                x: p2.x - (p3.x - p1.x) / 6.0,
-                y: p2.y - (p3.y - p1.y) / 6.0
-            )
+            // Monotone slope protection: if segment is vertical or flat, avoid overshoot
+            let dx1 = (p2.x - p0.x) / 6.0
+            let dy1 = (p2.y - p0.y) / 6.0
+            let dx2 = (p3.x - p1.x) / 6.0
+            let dy2 = (p3.y - p1.y) / 6.0
+
+            let segmentMinY = min(p1.y, p2.y)
+            let segmentMaxY = max(p1.y, p2.y)
+
+            let cp1Y = min(segmentMaxY, max(segmentMinY, p1.y + dy1))
+            let cp2Y = min(segmentMaxY, max(segmentMinY, p2.y - dy2))
+
+            let cp1 = CGPoint(x: p1.x + dx1, y: cp1Y)
+            let cp2 = CGPoint(x: p2.x - dx2, y: cp2Y)
             path.addCurve(to: p2, control1: cp1, control2: cp2)
         }
         return path
+    }
+
+    /// Render circular markers for scatter points.
+    static func drawMarkers(points: [CGPoint], markerSize: CGFloat, color: Color, in context: inout GraphicsContext) {
+        let r = markerSize / 2.0
+        for p in points {
+            let rect = CGRect(x: p.x - r, y: p.y - r, width: markerSize, height: markerSize)
+            context.fill(Path(ellipseIn: rect), with: .color(color))
+        }
     }
 
     /// Render a contiguous run of points with the selected PlotRenderStyle.
@@ -77,21 +91,13 @@ enum PlotRenderingEngine {
             context.stroke(path, with: .color(color), lineWidth: lineWidth)
 
         case .scatter:
-            let r = markerSize / 2.0
-            for p in points {
-                let rect = CGRect(x: p.x - r, y: p.y - r, width: markerSize, height: markerSize)
-                context.fill(Path(ellipseIn: rect), with: .color(color))
-            }
+            drawMarkers(points: points, markerSize: markerSize, color: color, in: &context)
 
         case .lineAndScatter:
             var path = Path()
             path.addLines(points)
             context.stroke(path, with: .color(color), lineWidth: lineWidth)
-            let r = markerSize / 2.0
-            for p in points {
-                let rect = CGRect(x: p.x - r, y: p.y - r, width: markerSize, height: markerSize)
-                context.fill(Path(ellipseIn: rect), with: .color(color))
-            }
+            drawMarkers(points: points, markerSize: markerSize, color: color, in: &context)
         }
     }
 }

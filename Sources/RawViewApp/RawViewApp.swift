@@ -1746,32 +1746,40 @@ struct InspectorPane: View {
                     .labelsHidden()
                 }
 
-                HStack(spacing: 8) {
-                    Text("Line width").font(.caption)
-                    Spacer()
-                    TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.caption.monospacedDigit())
-                        .frame(width: 50)
-                        .multilineTextAlignment(.trailing)
-                    Stepper("", value: $lineWidth, in: 0.2...10.0, step: 0.1)
-                        .labelsHidden()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("Line width").font(.caption)
+                        Spacer()
+                        TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption.monospacedDigit())
+                            .frame(width: 44)
+                            .multilineTextAlignment(.trailing)
+                        Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
+                            .labelsHidden()
+                            .controlSize(.small)
+                        Text("pt").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
                         .controlSize(.small)
-                    Text("pt").font(.caption2).foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 8) {
-                    Text("Dot size").font(.caption)
-                    Spacer()
-                    TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.caption.monospacedDigit())
-                        .frame(width: 50)
-                        .multilineTextAlignment(.trailing)
-                    Stepper("", value: $markerSize, in: 1.0...20.0, step: 0.5)
-                        .labelsHidden()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("Dot size").font(.caption)
+                        Spacer()
+                        TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption.monospacedDigit())
+                            .frame(width: 44)
+                            .multilineTextAlignment(.trailing)
+                        Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
+                            .labelsHidden()
+                            .controlSize(.small)
+                        Text("pt").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
                         .controlSize(.small)
-                    Text("pt").font(.caption2).foregroundStyle(.secondary)
                 }
 
                 Toggle("Show Legend", isOn: $showLegend)

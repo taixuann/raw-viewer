@@ -91,7 +91,7 @@ struct SettingsView: View {
                     TextField("4.5", value: $defaultMarkerSize, format: .number.precision(.fractionLength(1)))
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 50)
-                    Stepper("", value: $defaultMarkerSize, in: 1.0...20.0, step: 0.5)
+                    Stepper("", value: $defaultMarkerSize, in: 2.0...10.0, step: 0.5)
                         .labelsHidden()
                         .controlSize(.small)
                     Text("pt").foregroundStyle(.secondary)
