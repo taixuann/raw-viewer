@@ -234,6 +234,14 @@ final class RawViewModel: ObservableObject {
         inspectionTask != nil && inspectedSources < max(1, inspectionTotal)
     }
 
+    var isPlotLoading: Bool {
+        overlayLoadTask != nil || (loadTask != nil && sourceStates[focusedSourceID ?? ""]?.measurement == nil)
+    }
+
+    var isOverlayLoading: Bool {
+        overlayLoadTask != nil
+    }
+
     private func refreshLoading() {
         let inspecting = isInspecting
         let discovering = discoveryTask != nil
@@ -677,8 +685,8 @@ struct RawViewShell: View {
                            xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                            xScale: $model.xScale, yScale: $model.yScale,
                            showInspector: $model.showInspector,
-                           isLoading: model.isLoading,
-                           loadingStatus: model.isInspecting ? "Inspecting (\(model.inspectedSources)/\(model.inspectionTotal))…" : (model.isLoading && model.loadingPhase != "Idle" && model.loadingPhase != "Inspecting" ? "\(model.loadingPhase)…" : nil),
+                           isLoading: model.isPlotLoading,
+                           loadingStatus: model.isPlotLoading ? (model.isOverlayLoading ? "Loading comparison…" : "Loading plot…") : nil,
                            retry: model.loadFocused,
                            snapshots: model.snapshots,
                            activeSnapshotID: model.activeSnapshotID,
