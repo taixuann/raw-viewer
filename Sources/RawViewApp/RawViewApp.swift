@@ -1241,34 +1241,36 @@ struct NativePlot: View {
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
 
-        // Canonical Nature-single closed 4-sided bounding box (0.28 mm = 0.8 pt)
-        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: 0.8)
+        // Canonical Nature-single closed 4-sided bounding box (1.0 pt)
+        var frame = Path(); frame.addRect(plot); context.stroke(frame, with: .color(.primary), lineWidth: PlotRenderingEngine.spineLineWidth)
         let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
+        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale)
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
 
-            // Canonical Nature outward ticks (1.5 mm = 4.25 pt, thickness 0.28 mm = 0.8 pt)
-            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + 4.25))
-            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - 4.25, y: py))
-            context.stroke(xTick, with: .color(.primary), lineWidth: 0.8)
-            context.stroke(yTick, with: .color(.primary), lineWidth: 0.8)
+            // Canonical Nature outward ticks (1.0 pt thickness, visible scaled length)
+            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
+            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
+            context.stroke(xTick, with: .color(.primary), lineWidth: PlotRenderingEngine.tickLineWidth)
+            context.stroke(yTick, with: .color(.primary), lineWidth: PlotRenderingEngine.tickLineWidth)
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: px, y: plot.maxY + 6.5), anchor: .top)
-            context.draw(Text(yLabels[index]).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: plot.minX - 6.5, y: py), anchor: .trailing)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+            context.draw(Text(yLabels[index]).font(plotFont(size: 11.5 * fontScale)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        context.draw(Text(xTitle).font(plotFont(size: 13.0 * fontScale, bold: true)), at: CGPoint(x: plot.midX, y: plot.maxY + 6.5 + (11.5 * fontScale) + 6.0), anchor: .top)
-        let yTitleX = max(14 * fontScale, plot.minX - 6.5 - maxLabelWidth - (12 * fontScale))
+        // Axis titles: regular weight (not bold), matching standard scientific publishing
+        context.draw(Text(xTitle).font(plotFont(size: 12.5 * fontScale, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + (11.5 * fontScale) + 6.0), anchor: .top)
+        let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)
         yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(plotFont(size: 13.0 * fontScale, bold: true)), at: .zero, anchor: .center)
+        yLabelContext.draw(Text(yTitle).font(plotFont(size: 12.5 * fontScale, bold: false)), at: .zero, anchor: .center)
 
         var plotContext = context
         plotContext.clip(to: Path(plot))

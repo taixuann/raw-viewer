@@ -4,6 +4,15 @@ import RawViewCore
 /// Unified 2D rendering and geometry engine for Nature-compliant scientific plots.
 enum PlotRenderingEngine {
 
+    /// Standard line widths and tick lengths for Nature-compliant scientific plots
+    static let spineLineWidth: CGFloat = 1.0
+    static let tickLineWidth: CGFloat = 1.0
+
+    /// Outward tick length scaled to viewport readability on Retina monitors
+    static func tickLength(fontScale: CGFloat) -> CGFloat {
+        max(6.0, 5.2 * fontScale)
+    }
+
     /// Compute dynamic font scale from viewport width and user preferences.
     static func fontScale(plotWidth: CGFloat, uiFontSize: Double) -> CGFloat {
         let baseScale = max(1.0, min(1.6, plotWidth / 480.0))
