@@ -123,7 +123,7 @@ public struct ScientificPreset: Identifiable, Sendable, Hashable, CaseIterable {
         isOpenFrame: false,
         isSerif: false,
         spineThicknessPt: 0.7,
-        tickLengthPt: 3.8,
+        tickLengthPt: 3.69,
         titlePt: 8.0,
         axisLabelPt: 8.0,
         tickLabelPt: 7.0,
@@ -139,7 +139,7 @@ public struct ScientificPreset: Identifiable, Sendable, Hashable, CaseIterable {
         isOpenFrame: false,
         isSerif: true,
         spineThicknessPt: 0.8,
-        tickLengthPt: 4.0,
+        tickLengthPt: 4.25,
         titlePt: 8.5,
         axisLabelPt: 8.0,
         tickLabelPt: 7.0,
@@ -154,4 +154,12 @@ public struct ScientificPreset: Identifiable, Sendable, Hashable, CaseIterable {
         .acsSingle,
         .ieeeSingle
     ]
+
+    public static var standardPresets: [ScientificPreset] {
+        allCases.filter { !$0.isOpenFrame }
+    }
+
+    public static var openFramePresets: [ScientificPreset] {
+        allCases.filter { $0.isOpenFrame }
+    }
 }

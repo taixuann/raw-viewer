@@ -71,6 +71,7 @@ enum CoreSelfCheck {
         try await genericTableFallbackSelfCheck()
         try await activeProjectTestSelfCheck()
         try plotStyleAndExportSelfCheck()
+        try scientificPresetsSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -2001,5 +2002,29 @@ enum CoreSelfCheck {
         precondition(PlotRenderStyle.spline.interpolation == .spline)
         precondition(PlotRenderStyle.scatter.markType == .dots)
         precondition(PlotRenderStyle.lineAndScatter.markType == .lineAndDots)
+    }
+
+    static func scientificPresetsSelfCheck() throws {
+        precondition(ScientificPreset.allCases.count == 6)
+        precondition(ScientificPreset.standardPresets.count == 4)
+        precondition(ScientificPreset.openFramePresets.count == 2)
+
+        let nature = ScientificPreset.natureSingle
+        precondition(nature.publisher == "Nature")
+        precondition(!nature.isOpenFrame)
+        precondition(abs(nature.widthMM - 59.1) < 0.01)
+        precondition(abs(nature.heightMM - 50.0) < 0.01)
+        precondition(abs(nature.spineThicknessPt - 0.8) < 0.01)
+        precondition(abs(nature.tickLengthPt - 4.25) < 0.01)
+
+        let ieee = ScientificPreset.ieeeSingle
+        precondition(ieee.isSerif)
+        precondition(abs(ieee.tickLengthPt - 4.25) < 0.01)
+
+        for p in ScientificPreset.allCases {
+            precondition(!p.id.isEmpty && !p.displayName.isEmpty)
+            precondition(p.aspectRatio > 0.5 && p.aspectRatio < 2.5)
+            precondition(p.spineThicknessPt > 0 && p.tickLengthPt > 0)
+        }
     }
 }

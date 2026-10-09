@@ -588,8 +588,8 @@ struct ProjectGallery: View {
                 Divider().frame(height: 16)
 
                 Menu {
-                    Section("Standard Journals (Closed Box)") {
-                        ForEach([ScientificPreset.natureSingle, .scienceSingle, .acsSingle, .ieeeSingle], id: \.id) { p in
+                    Section("Standard Journals (Closed 4-Box)") {
+                        ForEach(ScientificPreset.standardPresets) { p in
                             Button {
                                 selectedPreset = p
                             } label: {
@@ -603,7 +603,7 @@ struct ProjectGallery: View {
                     }
 
                     Section("Open L-Frames (2-Axis)") {
-                        ForEach([ScientificPreset.natureOpen, .scienceOpen], id: \.id) { p in
+                        ForEach(ScientificPreset.openFramePresets) { p in
                             Button {
                                 selectedPreset = p
                             } label: {
@@ -1050,17 +1050,10 @@ struct OverlayPlot: View {
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
     @State private var dragStart = CGSize.zero
-    @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
-        let useSerif = preset.isSerif || plotFontSerif
-        if useSerif {
-            let f = Font.custom("Times New Roman", size: size)
-            return bold ? f.bold() : f
-        } else {
-            return bold ? Font.system(size: size, weight: .bold) : Font.system(size: size)
-        }
+        PlotRenderingEngine.plotFont(preset: preset, size: size, bold: bold)
     }
 
     private struct Series: Identifiable {
@@ -1245,22 +1238,14 @@ struct OverlayPlot: View {
         let plotY = topGutter + (availHeight - plotH) / 2
         let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
 
-        let spineWidth = CGFloat(preset.spineThicknessPt)
-        if preset.isOpenFrame {
-            var lFrame = Path()
-            lFrame.move(to: CGPoint(x: plot.minX, y: plot.minY))
-            lFrame.addLine(to: CGPoint(x: plot.minX, y: plot.maxY))
-            lFrame.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY))
-            context.stroke(lFrame, with: .color(.primary), lineWidth: spineWidth)
-        } else {
-            var frame = Path()
-            frame.addRect(plot)
-            context.stroke(frame, with: .color(.primary), lineWidth: spineWidth)
-        }
+        PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
         let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
         let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)
         let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
+        let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
+        let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
+
         for index in 0...4 {
             let t = Double(index) / 4
             let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
@@ -1272,14 +1257,14 @@ struct OverlayPlot: View {
             context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
             context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: CGFloat(preset.tickLabelPt) * 1.4 * fontScale)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-            context.draw(Text(yLabels[index]).font(plotFont(size: CGFloat(preset.tickLabelPt) * 1.4 * fontScale)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+            context.draw(Text(yLabels[index]).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        let axisLabelSize = CGFloat(preset.axisLabelPt) * 1.4 * fontScale
-        context.draw(Text(xTitle).font(plotFont(size: axisLabelSize, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + (CGFloat(preset.tickLabelPt) * 1.4 * fontScale) + 6.0), anchor: .top)
+        let axisLabelSize = PlotRenderingEngine.axisLabelFontSize(preset: preset, fontScale: fontScale)
+        context.draw(Text(xTitle).font(plotFont(size: axisLabelSize, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + tickLabelSize + 6.0), anchor: .top)
         let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
         var yLabelContext = context
         yLabelContext.translateBy(x: yTitleX, y: plot.midY)

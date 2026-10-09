@@ -6,7 +6,6 @@ struct SettingsView: View {
     @ObservedObject var model: RawViewModel
     @AppStorage("appTheme") private var appTheme: String = "System"
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
-    @AppStorage("plotFontSerif") private var plotFontSerif: Bool = false
     @AppStorage("isLazyInspectionEnabled") private var isLazyInspectionEnabled: Bool = true
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
     @AppStorage("cacheLimitMB") private var cacheLimitMB: Int = 2048
@@ -53,8 +52,6 @@ struct SettingsView: View {
                         .monospacedDigit()
                         .frame(width: 45, alignment: .trailing)
                 }
-
-                Toggle("Default to Serif font for scientific plots", isOn: $plotFontSerif)
             }
         }
         .formStyle(.grouped)

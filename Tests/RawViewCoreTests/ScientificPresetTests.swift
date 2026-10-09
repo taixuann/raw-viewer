@@ -1,44 +1,51 @@
-import XCTest
+import Testing
 @testable import RawViewCore
 
-final class ScientificPresetTests: XCTestCase {
-    func testAllPresetsHavePositiveDimensionsAndRatio() {
+struct ScientificPresetTests {
+    @Test func allPresetsHavePositiveDimensionsAndRatio() {
         for preset in ScientificPreset.allCases {
-            XCTAssertFalse(preset.id.isEmpty)
-            XCTAssertFalse(preset.displayName.isEmpty)
-            XCTAssertFalse(preset.publisher.isEmpty)
-            XCTAssertGreaterThan(preset.widthMM, 0)
-            XCTAssertGreaterThan(preset.heightMM, 0)
-            XCTAssertGreaterThan(preset.aspectRatio, 0.5)
-            XCTAssertLessThan(preset.aspectRatio, 2.0)
-            XCTAssertGreaterThan(preset.spineThicknessPt, 0)
-            XCTAssertGreaterThan(preset.tickLengthPt, 0)
+            #expect(!preset.id.isEmpty)
+            #expect(!preset.displayName.isEmpty)
+            #expect(!preset.publisher.isEmpty)
+            #expect(preset.widthMM > 0)
+            #expect(preset.heightMM > 0)
+            #expect(preset.aspectRatio > 0.5)
+            #expect(preset.aspectRatio < 2.0)
+            #expect(preset.spineThicknessPt > 0)
+            #expect(preset.tickLengthPt > 0)
         }
     }
 
-    func testNatureSingleMatchesSpecifications() {
+    @Test func natureSingleMatchesSpecifications() {
         let preset = ScientificPreset.natureSingle
-        XCTAssertEqual(preset.id, "nature-single")
-        XCTAssertEqual(preset.publisher, "Nature")
-        XCTAssertFalse(preset.isOpenFrame)
-        XCTAssertFalse(preset.isSerif)
-        XCTAssertEqual(preset.widthMM, 59.1, accuracy: 0.01)
-        XCTAssertEqual(preset.heightMM, 50.0, accuracy: 0.01)
-        XCTAssertEqual(preset.spineThicknessPt, 0.8, accuracy: 0.01)
-        XCTAssertEqual(preset.tickLengthPt, 4.25, accuracy: 0.01)
+        #expect(preset.id == "nature-single")
+        #expect(preset.publisher == "Nature")
+        #expect(!preset.isOpenFrame)
+        #expect(!preset.isSerif)
+        #expect(abs(preset.widthMM - 59.1) < 0.01)
+        #expect(abs(preset.heightMM - 50.0) < 0.01)
+        #expect(abs(preset.spineThicknessPt - 0.8) < 0.01)
+        #expect(abs(preset.tickLengthPt - 4.25) < 0.01)
     }
 
-    func testNatureOpenIsOpenFrame() {
+    @Test func natureOpenIsOpenFrame() {
         let preset = ScientificPreset.natureOpen
-        XCTAssertEqual(preset.id, "nature-open")
-        XCTAssertTrue(preset.isOpenFrame)
-        XCTAssertFalse(preset.isSerif)
+        #expect(preset.id == "nature-open")
+        #expect(preset.isOpenFrame)
+        #expect(!preset.isSerif)
     }
 
-    func testIEEESingleIsSerif() {
+    @Test func ieeeSingleIsSerif() {
         let preset = ScientificPreset.ieeeSingle
-        XCTAssertEqual(preset.id, "ieee-single")
-        XCTAssertEqual(preset.publisher, "IEEE")
-        XCTAssertTrue(preset.isSerif)
+        #expect(preset.id == "ieee-single")
+        #expect(preset.publisher == "IEEE")
+        #expect(preset.isSerif)
+    }
+
+    @Test func presetGroupingCollections() {
+        #expect(ScientificPreset.standardPresets.count == 4)
+        #expect(ScientificPreset.openFramePresets.count == 2)
+        #expect(ScientificPreset.standardPresets.allSatisfy { !$0.isOpenFrame })
+        #expect(ScientificPreset.openFramePresets.allSatisfy { $0.isOpenFrame })
     }
 }

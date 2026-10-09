@@ -18,6 +18,52 @@ enum PlotRenderingEngine {
         CGFloat(preset.spineThicknessPt)
     }
 
+    /// Resolve Font for scientific plots based on preset specification
+    static func plotFont(preset: ScientificPreset, size: CGFloat, bold: Bool = false) -> Font {
+        if preset.isSerif {
+            let font = Font.custom("Times New Roman", size: size)
+            return bold ? font.bold() : font
+        } else {
+            return bold ? Font.system(size: size, weight: .bold) : Font.system(size: size)
+        }
+    }
+
+    /// Title font size calibrated to viewport and preset
+    static func titleFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
+        max(10.0, CGFloat(preset.titlePt) * 1.4 * fontScale)
+    }
+
+    /// Axis label font size calibrated to viewport and preset
+    static func axisLabelFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
+        max(8.5, CGFloat(preset.axisLabelPt) * 1.35 * fontScale)
+    }
+
+    /// Tick label font size calibrated to viewport and preset
+    static func tickLabelFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
+        max(8.0, CGFloat(preset.tickLabelPt) * 1.35 * fontScale)
+    }
+
+    /// Legend font size calibrated to viewport and preset
+    static func legendFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
+        max(8.5, CGFloat(preset.legendPt) * 1.35 * fontScale)
+    }
+
+    /// Draw spine frame (closed 4-sided rectangular box or open 2-sided L-frame)
+    static func drawSpineFrame(plot: CGRect, preset: ScientificPreset, in context: inout GraphicsContext) {
+        let spineWidth = spineThickness(preset: preset)
+        if preset.isOpenFrame {
+            var lFrame = Path()
+            lFrame.move(to: CGPoint(x: plot.minX, y: plot.minY))
+            lFrame.addLine(to: CGPoint(x: plot.minX, y: plot.maxY))
+            lFrame.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY))
+            context.stroke(lFrame, with: .color(.primary), lineWidth: spineWidth)
+        } else {
+            var frame = Path()
+            frame.addRect(plot)
+            context.stroke(frame, with: .color(.primary), lineWidth: spineWidth)
+        }
+    }
+
     /// Compute dynamic font scale from viewport width and user preferences.
     static func fontScale(plotWidth: CGFloat, uiFontSize: Double) -> CGFloat {
         let baseScale = max(1.0, min(1.6, plotWidth / 480.0))
