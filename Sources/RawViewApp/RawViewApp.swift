@@ -82,6 +82,7 @@ final class RawViewModel: ObservableObject {
     @Published var loadingPhase = "Idle"
     @Published var inspectionCancelled = false
     @Published var isLazyInspectionEnabled: Bool = UserDefaults.standard.object(forKey: "isLazyInspectionEnabled") as? Bool ?? true
+    @Published var maxComparisonAutoLoad: Int = UserDefaults.standard.object(forKey: "maxComparisonAutoLoad") as? Int ?? 15
     @Published var tab = "Plot"
     @Published var xAbsolute = false
     @Published var yAbsolute = false
@@ -337,13 +338,14 @@ final class RawViewModel: ObservableObject {
         let ids = selectedSourceIDs.sorted()
         let pending = ids.filter { sourceStates[$0]?.measurement == nil && sourceStates[$0]?.isLoading != true }
         guard !pending.isEmpty else { return }
+        let toLoad = Array(pending.prefix(maxComparisonAutoLoad))
         overlayLoadTask?.cancel()
         overlayLoadTask = nil
         overlayGeneration = UUID()
         let generation = overlayGeneration
-        overlayLoadingIDs = Set(pending)
+        overlayLoadingIDs = Set(toLoad)
         isLoading = true
-        for id in pending {
+        for id in toLoad {
             var state = sourceStates[id] ?? GallerySourceState()
             state.isLoading = true
             state.error = nil
@@ -365,7 +367,7 @@ final class RawViewModel: ObservableObject {
             }
             guard let self else { return }
             let byID = Dictionary(uniqueKeysWithValues: self.sources.map { ($0.id, $0) })
-            for id in pending {
+            for id in toLoad {
                 if Task.isCancelled { break }
                 guard generation == self.overlayGeneration else { break }
                 guard let source = byID[id] else { continue }

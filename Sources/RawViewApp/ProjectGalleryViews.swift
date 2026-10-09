@@ -107,8 +107,8 @@ struct ProjectSourcesSidebar: View {
             }
         default: base = []
         }
+        let allowed = Set(filteredSources.map(\.id))
         return base.compactMap { group -> SourceGroup? in
-            let allowed = Set(filteredSources.map(\.id))
             let ids = group.sourceIDs.filter { allowed.contains($0) && matches($0, label: group.label) }
             return ids.isEmpty ? nil : SourceGroup(label: group.label, sourceIDs: ids)
         }
@@ -351,11 +351,8 @@ struct ProjectSourcesSidebar: View {
         if search.isEmpty && filter.isEmpty {
             return sources
         }
-        // The instrument label per source is resolved once per filtering pass
-        // from the same stable-ID grouping the sidebar displays, instead of
-        // scanning all inspections separately for every source row.
-        let instrumentLabels = instrumentLabelsBySourceID()
-        return sources.filter { matches($0.id, label: $0.url.lastPathComponent) && filter.matches(labelsByFacet(for: $0, instrumentLabels: instrumentLabels)) }
+        let instrumentLabels = filter.selections["instrument"]?.isEmpty == false ? instrumentLabelsBySourceID() : [:]
+        return sources.filter { matches($0.id, label: $0.url.lastPathComponent) && matchesFilter(for: $0, instrumentLabels: instrumentLabels) }
     }
 
     /// SourceID-to-instrument-label map reused from `SourceGrouping`'s existing
@@ -371,23 +368,33 @@ struct ProjectSourcesSidebar: View {
         return map
     }
 
-    /// Facet labels for one source, matching the group labels `SourceGrouping` produces so a
-    /// filter chip's label always equals the displayed group label.
-    private func labelsByFacet(for source: RawSource, instrumentLabels: [String: String]) -> [String: Set<String>] {
-        guard let inspection = inspections[source.id] else { return [:] }
-        var labels: [String: Set<String>] = [
-            "sample": Set([Self.clean(inspection.deviceID)].compactMap { $0 }),
-            "instrument": Set([instrumentLabels[source.id]].compactMap { $0 }),
-            "category": Set([Self.clean(inspection.category)].compactMap { $0 }),
-            "mode": Set([Self.clean(inspection.applicationMode)].compactMap { $0 }),
-            "date": Set([SourceGrouping.date(from: inspection.timestamp)].compactMap { $0 }),
-        ]
-        var status: Set<String> = []
-        if let value = Self.clean(inspection.supportStatus) { status.insert("Support: \(value)") }
-        if let value = Self.clean(inspection.validationState) { status.insert("Validation: \(value)") }
-        if let error = states[source.id]?.error { status.insert("Error: \(error)") }
-        labels["status"] = status
-        return labels
+    /// Direct matching against active filter selections without generating intermediate Set collections.
+    private func matchesFilter(for source: RawSource, instrumentLabels: [String: String]) -> Bool {
+        if filter.isEmpty { return true }
+        guard let inspection = inspections[source.id] else { return false }
+        for (facet, selected) in filter.selections where !selected.isEmpty {
+            switch facet {
+            case "sample":
+                guard let val = Self.clean(inspection.deviceID), selected.contains(val) else { return false }
+            case "instrument":
+                guard let val = instrumentLabels[source.id], selected.contains(val) else { return false }
+            case "category":
+                guard let val = Self.clean(inspection.category), selected.contains(val) else { return false }
+            case "mode":
+                guard let val = Self.clean(inspection.applicationMode), selected.contains(val) else { return false }
+            case "date":
+                guard let val = SourceGrouping.date(from: inspection.timestamp), selected.contains(val) else { return false }
+            case "status":
+                var matched = false
+                if let value = Self.clean(inspection.supportStatus), selected.contains("Support: \(value)") { matched = true }
+                if let value = Self.clean(inspection.validationState), selected.contains("Validation: \(value)") { matched = true }
+                if let error = states[source.id]?.error, selected.contains("Error: \(error)") { matched = true }
+                if !matched { return false }
+            default:
+                break
+            }
+        }
+        return true
     }
 
     private func matches(_ id: String, label: String) -> Bool {
