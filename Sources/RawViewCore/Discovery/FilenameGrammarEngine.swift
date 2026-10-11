@@ -6,12 +6,23 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
     public var role: String
     public var formatHint: String
     public var stripBrackets: Bool
+    public var isOptional: Bool
+    public var isFacet: Bool
 
-    public init(name: String, role: String = "Remarks", formatHint: String = "", stripBrackets: Bool = false) {
+    public init(
+        name: String,
+        role: String = "Remarks",
+        formatHint: String = "",
+        stripBrackets: Bool = false,
+        isOptional: Bool = false,
+        isFacet: Bool = true
+    ) {
         self.name = name
         self.role = role
         self.formatHint = formatHint
         self.stripBrackets = stripBrackets
+        self.isOptional = isOptional
+        self.isFacet = isFacet
     }
 }
 
@@ -144,7 +155,7 @@ public enum FilenameGrammarEngine {
 
     /// Compiles a human-readable template like `{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]`
     /// into a regular expression and an ordered list of variable names.
-    public static func compile(template: String) throws -> (regex: NSRegularExpression, fieldNames: [String]) {
+    public static func compile(template: String, fields: [GrammarField] = []) throws -> (regex: NSRegularExpression, fieldNames: [String]) {
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw GrammarCompileError.emptyTemplate
@@ -156,11 +167,7 @@ public enum FilenameGrammarEngine {
         var scanIndex = trimmed.startIndex
         while scanIndex < trimmed.endIndex {
             if let openBrace = trimmed[scanIndex...].firstIndex(of: "{") {
-                // Literal part before the open brace
-                if openBrace > scanIndex {
-                    let literal = String(trimmed[scanIndex..<openBrace])
-                    pattern += NSRegularExpression.escapedPattern(for: literal)
-                }
+                let leadingLiteral = openBrace > scanIndex ? String(trimmed[scanIndex..<openBrace]) : ""
 
                 guard let closeBrace = trimmed[openBrace...].firstIndex(of: "}") else {
                     let unclosed = String(trimmed[openBrace...])
@@ -170,17 +177,35 @@ public enum FilenameGrammarEngine {
                 let varName = String(trimmed[trimmed.index(after: openBrace)..<closeBrace]).trimmingCharacters(in: .whitespaces)
                 fieldNames.append(varName)
 
-                // Lookahead to see if there is a trailing literal or delimiter right after this token
-                let nextIndex = trimmed.index(after: closeBrace)
-                if nextIndex < trimmed.endIndex {
-                    pattern += "(.+?)"
+                let fieldConfig = fields.first(where: { $0.name == varName })
+                let isOptional = fieldConfig?.isOptional ?? false
+
+                var nextIndex = trimmed.index(after: closeBrace)
+                var trailingEnclosure = ""
+                if nextIndex < trimmed.endIndex && (trimmed[nextIndex] == "]" || trimmed[nextIndex] == ")") {
+                    trailingEnclosure = String(trimmed[nextIndex])
+                    nextIndex = trimmed.index(after: nextIndex)
+                }
+
+                let hasTrailing = (nextIndex < trimmed.endIndex)
+
+                if isOptional {
+                    let escapedLeading = leadingLiteral.isEmpty ? "" : NSRegularExpression.escapedPattern(for: leadingLiteral)
+                    let escapedTrailing = trailingEnclosure.isEmpty ? "" : NSRegularExpression.escapedPattern(for: trailingEnclosure)
+                    pattern += "(?:\(escapedLeading)(.+?)\(escapedTrailing))?"
                 } else {
-                    pattern += "(.+)"
+                    if !leadingLiteral.isEmpty {
+                        pattern += NSRegularExpression.escapedPattern(for: leadingLiteral)
+                    }
+                    if !trailingEnclosure.isEmpty {
+                        pattern += "(.+?)" + NSRegularExpression.escapedPattern(for: trailingEnclosure)
+                    } else {
+                        pattern += hasTrailing ? "(.+?)" : "(.+)"
+                    }
                 }
 
                 scanIndex = nextIndex
             } else {
-                // Trailing literal part
                 let trailingLiteral = String(trimmed[scanIndex...])
                 pattern += NSRegularExpression.escapedPattern(for: trailingLiteral)
                 scanIndex = trimmed.endIndex
@@ -198,7 +223,7 @@ public enum FilenameGrammarEngine {
 
     /// Extracts semantic facts from a filename according to the given grammar.
     public static func extract(from filename: String, grammar: FilenameGrammar) -> ExtractedGrammarFacts {
-        guard let (regex, fieldNames) = try? compile(template: grammar.template) else {
+        guard let (regex, fieldNames) = try? compile(template: grammar.template, fields: grammar.fields) else {
             return ExtractedGrammarFacts(isMatched: false, unmatchedReason: "Invalid template syntax")
         }
 
@@ -300,6 +325,8 @@ public enum FilenameGrammarEngine {
                     lines.append("        role: \"\(yamlEscape(f.role))\"")
                     lines.append("        format_hint: \"\(yamlEscape(f.formatHint))\"")
                     lines.append("        strip_brackets: \(f.stripBrackets)")
+                    lines.append("        is_optional: \(f.isOptional)")
+                    lines.append("        is_facet: \(f.isFacet)")
                 }
             }
         }
@@ -341,7 +368,16 @@ public enum FilenameGrammarEngine {
                         let fRole = fNode.value(for: "role")?.scalarValue ?? "Remarks"
                         let fHint = fNode.value(for: "format_hint")?.scalarValue ?? ""
                         let fStrip = (fNode.value(for: "strip_brackets")?.scalarValue?.lowercased() == "true")
-                        fields.append(GrammarField(name: fName, role: fRole, formatHint: fHint, stripBrackets: fStrip))
+                        let fOpt = (fNode.value(for: "is_optional")?.scalarValue?.lowercased() == "true")
+                        let fFacet = (fNode.value(for: "is_facet")?.scalarValue?.lowercased() != "false")
+                        fields.append(GrammarField(
+                            name: fName,
+                            role: fRole,
+                            formatHint: fHint,
+                            stripBrackets: fStrip,
+                            isOptional: fOpt,
+                            isFacet: fFacet
+                        ))
                     }
                 }
 

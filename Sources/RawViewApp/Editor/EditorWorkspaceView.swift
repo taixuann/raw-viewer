@@ -396,14 +396,30 @@ final class EditorWorkspaceViewModel: ObservableObject {
         objectWillChange.send()
     }
 
-    func updateGrammarField(name: String, role: String, formatHint: String = "", stripBrackets: Bool = false) {
+    func updateGrammarField(
+        name: String,
+        role: String,
+        formatHint: String = "",
+        stripBrackets: Bool = false,
+        isOptional: Bool = false,
+        isFacet: Bool = true
+    ) {
         guard let gIdx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) else { return }
         if let fIdx = grammarCatalog.grammars[gIdx].fields.firstIndex(where: { $0.name == name }) {
             grammarCatalog.grammars[gIdx].fields[fIdx].role = role
             grammarCatalog.grammars[gIdx].fields[fIdx].formatHint = formatHint
             grammarCatalog.grammars[gIdx].fields[fIdx].stripBrackets = stripBrackets
+            grammarCatalog.grammars[gIdx].fields[fIdx].isOptional = isOptional
+            grammarCatalog.grammars[gIdx].fields[fIdx].isFacet = isFacet
         } else {
-            grammarCatalog.grammars[gIdx].fields.append(GrammarField(name: name, role: role, formatHint: formatHint, stripBrackets: stripBrackets))
+            grammarCatalog.grammars[gIdx].fields.append(GrammarField(
+                name: name,
+                role: role,
+                formatHint: formatHint,
+                stripBrackets: stripBrackets,
+                isOptional: isOptional,
+                isFacet: isFacet
+            ))
         }
         recalculateGrammarExtraction()
         objectWillChange.send()
@@ -427,7 +443,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
         effective.template = activeTemplate
 
         do {
-            let (_, names) = try FilenameGrammarEngine.compile(template: activeTemplate)
+            let (_, names) = try FilenameGrammarEngine.compile(template: activeTemplate, fields: effective.fields)
             for name in names {
                 if !effective.fields.contains(where: { $0.name == name }) {
                     let role = name.lowercased().contains("date") ? "Date & Time" :

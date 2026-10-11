@@ -102,4 +102,31 @@ struct FilenameGrammarEngineTests {
         #expect(loaded?.activeGrammar?.fields.count == 2)
         #expect(loaded?.activeGrammar?.fields.first?.name == "date")
     }
+
+    @Test func optionalFieldAllowsMissingSegment() throws {
+        let template = "{date}_{study}_r.[{remarks}]"
+        let grammar = FilenameGrammar(
+            id: "opt-test",
+            name: "Optional Test",
+            template: template,
+            fields: [
+                GrammarField(name: "date", role: "Date & Time"),
+                GrammarField(name: "study", role: "Study"),
+                GrammarField(name: "remarks", role: "Remarks", stripBrackets: true, isOptional: true)
+            ]
+        )
+
+        // Filename WITH optional remarks
+        let withRemarks = "271125_deposition_r.[100mv].txt"
+        let res1 = FilenameGrammarEngine.extract(from: withRemarks, grammar: grammar)
+        #expect(res1.isMatched == true)
+        #expect(res1.extractedFields["remarks"] == "100mv")
+
+        // Filename WITHOUT optional remarks
+        let withoutRemarks = "271125_deposition.txt"
+        let res2 = FilenameGrammarEngine.extract(from: withoutRemarks, grammar: grammar)
+        #expect(res2.isMatched == true)
+        #expect(res2.extractedFields["study"] == "deposition")
+        #expect(res2.extractedFields["remarks"] == nil)
+    }
 }
