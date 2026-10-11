@@ -196,14 +196,17 @@ struct FilenameTokensStudioView: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 8) {
-                    variableChip(name: "{date}", role: "Date & Time", color: .green)
-                    variableChip(name: "{instrument}", role: "Instrument", color: .pink)
-                    variableChip(name: "{mode}", role: "Mode", color: .purple)
-                    variableChip(name: "[{device-id}]", role: "Device ID", color: .blue)
-                    variableChip(name: "{study}", role: "Study", color: .purple)
-                    variableChip(name: "r.[{remarks}]", role: "Remarks", color: .orange)
-                    variableChip(name: "{batch}", role: "Custom", color: .teal)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        variableChip(name: "{date}", role: "Date & Time", color: .green)
+                        variableChip(name: "{instrument}", role: "Instrument", color: .pink)
+                        variableChip(name: "{mode}", role: "Mode", color: .purple)
+                        variableChip(name: "[{device-id}]", role: "Device ID", color: .blue)
+                        variableChip(name: "{study}", role: "Study", color: .purple)
+                        variableChip(name: "r.[{remarks}]", role: "Remarks", color: .orange)
+                        variableChip(name: "{batch}", role: "Custom", color: .teal)
+                    }
+                    .padding(.vertical, 2)
                 }
             }
         }
@@ -455,16 +458,25 @@ struct FilenameTokensStudioView: View {
     private var cohortValidationMatrixCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
+                let cohortSamples = Array(model.sources.prefix(15))
+                let activeGrammar = model.grammarCatalog.grammars.first(where: { $0.id == model.activeGrammarID }) ?? FilenameGrammarCatalog.standardDefaults[0]
+                let matchCount = cohortSamples.filter { FilenameGrammarEngine.extract(from: $0.url.lastPathComponent, grammar: activeGrammar).isMatched }.count
+
                 HStack {
                     Label("Cohort Validation Matrix (Cross-Sample Matching)", systemImage: "tablecells")
                         .font(.system(size: 12, weight: .bold))
                     Spacer()
-                    Text("Verifies active grammar against all project data samples")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
+                    if !cohortSamples.isEmpty {
+                        Text("\(matchCount)/\(cohortSamples.count) Matched (\(Int(Double(matchCount) / Double(cohortSamples.count) * 100))%)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(matchCount == cohortSamples.count ? Color.green : Color.orange)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(matchCount == cohortSamples.count ? Color.green.opacity(0.12) : Color.orange.opacity(0.12))
+                            .cornerRadius(5)
+                    }
                 }
 
-                let cohortSamples = Array(model.sources.prefix(15))
                 if cohortSamples.isEmpty {
                     Text("No files in project to preview.")
                         .font(.system(size: 11))

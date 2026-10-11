@@ -204,8 +204,9 @@ public enum FilenameGrammarEngine {
 
         // Normalize filename by stripping standard extension if template does not expect it
         var target = filename
-        if let dotIndex = target.lastIndex(of: "."), !grammar.template.contains(target[dotIndex...]) {
-            target = String(target[..<dotIndex])
+        let ext = (filename as NSString).pathExtension
+        if !ext.isEmpty && !grammar.template.hasSuffix(".\(ext)") {
+            target = (filename as NSString).deletingPathExtension
         }
 
         let range = NSRange(target.startIndex..<target.endIndex, in: target)
@@ -220,18 +221,15 @@ public enum FilenameGrammarEngine {
             let groupRange = match.range(at: groupIdx)
             if groupRange.location != NSNotFound, let swiftRange = Range(groupRange, in: target) {
                 var value = String(target[swiftRange])
-                // Check if field config specifies stripBrackets or if it has matching brackets
                 let fieldConfig = grammar.fields.first(where: { $0.name == name })
-                if fieldConfig?.stripBrackets == true || (value.hasPrefix("[") && value.hasSuffix("]") && value.count >= 2) {
-                    if value.hasPrefix("[") && value.hasSuffix("]") && value.count >= 2 {
-                        value = String(value.dropFirst().dropLast())
-                    }
+                if (fieldConfig?.stripBrackets == true || true) && value.hasPrefix("[") && value.hasSuffix("]") && value.count >= 2 {
+                    value = String(value.dropFirst().dropLast())
                 }
                 extracted[name] = value
             }
         }
 
-        // Map extracted variables to semantic roles
+        // Map extracted variables to semantic roles in declared template order
         var timestamp: String? = nil
         var instrument: String? = nil
         var mode: String? = nil
@@ -239,21 +237,23 @@ public enum FilenameGrammarEngine {
         var category: String? = nil
         var remarks: [String] = []
 
-        for (name, val) in extracted {
+        for name in fieldNames {
+            guard let val = extracted[name] else { continue }
             let fieldConfig = grammar.fields.first(where: { $0.name == name })
             let role = fieldConfig?.role.lowercased() ?? ""
+            let lowerName = name.lowercased()
 
-            if role.contains("date") || role.contains("time") || name.lowercased() == "date" || name.lowercased() == "timestamp" {
+            if role.contains("date") || role.contains("time") || lowerName.contains("date") || lowerName.contains("time") {
                 timestamp = val
-            } else if role == "instrument" || name.lowercased() == "instrument" {
+            } else if role == "instrument" || lowerName == "instrument" {
                 instrument = val
-            } else if role == "mode" || name.lowercased() == "mode" {
+            } else if role == "mode" || lowerName == "mode" {
                 mode = val
-            } else if role.contains("device") || name.lowercased() == "device-id" || name.lowercased() == "device" {
+            } else if role.contains("device") || lowerName.contains("device") {
                 deviceID = val
-            } else if role == "study" || role == "category" || name.lowercased() == "study" || name.lowercased() == "category" {
+            } else if role == "study" || role == "category" || lowerName == "study" || lowerName == "category" {
                 category = val
-            } else if role == "remarks" || name.lowercased().contains("remark") {
+            } else if role == "remarks" || lowerName.contains("remark") {
                 remarks.append(val)
             }
         }
@@ -271,34 +271,40 @@ public enum FilenameGrammarEngine {
         )
     }
 
+    private static func yamlEscape(_ str: String) -> String {
+        str.replacingOccurrences(of: "\\", with: "\\\\")
+           .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     /// Saves the grammar catalog to `.rawviewer/view/grammar.yaml`.
     public static func save(catalog: FilenameGrammarCatalog, project: ProjectContext) throws {
         let dir = project.root.appendingPathComponent(".rawviewer/view", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("grammar.yaml")
 
-        var yaml = ""
+        var lines: [String] = []
         if let active = catalog.activeGrammarID {
-            yaml += "active_grammar_id: \"\(active)\"\n"
+            lines.append("active_grammar_id: \"\(yamlEscape(active))\"")
         }
-        yaml += "grammars:\n"
+        lines.append("grammars:")
         for g in catalog.grammars {
-            yaml += "  - id: \"\(g.id)\"\n"
-            yaml += "    name: \"\(g.name)\"\n"
-            yaml += "    template: \"\(g.template)\"\n"
-            yaml += "    description: \"\(g.description)\"\n"
-            yaml += "    is_default: \(g.isDefault)\n"
+            lines.append("  - id: \"\(yamlEscape(g.id))\"")
+            lines.append("    name: \"\(yamlEscape(g.name))\"")
+            lines.append("    template: \"\(yamlEscape(g.template))\"")
+            lines.append("    description: \"\(yamlEscape(g.description))\"")
+            lines.append("    is_default: \(g.isDefault)")
             if !g.fields.isEmpty {
-                yaml += "    fields:\n"
+                lines.append("    fields:")
                 for f in g.fields {
-                    yaml += "      - name: \"\(f.name)\"\n"
-                    yaml += "        role: \"\(f.role)\"\n"
-                    yaml += "        format_hint: \"\(f.formatHint)\"\n"
-                    yaml += "        strip_brackets: \(f.stripBrackets)\n"
+                    lines.append("      - name: \"\(yamlEscape(f.name))\"")
+                    lines.append("        role: \"\(yamlEscape(f.role))\"")
+                    lines.append("        format_hint: \"\(yamlEscape(f.formatHint))\"")
+                    lines.append("        strip_brackets: \(f.stripBrackets)")
                 }
             }
         }
 
+        let yaml = lines.joined(separator: "\n") + "\n"
         try yaml.write(to: file, atomically: true, encoding: .utf8)
     }
 

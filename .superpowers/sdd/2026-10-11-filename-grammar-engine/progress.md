@@ -21,4 +21,17 @@
   - Built Smart Pattern Match Status banner (`✅ MATCHED PATTERN` vs `⚠️ PATTERN MISMATCH` with descriptive diagnostics).
   - Built Extracted Variables & Semantic Roles mapping table with role dropdowns (Date & Time, Instrument, Mode, Device ID, Study, Remarks, Skip) and format hints / `Strip [ ]` toggles.
   - Verified with `./Scripts/check_core.sh`.
-- [ ] **Task 4: Connect Cohort Table & Run Independent Code Reviews**
+- [x] **Task 4: Connect Cohort Table & Run Independent Code Reviews**
+  - Connected Cohort Validation Matrix displaying `Match` / `Miss` status badges and extracted fields across all project files.
+  - Added live `X/Y Matched (Z%)` badge in Cohort Validation header.
+  - Polished YAML quote/backslash escaping, pathExtension stripping, and deterministic declared field order.
+  - Added horizontal scroll view to variable insertion pills for compact windows.
+  - Verified:
+    - `./Scripts/check_core.sh`: passed.
+    - `./Scripts/check_index_cli.sh`: passed.
+    - `swift test --parallel`: all 239 unit tests passed across 11 suites.
+    - `./Scripts/package_app.sh`: production bundle built, signed, and verified.
+  - Independent Code Reviews:
+    - Impeccable UX Reviewer: Approved (`Ready & Impeccable`).
+    - Senior Code Reviewer: Approved (`Ready to proceed`).
+    - Ponytail Reviewer: Simplified bracket checks and deterministic field loops.
