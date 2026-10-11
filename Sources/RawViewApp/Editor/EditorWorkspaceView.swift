@@ -2,14 +2,15 @@ import SwiftUI
 import RawViewCore
 
 /// Clean high-level container shell assembling Profile Studio:
-/// - Left Panel: `EditorLeftSidebarView` (Profile Specification: Active Target File card, Saved Profiles dropdown, Profile Identity, Filename Tokens, Sticky Build Action)
-/// - Right Panel: `EditorCenterCanvasView` (Visual Workspace: Raw Stream Studio vs Live Sandbox Studio)
+/// - Left Panel: `EditorLeftSidebarView` (Active Target File card, Profile Identity, Saved Profiles list, Import YAML, Test Cohort & Build Action)
+/// - Right Panel: `EditorCenterCanvasView` (3 Dedicated Tabs: Filename Tokens | Raw Stream Studio | Live Sandbox Studio)
 public struct EditorWorkspaceView: View {
     public let project: ProjectContext
     public let sources: [RawSource]
     public var initialSelectedSource: RawSource? = nil
 
     public enum StudioTab: String, CaseIterable, Identifiable {
+        case tokens = "Filename Tokens"
         case rawStream = "Raw Stream Studio"
         case liveSandbox = "Live Sandbox Studio"
         public var id: String { rawValue }
@@ -30,12 +31,12 @@ public struct EditorWorkspaceView: View {
 
     public var body: some View {
         HSplitView {
-            // Panel 1 (Left): Unified Profile Specification Sidebar (Identity, Filename Tokens, Cohort, Build)
+            // Panel 1 (Left): Profile Specification (Active Sample, Identity, Saved Profiles, Build Actions)
             EditorLeftSidebarView(model: model, sources: sources)
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
+                .frame(minWidth: 260, idealWidth: 280, maxWidth: 320)
                 .frame(maxHeight: .infinity)
 
-            // Panel 2 (Right): Interactive Visual Studio (Raw Stream & Parser vs Live Sandbox Plot)
+            // Panel 2 (Right): Full-width 3-Tab Interactive Workspace
             EditorCenterCanvasView(model: model, selectedStudioTab: $selectedStudioTab)
                 .frame(minWidth: 500)
                 .frame(maxHeight: .infinity)

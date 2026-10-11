@@ -2,9 +2,10 @@ import SwiftUI
 import RawViewCore
 
 /// Panel 2 (Center Canvas / Visual Studio): Full-width interactive workspace
-/// - Top Command Bar: Studio Tab switcher (`[Raw Stream Studio | Live Sandbox Studio]`), Heuristics button, Save status capsule.
-/// - Tab 1 (Raw Stream Studio): Dedicated Raw Stream Studio with ParserSettingsCanvasView (100% canvas height).
-/// - Tab 2 (Live Sandbox Studio): Dedicated Live Sandbox Studio with LiveSandboxPlotView (100% canvas height).
+/// - Top Command Bar: Studio Tab switcher (`[Filename Tokens | Raw Stream Studio | Live Sandbox Studio]`) and Save status capsule.
+/// - Tab 1 (Filename Tokens): Dedicated Filename Tokens Studio for custom delimiters, segment chips, and cohort preview.
+/// - Tab 2 (Raw Stream Studio): Dedicated Raw Stream Studio with ParserSettingsCanvasView (100% canvas height).
+/// - Tab 3 (Live Sandbox Studio): Dedicated Live Sandbox Studio with LiveSandboxPlotView (100% canvas height).
 struct EditorCenterCanvasView: View {
     @ObservedObject var model: EditorWorkspaceViewModel
     @Binding var selectedStudioTab: EditorWorkspaceView.StudioTab
@@ -23,6 +24,11 @@ struct EditorCenterCanvasView: View {
             Divider()
 
             switch selectedStudioTab {
+            case .tokens:
+                // Dedicated Filename Tokens Studio
+                FilenameTokensStudioView(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
             case .rawStream:
                 // Dedicated Raw Stream Studio with Column Multi-Selection & Header Title Cards (100% Canvas Height)
                 ParserSettingsCanvasView(
@@ -69,26 +75,15 @@ struct EditorCenterCanvasView: View {
     private var commandBar: some View {
         HStack(spacing: 12) {
             Picker("", selection: $selectedStudioTab) {
+                Label("Filename Tokens", systemImage: "text.word.spacing")
+                    .tag(EditorWorkspaceView.StudioTab.tokens)
                 Label("Raw Stream Studio", systemImage: "waveform.path.ecg")
                     .tag(EditorWorkspaceView.StudioTab.rawStream)
                 Label("Live Sandbox Studio", systemImage: "chart.xyaxis.line")
                     .tag(EditorWorkspaceView.StudioTab.liveSandbox)
             }
             .pickerStyle(.segmented)
-            .frame(width: 320)
-
-            Button {
-                model.runAutoDetect()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                    Text("Auto Detect")
-                }
-                .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Run smart heuristics to detect delimiter, decimal separator, headers, and metadata")
+            .frame(width: 440)
 
             Spacer()
 

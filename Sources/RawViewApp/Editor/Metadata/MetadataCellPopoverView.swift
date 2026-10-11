@@ -2,8 +2,12 @@ import SwiftUI
 import RawViewCore
 
 /// Interactive popover for assigning or editing semantic metadata tags on raw data cells.
-/// Features Smart Auto-Inference: automatically detects Parameter Keys from adjacent tokens or colon pairs,
-/// offers 1-tap quick suggestion pills, and infers entity types without manual dropdown friction.
+/// Features Smart Auto-Inference & Excel-Style Coordinate Binding:
+/// - Coordinate Bar: Displays Excel-style coordinate (e.g. `Row 2, Col B (L2:Col 2)`).
+/// - Key Coordinate Input: Allows entering/editing the Key token coordinate or text directly.
+/// - Value Coordinate: Shows target value and allows custom overriding.
+/// - 1-tap quick suggestions & auto-inferred parameter names from adjacent tokens.
+/// - Synchronized role color linking: Links Key and Value cells visually.
 public struct MetadataCellPopoverView: View {
     public let target: CellTarget
     public let existingTag: MetadataCellTag?
@@ -14,6 +18,8 @@ public struct MetadataCellPopoverView: View {
 
     @State private var selectedEntity: MetadataCellTag.EntityType
     @State private var parameterKeyText: String
+    @State private var keyLineText: String
+    @State private var keyColText: String
     @State private var customFormatText: String
     @State private var suggestedKeys: [String] = []
 
@@ -53,7 +59,7 @@ public struct MetadataCellPopoverView: View {
             }
         }
 
-        // 2. Check adjacent tokens (left neighbor is typically the parameter name!)
+        // 2. Check adjacent tokens (left neighbor is typically the parameter key!)
         for adj in adjacentTokens {
             let clean = adj.replacingOccurrences(of: ":", with: "")
                            .replacingOccurrences(of: "=", with: "")
@@ -78,12 +84,15 @@ public struct MetadataCellPopoverView: View {
             } else if Double(raw.components(separatedBy: CharacterSet(charactersIn: " +-eE0123456789.").inverted).first ?? "") != nil {
                 initialEntity = .parameter
             } else {
-                initialEntity = .parameter
+                initialEntity = .sampleName
             }
         }
 
+        let defaultKeyCol = max(0, target.tokenIdx - 1)
         _selectedEntity = State(initialValue: initialEntity)
         _parameterKeyText = State(initialValue: initialKey)
+        _keyLineText = State(initialValue: "\(existingTag?.parameterLineIndex.map { $0 + 1 } ?? (target.lineIdx + 1))")
+        _keyColText = State(initialValue: "\(existingTag?.parameterTokenIndex.map { $0 + 1 } ?? (defaultKeyCol + 1))")
         _customFormatText = State(initialValue: initialFormat)
         _suggestedKeys = State(initialValue: suggestions)
     }
@@ -95,21 +104,32 @@ public struct MetadataCellPopoverView: View {
                 Image(systemName: "sparkle.magnifyingglass")
                     .foregroundStyle(Color.purple)
                     .font(.system(size: 12))
-                Text("Smart Parameter Tagger")
+                Text("Metadata Parameter Pair")
                     .font(.system(size: 12, weight: .bold))
                 Spacer()
-                Text("L\(target.lineIdx + 1), Col \(target.tokenIdx + 1)")
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                Text(excelCoord(row: target.lineIdx + 1, col: target.tokenIdx + 1))
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color.accentColor.opacity(0.1))
+                    .clipShape(Capsule())
             }
 
             Divider()
 
-            // Selected Value display
+            // Target Value & Cell Coordinate
             VStack(alignment: .leading, spacing: 3) {
-                Text("Target Value:")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("Target Value Cell:")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Row \(target.lineIdx + 1), Col \(target.tokenIdx + 1)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+
                 HStack {
                     Text(target.token.isEmpty ? "— (empty)" : target.token)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -130,16 +150,16 @@ public struct MetadataCellPopoverView: View {
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.2), lineWidth: 0.8))
             }
 
-            // Parameter Key with 1-tap Suggestion Chips
+            // Key Coordinate & Parameter Name Input
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Parameter Key / Name:")
+                    Text("Parameter Key (Name):")
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
                     if !parameterKeyText.isEmpty {
-                        Text("Auto-Inferred")
-                            .font(.system(size: 8, weight: .semibold))
+                        Text("Linked Pair")
+                            .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.green)
                     }
                 }
@@ -147,6 +167,35 @@ public struct MetadataCellPopoverView: View {
                 TextField("e.g. Scan Rate, Temperature, pH", text: $parameterKeyText)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11, design: .monospaced))
+
+                // Excel-style Row / Col coordinates for Key
+                HStack(spacing: 6) {
+                    Text("Key Cell Coord:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 2) {
+                        Text("Row").font(.system(size: 8.5)).foregroundStyle(.tertiary)
+                        TextField("Row", text: $keyLineText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .frame(width: 44)
+                    }
+
+                    HStack(spacing: 2) {
+                        Text("Col").font(.system(size: 8.5)).foregroundStyle(.tertiary)
+                        TextField("Col", text: $keyColText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .frame(width: 44)
+                    }
+
+                    if let r = Int(keyLineText), let c = Int(keyColText) {
+                        Text(excelCoord(row: r, col: c))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.purple)
+                    }
+                }
 
                 // Quick suggestions chips
                 if !suggestedKeys.isEmpty {
@@ -161,7 +210,7 @@ public struct MetadataCellPopoverView: View {
                 }
             }
 
-            // Entity Type Category Pills
+            // Category Type Buttons
             VStack(alignment: .leading, spacing: 3) {
                 Text("Category Type:")
                     .font(.system(size: 9.5, weight: .semibold))
@@ -169,7 +218,7 @@ public struct MetadataCellPopoverView: View {
 
                 HStack(spacing: 4) {
                     entityPill(.parameter, label: "Numeric Parameter", icon: "slider.horizontal.3")
-                    entityPill(.sampleName, label: "Sample Name", icon: "tag.text.purple")
+                    entityPill(.sampleName, label: "Sample / Text", icon: "tag.text.purple")
                     entityPill(.dateTime, label: "Date / Time", icon: "calendar")
                 }
             }
@@ -209,6 +258,9 @@ public struct MetadataCellPopoverView: View {
 
                 Button("Assign Tag") {
                     let key = parameterKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let pLine = Int(keyLineText).map { max(0, $0 - 1) }
+                    let pCol = Int(keyColText).map { max(0, $0 - 1) }
+
                     let tag = MetadataCellTag(
                         lineIndex: target.lineIdx,
                         tokenIndex: target.tokenIdx,
@@ -216,7 +268,9 @@ public struct MetadataCellPopoverView: View {
                         entityType: selectedEntity,
                         customKey: key.isEmpty ? nil : key,
                         format: customFormatText.isEmpty ? nil : customFormatText,
-                        parameterKey: key.isEmpty ? nil : key
+                        parameterKey: key.isEmpty ? nil : key,
+                        parameterLineIndex: pLine,
+                        parameterTokenIndex: pCol
                     )
                     onSave(tag)
                     onDismiss()
@@ -227,7 +281,24 @@ public struct MetadataCellPopoverView: View {
             }
         }
         .padding(12)
-        .frame(width: 290)
+        .frame(width: 310)
+    }
+
+    private func excelCoord(row: Int, col: Int) -> String {
+        let colLetter = colLetterForIndex(col)
+        return "\(colLetter)\(row)"
+    }
+
+    private func colLetterForIndex(_ col: Int) -> String {
+        guard col > 0 else { return "A" }
+        var n = col
+        var s = ""
+        while n > 0 {
+            let rem = (n - 1) % 26
+            s = String(UnicodeScalar(65 + rem)!) + s
+            n = (n - 1) / 26
+        }
+        return s
     }
 
     @ViewBuilder

@@ -191,9 +191,18 @@ struct StreamRowView: View {
     private func metadataCell(colIdx: Int, token: String, colColor: Color, colWidth: CGFloat) -> some View {
         let tag = metadataCellTags["\(lineIdx):\(colIdx)"]
 
+        // Find if this cell is linked as a Key by any other tagged value cell
+        let linkedTag = metadataCellTags.values.first(where: { item in
+            item.parameterLineIndex == lineIdx && item.parameterTokenIndex == colIdx
+        })
+        let isLinkedKey = linkedTag != nil
+        let linkedRole = linkedTag?.entityType
+
         return MetadataCellPillView(
             token: token,
             tag: tag,
+            isLinkedKey: isLinkedKey,
+            linkedRole: linkedRole,
             isSkipped: isSkipped,
             style: .streamRow(columnColor: colColor, width: colWidth)
         )
