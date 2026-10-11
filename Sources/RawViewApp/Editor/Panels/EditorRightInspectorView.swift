@@ -1,52 +1,48 @@
 import SwiftUI
 import RawViewCore
 
-/// Panel 3 (Right Inspector): Tab selection (`SpecTab` & `StudioTab`), Instrument Identity,
-/// Filename Token Rules mapper, Column Definitions & Roles list, and Save/Compile YAML actions.
+/// Panel 3 (Right Inspector): Streamlined Profile Inspector
+/// Focused single-scroll flow without redundant tabs or duplicate column controls:
+/// 1. Profile Identity (ID with token auto-picker, Display Name)
+/// 2. Filename Semantic Elements (Interactive visual chips, standard category role badges, format hints, live sibling match)
+/// 3. Sticky Action Footer (Test Against Cohort, Build & Save Profile Cmd+S)
 struct EditorRightInspectorView: View {
     @ObservedObject var model: EditorWorkspaceViewModel
-    @Binding var selectedSpecTab: EditorWorkspaceView.SpecTab
 
-    init(
-        model: EditorWorkspaceViewModel,
-        selectedSpecTab: Binding<EditorWorkspaceView.SpecTab>
-    ) {
+    init(model: EditorWorkspaceViewModel) {
         self.model = model
-        self._selectedSpecTab = selectedSpecTab
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Inspector Header / Tab Switcher
+            // Inspector Header
             HStack {
-                Picker("", selection: $selectedSpecTab) {
-                    ForEach(EditorWorkspaceView.SpecTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
-                    }
+                Label("Profile Inspector", systemImage: "slider.horizontal.2.square")
+                    .font(.system(size: 12, weight: .bold))
+                Spacer()
+                if !model.editor.instrumentID.isEmpty {
+                    Text(model.editor.instrumentID)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(Capsule())
                 }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)
-            .padding(.bottom, 8)
+            .padding(.bottom, 10)
 
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    switch selectedSpecTab {
-                    case .identity:
-                        instrumentIdentitySection
-                        columnRolesSection
+                VStack(alignment: .leading, spacing: 14) {
+                    // Block 1: Profile Identity (Renamed and focused)
+                    profileIdentitySection
 
-                    case .tokens:
-                        filenameSemanticSection
-
-                    case .library:
-                        // Column definitions & quick properties summary
-                        columnRolesSection
-                    }
+                    // Block 2: Interactive Filename Semantic Tokenizer
+                    filenameSemanticSection
                 }
                 .padding(12)
             }
@@ -59,17 +55,22 @@ struct EditorRightInspectorView: View {
         .background(Color(NSColor.windowBackgroundColor))
     }
 
-    // MARK: - Section: Instrument Identity
-    private var instrumentIdentitySection: some View {
+    // MARK: - Section 1: Profile Identity
+    private var profileIdentitySection: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Instrument Identity", systemImage: "cpu")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Label("Profile Identity", systemImage: "cpu")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
-                        Text("Profile ID").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                        Text("Profile ID")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
                         Spacer()
                         if !model.tokens.isEmpty {
                             Menu {
@@ -97,166 +98,24 @@ struct EditorRightInspectorView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Display Name").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    Text("Display Name")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
                     TextField("e.g. Autolab PGSTAT302N", text: $model.editor.instrumentName)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11))
                 }
-
-                HStack {
-                    Text("Delimiter:")
-                        .font(.system(size: 11))
-                    Spacer()
-                    Picker("", selection: $model.editor.delimiter) {
-                        Text("Comma (,)").tag(",")
-                        Text("Tab (\\t)").tag("\t")
-                        Text("Semicolon (;)").tag(";")
-                        Text("Space").tag(" ")
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 120)
-                }
             }
             .padding(4)
         }
     }
 
-    // MARK: - Section: Column Definitions & Scientific Roles
-    private var columnRolesSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label("Column Definitions (\(model.editor.columns.count))", systemImage: "tablecells")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    let activeCount = model.editor.columns.filter { !$0.isSkipped }.count
-                    Text("\(activeCount) active")
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-
-                if model.editor.columns.isEmpty {
-                    Text("No columns detected yet. Click 'Auto Detect' in canvas.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(4)
-                } else {
-                    VStack(spacing: 6) {
-                        ForEach(Array(model.editor.columns.enumerated()), id: \.offset) { idx, col in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Text("#\(idx + 1)")
-                                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 22, alignment: .leading)
-
-                                    TextField("Label", text: Binding(
-                                        get: { col.label },
-                                        set: { newLabel in
-                                            var updated = col
-                                            updated.label = newLabel
-                                            model.updateColumn(index: idx, column: updated)
-                                        }
-                                    ))
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 10, weight: .medium))
-
-                                    TextField("Unit", text: Binding(
-                                        get: { col.unit },
-                                        set: { newUnit in
-                                            var updated = col
-                                            updated.unit = newUnit
-                                            model.updateColumn(index: idx, column: updated)
-                                        }
-                                    ))
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .frame(width: 50)
-
-                                    // Role Toggle Menu
-                                    Menu {
-                                        Button("Set as X Axis (X)") {
-                                            var updated = col
-                                            updated.isXAxis = true
-                                            updated.isYAxis = false
-                                            updated.isSkipped = false
-                                            model.updateColumn(index: idx, column: updated)
-                                        }
-                                        Button("Set as Y Axis (Y)") {
-                                            var updated = col
-                                            updated.isXAxis = false
-                                            updated.isYAxis = true
-                                            updated.isSkipped = false
-                                            model.updateColumn(index: idx, column: updated)
-                                        }
-                                        Button("Set as Auxiliary (Aux)") {
-                                            var updated = col
-                                            updated.isXAxis = false
-                                            updated.isYAxis = false
-                                            updated.isSkipped = false
-                                            model.updateColumn(index: idx, column: updated)
-                                        }
-                                        Divider()
-                                        if col.isSkipped {
-                                            Button("Include Column") {
-                                                var updated = col
-                                                updated.isSkipped = false
-                                                model.updateColumn(index: idx, column: updated)
-                                            }
-                                        } else {
-                                            Button("Skip Column", role: .destructive) {
-                                                var updated = col
-                                                updated.isSkipped = true
-                                                model.updateColumn(index: idx, column: updated)
-                                            }
-                                        }
-                                    } label: {
-                                        Text(roleLabel(for: col))
-                                            .font(.system(size: 9.5, weight: .bold))
-                                            .foregroundStyle(roleColor(for: col))
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 2)
-                                            .background(
-                                                Capsule().fill(roleColor(for: col).opacity(0.15))
-                                            )
-                                    }
-                                    .menuStyle(.borderlessButton)
-                                }
-                            }
-                            .padding(4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(NSColor.controlBackgroundColor))
-                            )
-                        }
-                    }
-                }
-            }
-            .padding(4)
-        }
-    }
-
-    private func roleLabel(for col: ColumnDefinition) -> String {
-        if col.isSkipped { return "Skip" }
-        if col.isXAxis { return "X" }
-        if col.isYAxis { return "Y" }
-        return "Aux"
-    }
-
-    private func roleColor(for col: ColumnDefinition) -> Color {
-        if col.isSkipped { return .secondary }
-        if col.isXAxis { return .blue }
-        if col.isYAxis { return .green }
-        return .orange
-    }
-
-    // MARK: - Section: Filename Semantic Elements
+    // MARK: - Section 2: Filename Semantic Elements (Interactive Visual Tokenizer)
     private var filenameSemanticSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Label("Filename Semantic Elements", systemImage: "text.word.spacing")
+                    Label("Filename Token Rules", systemImage: "text.word.spacing")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -265,19 +124,31 @@ struct EditorRightInspectorView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Detected Token Segments - Quick chips to define element or set identity
+                // Interactive Token Chips Bar
                 if !model.tokens.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Detected Segments (Click to define):")
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Filename Segments (Click to map):")
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(.secondary)
+
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 5) {
-                                ForEach(model.tokens, id: \.self) { tok in
+                                ForEach(Array(model.tokens.enumerated()), id: \.offset) { idx, tok in
+                                    let assigned = model.semanticElements.first(where: { $0.token == tok || $0.index == idx })
                                     Menu {
-                                        Button("Add as Element") {
-                                            model.addElement(token: tok)
+                                        Button("Add as Category Role") {
+                                            model.addElement(token: tok, role: "Study", tagName: "Category")
                                         }
+                                        Button("Add as Device / Legend") {
+                                            model.addElement(token: tok, role: "Device ID", tagName: "Device")
+                                        }
+                                        Button("Add as Date / Time") {
+                                            model.addElement(token: tok, role: "Date & Time", tagName: "Timestamp")
+                                        }
+                                        Button("Add as Metadata Field") {
+                                            model.addElement(token: tok, role: "Remarks", tagName: "Remark")
+                                        }
+                                        Divider()
                                         Button("Use as Profile ID") {
                                             model.editor.instrumentID = tok
                                         }
@@ -285,18 +156,18 @@ struct EditorRightInspectorView: View {
                                             model.editor.instrumentName = tok
                                         }
                                     } label: {
-                                        HStack(spacing: 3) {
-                                            Image(systemName: "plus.circle.fill")
-                                                .font(.system(size: 8))
-                                                .foregroundStyle(.blue)
+                                        HStack(spacing: 4) {
+                                            Circle()
+                                                .fill(roleColor(assigned?.role ?? ""))
+                                                .frame(width: 6, height: 6)
                                             Text(tok)
-                                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                         }
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background(Color(NSColor.controlBackgroundColor))
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3.5)
+                                        .background(assigned != nil ? roleColor(assigned?.role ?? "").opacity(0.12) : Color(NSColor.controlBackgroundColor))
                                         .cornerRadius(4)
-                                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.blue.opacity(0.3), lineWidth: 1))
+                                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(assigned != nil ? roleColor(assigned?.role ?? "").opacity(0.4) : Color.secondary.opacity(0.2), lineWidth: 1))
                                     }
                                     .menuStyle(.borderlessButton)
                                 }
@@ -328,13 +199,13 @@ struct EditorRightInspectorView: View {
                     }
                 }
 
-                // Dynamic Elements Cards List
+                // Semantic Elements Cards
                 if model.semanticElements.isEmpty {
                     VStack(spacing: 4) {
-                        Text("No elements defined yet.")
+                        Text("No category elements mapped.")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.secondary)
-                        Text("Click a token segment above or 'Add Element' to define your custom rules.")
+                        Text("Click any filename segment above to assign its scientific category role.")
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
                             .multilineTextAlignment(.center)
@@ -343,19 +214,22 @@ struct EditorRightInspectorView: View {
                     .frame(maxWidth: .infinity)
                     .background(RoundedRectangle(cornerRadius: 6).stroke(style: StrokeStyle(lineWidth: 1, dash: [4])).foregroundStyle(.secondary.opacity(0.25)))
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 7) {
                         ForEach($model.semanticElements) { $el in
                             VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
+                                HStack(spacing: 5) {
+                                    // Token Text
                                     TextField("Token", text: $el.token)
                                         .textFieldStyle(.roundedBorder)
                                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                        .frame(maxWidth: 105)
+                                        .frame(maxWidth: 95)
 
-                                    TextField("Tag (e.g. Date)", text: $el.tagName)
+                                    // User Tag Name
+                                    TextField("Label", text: $el.tagName)
                                         .textFieldStyle(.roundedBorder)
                                         .font(.system(size: 10))
 
+                                    // Role Picker
                                     Picker("", selection: $el.role) {
                                         ForEach(SemanticTokenElement.standardRoles + ["Custom..."], id: \.self) { role in
                                             Text(role).tag(role)
@@ -364,7 +238,7 @@ struct EditorRightInspectorView: View {
                                     .pickerStyle(.menu)
                                     .font(.system(size: 9.5))
                                     .controlSize(.mini)
-                                    .frame(width: 90)
+                                    .frame(width: 95)
 
                                     Button {
                                         model.removeElement(id: el.id)
@@ -376,18 +250,8 @@ struct EditorRightInspectorView: View {
                                     .buttonStyle(.plain)
                                 }
 
-                                if el.role == "Custom..." || (!SemanticTokenElement.standardRoles.contains(el.role) && el.role != "Remarks") {
-                                    HStack(spacing: 6) {
-                                        Text("Custom Role:").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
-                                        TextField("e.g. Concentration, Cell, Operator", text: $el.role)
-                                            .textFieldStyle(.roundedBorder)
-                                            .font(.system(size: 9.5))
-                                    }
-                                    .padding(.leading, 4)
-                                }
-
                                 if el.role == "Date & Time" {
-                                    HStack(spacing: 6) {
+                                    HStack(spacing: 5) {
                                         Text("Format:").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
                                         TextField("DDMMYYYY-HHmmSS", text: $el.formatHint)
                                             .textFieldStyle(.roundedBorder)
@@ -400,33 +264,37 @@ struct EditorRightInspectorView: View {
                                         .menuStyle(.borderlessButton)
                                         .font(.system(size: 9))
                                     }
-                                    .padding(.leading, 6)
+                                    .padding(.leading, 4)
                                 }
                             }
                             .padding(6)
                             .background(Color(NSColor.controlBackgroundColor))
-                            .cornerRadius(6)
+                            .cornerRadius(5)
                         }
                     }
                 }
 
+                // Live Sibling Matching Preview
                 if !model.siblingPreviews.isEmpty {
                     Divider().padding(.vertical, 2)
-                    Text("Live Sibling Match:")
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("Live Sibling Match:")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(model.siblingPreviews) { sib in
                             HStack(spacing: 4) {
                                 Text(sib.filename)
-                                    .font(.system(size: 9.5, design: .monospaced))
+                                    .font(.system(size: 9, design: .monospaced))
                                     .lineLimit(1)
                                 Spacer()
                                 if let cat = sib.category {
                                     Text(cat)
                                         .font(.system(size: 8, weight: .bold))
                                         .foregroundStyle(.purple)
-                                        .padding(.horizontal, 3).padding(.vertical, 1)
+                                        .padding(.horizontal, 4).padding(.vertical, 1)
                                         .background(Color.purple.opacity(0.12)).cornerRadius(3)
                                 }
                             }
@@ -435,6 +303,16 @@ struct EditorRightInspectorView: View {
                 }
             }
             .padding(4)
+        }
+    }
+
+    private func roleColor(_ role: String) -> Color {
+        switch role {
+        case "Study", "Mode", "category": return .purple
+        case "Device ID", "Library", "legend": return .blue
+        case "Date & Time": return .green
+        case "Remarks", "metadata": return .orange
+        default: return .secondary
         }
     }
 

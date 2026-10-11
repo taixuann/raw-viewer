@@ -4,18 +4,11 @@ import RawViewCore
 /// Clean high-level container shell assembling Profile Studio panels:
 /// - Left Sidebar: `EditorLeftSidebarView` (Active Target File card, Saved Profiles library, Import YAML)
 /// - Center Canvas: `EditorCenterCanvasView` (Studio Tab switcher: Raw Stream Studio vs Live Sandbox Studio)
-/// - Right Inspector: `EditorRightInspectorView` (SpecTab switcher, Identity, Token rules, Column roles, Build action)
 public struct EditorWorkspaceView: View {
     public let project: ProjectContext
     public let sources: [RawSource]
     public var initialSelectedSource: RawSource? = nil
 
-    public enum SpecTab: String, CaseIterable, Identifiable {
-        case identity = "Identity & Roles"
-        case tokens = "Filename Tokens"
-        case library = "Columns List"
-        public var id: String { rawValue }
-    }
 
     public enum StudioTab: String, CaseIterable, Identifiable {
         case rawStream = "Raw Stream Studio"
@@ -25,7 +18,6 @@ public struct EditorWorkspaceView: View {
 
     @StateObject private var model = EditorWorkspaceViewModel()
     @State private var selectedStudioTab: StudioTab = .rawStream
-    @State private var selectedSpecTab: SpecTab = .identity
 
     public init(
         project: ProjectContext,
@@ -50,7 +42,6 @@ public struct EditorWorkspaceView: View {
                 .frame(maxHeight: .infinity)
 
             // Panel 3 (Right): Profile Specification Inspector (Identity, Filename Tokens, Column Roles, Compiler)
-            EditorRightInspectorView(model: model, selectedSpecTab: $selectedSpecTab)
                 .frame(minWidth: 300, idealWidth: 340, maxWidth: 400)
                 .frame(maxHeight: .infinity)
         }
