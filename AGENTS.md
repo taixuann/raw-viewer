@@ -43,7 +43,7 @@ graph TD
     subgraph AppUI ["Application Shell (Sources/RawViewApp)"]
         RawViewApp["RawViewApp: application lifecycle & global state"]
         ExplorerWorkspace["ExplorerWorkspace: 3-column scientific viewer (Tree/Plot/Table)"]
-        EditorWorkspace["EditorWorkspace: 3-panel interactive template builder"]
+        EditorWorkspace["EditorWorkspace: 2-panel interactive template builder"]
     end
 
     ProjectContext --> ProjectSettings
