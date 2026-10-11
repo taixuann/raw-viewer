@@ -8,8 +8,12 @@
 ## Tasks
 - [x] **Task 1: Core FilenameGrammar Engine & YAML Storage (`RawViewCore`)**
   - Added `Sources/RawViewCore/Discovery/FilenameGrammarEngine.swift` with `FilenameGrammar`, `GrammarField`, `FilenameGrammarCatalog`, `ExtractedGrammarFacts`, `FilenameGrammarEngine.compile()`, `FilenameGrammarEngine.extract()`, `FilenameGrammarEngine.save()`, and `FilenameGrammarEngine.load()`.
-  - Added unit test suite `Tests/RawViewCoreTests/FilenameGrammarEngineTests.swift` testing template regex compilation, bracket stripping, non-matching validation, and YAML persistence.
+  - Added unit test suite `Tests/RawViewCoreTests/FilenameGrammarEngineTests.swift`.
   - Tests: 3/3 passed.
-- [ ] **Task 2: ViewModel Grammar State & Persistence Integration**
+- [x] **Task 2: ViewModel Grammar State & Persistence Integration**
+  - Integrated `grammarCatalog`, `activeGrammarID`, `activeTemplate`, `sampleExtractedFacts`, and `grammarMatchError` in `EditorWorkspaceViewModel`.
+  - Added methods `loadGrammarCatalog()`, `saveGrammarCatalog()`, `selectGrammar()`, `addNewGrammar()`, `updateActiveTemplate()`, `updateGrammarField()`, and `recalculateGrammarExtraction()`.
+  - Hooked catalog auto-persistence into `saveProfileAndRules()`.
+  - Verified with `./Scripts/check_core.sh` (passed core self-check & app layer type-check).
 - [ ] **Task 3: Redesign FilenameTokensStudioView into Grammar Pattern Studio**
 - [ ] **Task 4: Connect Cohort Table & Run Independent Code Reviews**

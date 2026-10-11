@@ -76,6 +76,13 @@ final class EditorWorkspaceViewModel: ObservableObject {
     @Published var cohortTestSuccess: Bool = false
     @Published var saveStatusMessage: String?
 
+    // MARK: - Grammar Engine State
+    @Published var grammarCatalog: FilenameGrammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "autolab-scientific")
+    @Published var activeGrammarID: String = "autolab-scientific"
+    @Published var activeTemplate: String = "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]"
+    @Published var sampleExtractedFacts: ExtractedGrammarFacts = ExtractedGrammarFacts(isMatched: false)
+    @Published var grammarMatchError: String? = nil
+
     struct SiblingPreview: Identifiable {
         var id: String { filename }
         let filename: String
@@ -93,6 +100,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
         self.project = project
         self.sources = sources
         refreshSavedProfiles()
+        loadGrammarCatalog()
         if let initial = initialSource ?? sources.first {
             selectSource(initial)
         }
@@ -308,9 +316,139 @@ final class EditorWorkspaceViewModel: ObservableObject {
             }
             syncDefaultPlotChannels()
             updateSiblingPreviews()
+            recalculateGrammarExtraction()
         } catch {
             saveStatusMessage = "Error loading sample: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Grammar Catalog & Pattern Matching Actions
+
+    func loadGrammarCatalog() {
+        guard let project = project else { return }
+        if let loaded = FilenameGrammarEngine.load(project: project) {
+            self.grammarCatalog = loaded
+            if let activeID = loaded.activeGrammarID, let match = loaded.grammars.first(where: { $0.id == activeID }) {
+                self.activeGrammarID = match.id
+                self.activeTemplate = match.template
+            } else if let first = loaded.grammars.first {
+                self.activeGrammarID = first.id
+                self.activeTemplate = first.template
+            }
+        } else {
+            self.grammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "autolab-scientific")
+            if let first = grammarCatalog.grammars.first {
+                self.activeGrammarID = first.id
+                self.activeTemplate = first.template
+            }
+        }
+        recalculateGrammarExtraction()
+    }
+
+    func saveGrammarCatalog() {
+        guard let project = project else { return }
+        syncCurrentTemplateToCatalog()
+        grammarCatalog.activeGrammarID = activeGrammarID
+        do {
+            try FilenameGrammarEngine.save(catalog: grammarCatalog, project: project)
+            saveStatusMessage = "Saved grammar catalog (.rawviewer/view/grammar.yaml)"
+        } catch {
+            saveStatusMessage = "Grammar save error: \(error.localizedDescription)"
+        }
+    }
+
+    func syncCurrentTemplateToCatalog() {
+        guard let idx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) else { return }
+        grammarCatalog.grammars[idx].template = activeTemplate
+    }
+
+    func selectGrammar(id: String) {
+        activeGrammarID = id
+        grammarCatalog.activeGrammarID = id
+        if let match = grammarCatalog.grammars.first(where: { $0.id == id }) {
+            activeTemplate = match.template
+        }
+        recalculateGrammarExtraction()
+        objectWillChange.send()
+    }
+
+    func addNewGrammar(name: String = "New Pattern", template: String = "{date}_{study}_{device-id}") {
+        let newID = UUID().uuidString.prefix(8).lowercased()
+        let newGrammar = FilenameGrammar(
+            id: String(newID),
+            name: name,
+            template: template,
+            fields: [
+                GrammarField(name: "date", role: "Date & Time"),
+                GrammarField(name: "study", role: "Study"),
+                GrammarField(name: "device-id", role: "Device ID")
+            ],
+            isDefault: false
+        )
+        grammarCatalog.grammars.append(newGrammar)
+        selectGrammar(id: newGrammar.id)
+    }
+
+    func updateActiveTemplate(_ newTemplate: String) {
+        activeTemplate = newTemplate
+        syncCurrentTemplateToCatalog()
+        recalculateGrammarExtraction()
+        objectWillChange.send()
+    }
+
+    func updateGrammarField(name: String, role: String, formatHint: String = "", stripBrackets: Bool = false) {
+        guard let gIdx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) else { return }
+        if let fIdx = grammarCatalog.grammars[gIdx].fields.firstIndex(where: { $0.name == name }) {
+            grammarCatalog.grammars[gIdx].fields[fIdx].role = role
+            grammarCatalog.grammars[gIdx].fields[fIdx].formatHint = formatHint
+            grammarCatalog.grammars[gIdx].fields[fIdx].stripBrackets = stripBrackets
+        } else {
+            grammarCatalog.grammars[gIdx].fields.append(GrammarField(name: name, role: role, formatHint: formatHint, stripBrackets: stripBrackets))
+        }
+        recalculateGrammarExtraction()
+        objectWillChange.send()
+    }
+
+    func recalculateGrammarExtraction() {
+        guard let source = selectedSource else {
+            sampleExtractedFacts = ExtractedGrammarFacts(isMatched: false)
+            grammarMatchError = nil
+            return
+        }
+
+        let filename = source.url.lastPathComponent
+        guard let activeGrammar = grammarCatalog.grammars.first(where: { $0.id == activeGrammarID }) else {
+            sampleExtractedFacts = ExtractedGrammarFacts(isMatched: false)
+            grammarMatchError = "No active grammar selected"
+            return
+        }
+
+        var effective = activeGrammar
+        effective.template = activeTemplate
+
+        do {
+            let (_, names) = try FilenameGrammarEngine.compile(template: activeTemplate)
+            for name in names {
+                if !effective.fields.contains(where: { $0.name == name }) {
+                    let role = name.lowercased().contains("date") ? "Date & Time" :
+                               name.lowercased().contains("device") ? "Device ID" :
+                               name.lowercased().contains("instrument") ? "Instrument" :
+                               name.lowercased().contains("mode") ? "Mode" :
+                               name.lowercased().contains("study") ? "Study" : "Remarks"
+                    effective.fields.append(GrammarField(name: name, role: role))
+                }
+            }
+            if let idx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) {
+                grammarCatalog.grammars[idx].fields = effective.fields
+            }
+            grammarMatchError = nil
+        } catch {
+            grammarMatchError = error.localizedDescription
+            sampleExtractedFacts = ExtractedGrammarFacts(isMatched: false, unmatchedReason: error.localizedDescription)
+            return
+        }
+
+        sampleExtractedFacts = FilenameGrammarEngine.extract(from: filename, grammar: effective)
     }
 
     func runAutoDetect() {
@@ -422,6 +560,9 @@ final class EditorWorkspaceViewModel: ObservableObject {
                     try? data.write(to: destURL, options: .atomic)
                 }
             }
+
+            // Save grammar catalog to .rawviewer/view/grammar.yaml
+            saveGrammarCatalog()
 
             refreshSavedProfiles()
             saveStatusMessage = "Saved profile (\(savedFile.lastPathComponent)) & rules."
