@@ -81,6 +81,24 @@ struct FilenameTokensStudioView: View {
                         delimiterToggleChip(" ", label: "Space")
                     }
 
+                    // Custom freeform delimiter input
+                    HStack(spacing: 4) {
+                        TextField("Custom…", text: $customDelimiterText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 65)
+                            .onSubmit {
+                                addCustomDelimiter()
+                            }
+                        if !customDelimiterText.isEmpty {
+                            Button("Add") {
+                                addCustomDelimiter()
+                            }
+                            .font(.system(size: 9.5, weight: .bold))
+                            .controlSize(.mini)
+                        }
+                    }
+
                     Spacer()
                 }
 
@@ -355,6 +373,18 @@ struct FilenameTokensStudioView: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(isSelected ? Color.blue : Color.secondary.opacity(0.2), lineWidth: 0.8))
         }
         .buttonStyle(.plain)
+    }
+
+    private func addCustomDelimiter() {
+        let trimmed = customDelimiterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if !model.editor.tokenDelimiters.contains(trimmed) {
+            model.editor.tokenDelimiters.append(trimmed)
+            if let src = model.selectedSource {
+                model.selectSource(src, preserveProfile: true)
+            }
+        }
+        customDelimiterText = ""
     }
 
     private func roleColor(_ role: String) -> Color {
