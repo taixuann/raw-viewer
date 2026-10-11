@@ -1,16 +1,18 @@
-# Editor Ergonomics, Excel Column Coordinates, and Filename Token Studio Overhaul Implementation Plan
+# Filename Visual Direct-Manipulation & Excel Coordinates Overhaul Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Provide clear Excel-style column headers (`A, B, C...`) in Raw Stream Studio and totally overhaul the Filename Tokens Studio with prominent sample filename inspection, large token chips mapped to actual word segments, cleaner delimiter picker, and reordered cohort table.
+**Goal:** Overhaul the Filename Tokens Studio with a prominent centered Hero Filename Canvas featuring visual pointer arrows (`↓`), interactive text segment selection, synchronized color-coding for mapped categories, a streamlined single-dropdown delimiter picker (including "None / No delimiter"), bottom-reordered cohort table, and explicit Excel column letter headers (`A, B, C...`) in the data stream.
 
-**Architecture:** 
-1. Add an explicit spreadsheet coordinate header row displaying Excel column letters (`A`, `B`, `C`, ... `Z`, `AA`) directly above each column in `StreamHeaderCardView.swift` and `StreamRowView.swift`.
-2. Redesign `FilenameTokensStudioView.swift`:
-   - Feature the active sample filename prominently in the hero section (15pt bold monospaced with visual segment highlights).
-   - Replace cluttered toggle chips with a clean single-select Delimiter Menu/Picker (`Underscore (_)`, `Hyphen (-)`, `Dot (.)`, `Space`, `None / No delimiter`, `Custom...`).
-   - Enlarge token chips with clear font sizing (13–14pt), showing exact token word text, position index, and assigned scientific semantic role.
-   - Move the Cohort Token Matrix to the bottom of the studio with explicit token column headers aligning words across project samples.
+**Architecture:**
+1. In `Sources/RawViewApp/Editor/Panels/FilenameTokensStudioView.swift`:
+   - Replace the cramped layout with a centered **Hero Filename Canvas** (16–18pt monospaced bold).
+   - Display each segment of the sample filename with visual down-pointing arrow indicators (`↓`) and color-coded capsule badges.
+   - Implement direct-click popover/menu with immediate color illumination for assigned roles (`Study / Category` = Purple, `Device ID` = Blue, `Date & Time` = Green, `Mode` = Pink, `Remarks` = Orange).
+   - Replace cluttered toggle chips with a clean single-dropdown Delimiter Menu/Picker (`Underscore (_)`, `Hyphen (-)`, `Dot (.)`, `Space`, `None (No delimiter)`, `Custom...`).
+   - Move the Cohort Token Matrix to the bottom of the studio with clear column headers.
+2. In `Sources/RawViewApp/Editor/Grid/StreamHeaderCardView.swift`:
+   - Add explicit Excel column letter badges `[ A ]`, `[ B ]`, `[ C ]`, ... `[ AA ]` above every column header card matching `A10`, `B2` coordinates.
 
 **Tech Stack:** Swift 5.9+, SwiftUI (macOS 14+), RawViewCore.
 
@@ -25,10 +27,10 @@
 
 ## Review Focus
 
-1. **Spreadsheet coordinate parity**: Column letter calculation for high index columns (> 26 columns, e.g., `Z` -> `AA`, `AB`).
+1. **Spreadsheet coordinate parity**: Column letter calculation for high index columns (> 26 columns, e.g., 0 -> "A", 25 -> "Z", 26 -> "AA").
 2. **"None" delimiter handling**: When "None" is selected, the whole basename is treated as a single token without crash or empty arrays.
-3. **Empty filename / missing sample handling**: When no source file is selected, the studio displays a clean empty state rather than clipping.
-4. **Interactive role assignment reactivity**: Selecting a role on a large token chip updates immediately in `model.semanticElements` and reflects on the highlighted filename preview.
+3. **Dynamic color synchronization**: Mapped roles must immediately light up both the segment text in the filename and its indicator arrow badge.
+4. **Empty filename / missing sample handling**: When no source file is selected, the studio displays a clean empty state rather than clipping.
 5. **Cohort matrix alignment**: Variable token counts across cohort files must not shift columns or misalign category/device extraction.
 
 ---
@@ -37,63 +39,90 @@
 
 **Files:**
 - Modify: `Sources/RawViewApp/Editor/Grid/StreamHeaderCardView.swift`
-- Test: `Tests/RawViewCoreTests/DiscoveryTests.swift` (or dedicated UI logic test)
 
 **Interfaces:**
 - Produces: `excelColumnLetter(for colIndex: Int) -> String` mapping 0 -> "A", 1 -> "B", 25 -> "Z", 26 -> "AA".
 
 - [ ] **Step 1: Write helper function `excelColumnLetter(for colIndex: Int) -> String`**
-  Implement conversion in `StreamHeaderCardView.swift` (or shared helper).
+  Implement letter calculation in `StreamHeaderCardView.swift`:
+  ```swift
+  func excelColumnLetter(for index: Int) -> String {
+      var n = index
+      var result = ""
+      while n >= 0 {
+          let rem = n % 26
+          result = String(UnicodeScalar(65 + rem)!) + result
+          n = (n / 26) - 1
+      }
+      return result
+  }
+  ```
 - [ ] **Step 2: Update `rawHeaderModeView` and `configuredCardModeView` in `StreamHeaderCardView.swift`**
   Add a prominent spreadsheet header badge `[ A ]`, `[ B ]` at the top of every column header card with monospaced bold styling so users immediately identify column coordinates corresponding to `A10`, `B2`.
 - [ ] **Step 3: Verify build and tests**
-  Run `./Scripts/check_core.sh`.
+  Run `./Scripts/check_core.sh` in the worktree.
 - [ ] **Step 4: Commit**
   `git commit -am "feat(editor): display Excel column letters A, B, C on stream header cards"`
 
 ---
 
-### Task 2: Redesign Filename Tokens Studio Hero Section & Delimiter Selector
+### Task 2: Implement Centered Hero Filename Canvas with Pointer Arrows & Color Highlights
 
 **Files:**
 - Modify: `Sources/RawViewApp/Editor/Panels/FilenameTokensStudioView.swift`
 
 **Interfaces:**
-- Consumes: `EditorWorkspaceViewModel.selectedSource`, `EditorWorkspaceViewModel.tokens`, `EditorWorkspaceViewModel.editor.tokenDelimiters`.
-- Produces: Clean Delimiter Picker with options (`_`, `-`, `.`, ` `, `None`, `Custom...`) and Hero Basename Banner.
+- Consumes: `EditorWorkspaceViewModel.selectedSource`, `EditorWorkspaceViewModel.tokens`, `EditorWorkspaceViewModel.semanticElements`.
+- Produces: Centered Hero Filename banner (16–18pt bold) with segment badges and visual pointer arrows (`↓`).
 
-- [ ] **Step 1: Replace tiny right-side sample text with large Hero Sample Banner**
-  Place the sample filename prominently at the top of the canvas: 14-15pt bold monospaced font, clear contrast, icon, and clickable action to switch file.
-- [ ] **Step 2: Display interactive colored segment breakdown of the actual filename**
-  Under the filename, display the basename rendered as colored segments showing exactly which substring corresponds to which token.
-- [ ] **Step 3: Convert delimiter toggles to clean Delimiter Picker**
-  Provide options: `Underscore (_)`, `Hyphen (-)`, `Dot (.)`, `Space`, `None (No delimiter)`, and `Custom...` with clear selection state.
+- [ ] **Step 1: Create the Centered Hero Filename Card**
+  Render the active sample's basename prominently in the center of the studio:
+  - Container: Centered, elevated card with subtle rounded border and clean shadow.
+  - Basename text: 16pt monospaced bold with file icon and sample badge.
+- [ ] **Step 2: Render Segments with Visual Pointer Arrows (`↓`) and Matching Color Highlights**
+  Break the filename into interactive segment blocks:
+  - Arrow indicator: `Image(systemName: "arrow.down")` or `↓` pointing from the segment to its assigned role.
+  - Mapped role badge: If mapped to `Category` (Purple), `Device ID` (Blue), `Date` (Green), etc., highlight both the segment text and the badge in that synchronized color.
+  - Unmapped role: Styled in neutral semi-transparent badge with a prompt "Tap to map role".
+- [ ] **Step 3: Interactive Role Assignment Popover/Menu**
+  Clicking any segment or arrow opens an instant menu:
+  - `Map as Category / Study (Purple)`
+  - `Map as Device / Legend (Blue)`
+  - `Map as Date & Time (Green)`
+  - `Map as Measurement Mode (Pink)`
+  - `Map as Metadata Field (Orange)`
+  - `Clear Mapping`
+  Selecting an option immediately refreshes `model.semanticElements` and lights up the colors in real-time.
 - [ ] **Step 4: Verify build and type-check**
   Run `./Scripts/check_core.sh`.
 - [ ] **Step 5: Commit**
-  `git commit -am "feat(tokens): hero sample banner and simplified delimiter picker in FilenameTokensStudio"`
+  `git commit -am "feat(tokens): centered hero filename canvas with pointer arrows and synchronized color highlights"`
 
 ---
 
-### Task 3: Enlarge Token Chips & Map Clear Word Labels
+### Task 3: Streamline Delimiter Configuration into Single Dropdown Picker
 
 **Files:**
 - Modify: `Sources/RawViewApp/Editor/Panels/FilenameTokensStudioView.swift`
 
 **Interfaces:**
-- Consumes: `model.tokens`, `model.semanticElements`, `model.addElement(...)`.
+- Consumes: `model.editor.tokenDelimiters`.
+- Produces: Single compact Delimiter Picker supporting `_`, `-`, `.`, space, `None`, and `Custom...`.
 
-- [ ] **Step 1: Enlarge Token Chips from 10pt to 13–14pt bold**
-  Redesign each token chip into a large, easy-to-click card showing:
-  - Exact token word string in high-contrast monospaced font.
-  - Position indicator: `Token #1`, `Token #2` (replacing obscure `Col 1`).
-  - Active semantic role badge (e.g. `[ Category / Study ]`, `[ Device ID ]`, `[ Date / Time ]`, `[ Unassigned ]`).
-- [ ] **Step 2: Add 1-click Quick Map dropdown menu**
-  Clicking the large chip opens clear role assignments with immediate color badge feedback.
+- [ ] **Step 1: Replace multi-chip toggles with a clean Delimiter Dropdown / Picker**
+  Implement a segmented/menu picker:
+  - `Underscore (_)`
+  - `Hyphen (-)`
+  - `Dot (.)`
+  - `Space ( )`
+  - `None (No delimiter - whole filename)`
+  - `Custom...` (with inline text field)
+- [ ] **Step 2: Handle "None" delimiter state cleanly**
+  When "None" is chosen, `model.editor.tokenDelimiters = []`, causing `CategoryRuleEngine.tokenize` to treat the whole basename as a single token, ready for manual mapping.
 - [ ] **Step 3: Verify build**
   Run `./Scripts/check_core.sh`.
 - [ ] **Step 4: Commit**
-  `git commit -am "feat(tokens): prominent large token chips with clear word labels and role badges"`
+  `git commit -am "feat(tokens): compact single dropdown delimiter picker with None option"`
 
 ---
 
@@ -105,14 +134,15 @@
 **Interfaces:**
 - Consumes: `model.sources`, `CategoryRuleEngine`.
 
-- [ ] **Step 1: Reorder layout blocks in `FilenameTokensStudioView`**
-  1. Hero Sample & Segmented Preview (Top)
-  2. Token Delimiters & Large Interactive Token Chips (Middle)
+- [ ] **Step 1: Reorder layout structure**
+  Order sections logically:
+  1. Centered Hero Filename & Pointer Arrow Segment Mapper (Top)
+  2. Delimiter Picker & Configuration (Sub-bar)
   3. Configured Token Elements Table (Middle)
   4. Cohort Token Matrix Table (Bottom)
-- [ ] **Step 2: Enhance Cohort Matrix column headers**
-  Display clear column headers aligning filenames with extracted Category and Device ID.
+- [ ] **Step 2: Polish Cohort Token Matrix**
+  Add explicit column headers (`Sample Filename`, `Matched Category`, `Matched Device ID`) and tooltip `.help(...)` on filenames.
 - [ ] **Step 3: Verify full test suite and package app**
   Run `./Scripts/check_core.sh`, `swift test --parallel`, and `./Scripts/package_app.sh`.
 - [ ] **Step 4: Commit**
-  `git commit -am "feat(tokens): reorder cohort matrix to bottom and finalize ergonomics"`
+  `git commit -am "feat(tokens): move cohort matrix to bottom and finalize ergonomics"`
