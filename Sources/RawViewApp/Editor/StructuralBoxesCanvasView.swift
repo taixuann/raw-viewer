@@ -132,37 +132,10 @@ struct StructuralBoxesCanvasView: View {
     }
 
     private func metadataCellPill(lineIdx: Int, tokenIdx: Int, token: String, tag: MetadataCellTag?) -> some View {
-        HStack(spacing: 4) {
-            if let tag = tag {
-                tagIcon(for: tag.entityType)
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(tagColor(for: tag.entityType))
-            }
-
-            Text(token)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(tag != nil ? tagColor(for: tag!.entityType) : Color.primary)
-                .lineLimit(1)
-
-            if let tag = tag {
-                Text(tagBadgeText(tag))
-                    .font(.system(size: 8, weight: .semibold))
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 1)
-                    .background(tagColor(for: tag.entityType).opacity(0.15))
-                    .foregroundStyle(tagColor(for: tag.entityType))
-                    .clipShape(Capsule())
-            }
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3.5)
-        .background(
-            RoundedRectangle(cornerRadius: 4.5)
-                .fill(tag != nil ? tagColor(for: tag!.entityType).opacity(0.08) : Color.primary.opacity(0.03))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 4.5)
-                .stroke(tag != nil ? tagColor(for: tag!.entityType).opacity(0.35) : Color.primary.opacity(0.08), lineWidth: 0.8)
+        MetadataCellPillView(
+            token: token,
+            tag: tag,
+            style: .structuralBox
         )
         .contextMenu {
             Section("INSTRUMENT IDENTIFIER") {
@@ -242,54 +215,6 @@ struct StructuralBoxesCanvasView: View {
                     onRemoveMetadataTag?(lineIdx, tokenIdx)
                 }
             }
-        }
-    }
-
-    private func tagIcon(for type: MetadataCellTag.EntityType) -> Image {
-        switch type {
-        case .instrumentName, .instrumentID:
-            return Image(systemName: "cpu")
-        case .dateTime, .dateOnly, .timeOnly:
-            return Image(systemName: "clock")
-        case .parameter:
-            return Image(systemName: "slider.horizontal.3")
-        case .operatorName, .sampleName, .technique:
-            return Image(systemName: "person.crop.circle")
-        case .ignore:
-            return Image(systemName: "slash.circle")
-        }
-    }
-
-    private func tagColor(for type: MetadataCellTag.EntityType) -> Color {
-        switch type {
-        case .instrumentName, .instrumentID:
-            return Color.purple
-        case .dateTime, .dateOnly, .timeOnly:
-            return Color.blue
-        case .parameter:
-            return Color.orange
-        case .operatorName, .sampleName, .technique:
-            return Color.teal
-        case .ignore:
-            return Color.secondary
-        }
-    }
-
-    private func tagBadgeText(_ tag: MetadataCellTag) -> String {
-        if let param = tag.parameterKey, !param.isEmpty {
-            return param
-        }
-        switch tag.entityType {
-        case .instrumentName: return "Model"
-        case .instrumentID: return "ID"
-        case .dateTime: return "DateTime"
-        case .dateOnly: return "Date"
-        case .timeOnly: return "Time"
-        case .operatorName: return "Operator"
-        case .sampleName: return "Sample"
-        case .technique: return "Technique"
-        case .parameter: return tag.customKey ?? "Param"
-        case .ignore: return "Skip"
         }
     }
 

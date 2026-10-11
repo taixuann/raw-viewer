@@ -31,12 +31,6 @@ struct ParserSettingsCanvasView: View {
     @State private var isDataExpanded: Bool = false // Toggle between head+tail inspection and full stream
     @State private var previewRowCount: Int = 50 // Number of data preview rows before folding
 
-    struct CellTarget: Identifiable {
-        let id = UUID()
-        let lineIdx: Int
-        let tokenIdx: Int
-        let token: String
-    }
     @State private var activeCellPopover: CellTarget? = nil
 
     @State private var selectedColumns: Set<Int> = [] // 0-based column indices
@@ -113,17 +107,8 @@ struct ParserSettingsCanvasView: View {
         dataStartLineChoice > 0 ? dataStartLineChoice : currentDataStartLine
     }
 
-    struct MetadataEntry: Identifiable {
-        let lineIndex: Int
-        var lineNum: Int { lineIndex + 1 }
-        let rawText: String
-        let key: String
-        let value: String
-        var id: Int { lineNum }
-    }
-
-    private var metadataEntries: [MetadataEntry] {
-        var entries: [MetadataEntry] = []
+    private var metadataEntries: [MetadataSummaryEntry] {
+        var entries: [MetadataSummaryEntry] = []
         let dataStartIdx = min(lines.count, max(0, effectiveDataStartLine - 1))
         let headerIdx = effectiveHeaderLine.map { $0 - 1 }
         let limit = min(dataStartIdx, 50)
@@ -135,13 +120,13 @@ struct ParserSettingsCanvasView: View {
             if let colonIdx = clean.firstIndex(of: ":") {
                 let k = String(clean[..<colonIdx]).trimmingCharacters(in: .whitespaces)
                 let v = String(clean[clean.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
-                entries.append(MetadataEntry(lineIndex: i, rawText: trimmed, key: k, value: v))
+                entries.append(MetadataSummaryEntry(lineIndex: i, rawText: trimmed, key: k, value: v))
             } else if let eqIdx = clean.firstIndex(of: "=") {
                 let k = String(clean[..<eqIdx]).trimmingCharacters(in: .whitespaces)
                 let v = String(clean[clean.index(after: eqIdx)...]).trimmingCharacters(in: .whitespaces)
-                entries.append(MetadataEntry(lineIndex: i, rawText: trimmed, key: k, value: v))
+                entries.append(MetadataSummaryEntry(lineIndex: i, rawText: trimmed, key: k, value: v))
             } else {
-                entries.append(MetadataEntry(lineIndex: i, rawText: trimmed, key: clean, value: ""))
+                entries.append(MetadataSummaryEntry(lineIndex: i, rawText: trimmed, key: clean, value: ""))
             }
         }
         return entries
@@ -503,164 +488,7 @@ struct ParserSettingsCanvasView: View {
         return "Data"
     }
 
-    // MARK: - Metadata Cell Parameter Popover View
-    struct MetadataCellPopoverView: View {
-        let target: CellTarget
-        let existingTag: MetadataCellTag?
-        let adjacentTokens: [String]
-        let onSave: (MetadataCellTag) -> Void
-        let onRemove: () -> Void
-        let onDismiss: () -> Void
 
-        @State private var selectedEntity: MetadataCellTag.EntityType = .parameter
-        @State private var parameterKeyText: String = ""
-        @State private var customFormatText: String = ""
-
-        init(
-            target: CellTarget,
-            existingTag: MetadataCellTag?,
-            adjacentTokens: [String],
-            onSave: @escaping (MetadataCellTag) -> Void,
-            onRemove: @escaping () -> Void,
-            onDismiss: @escaping () -> Void
-        ) {
-            self.target = target
-            self.existingTag = existingTag
-            self.adjacentTokens = adjacentTokens
-            self.onSave = onSave
-            self.onRemove = onRemove
-            self.onDismiss = onDismiss
-            _selectedEntity = State(initialValue: existingTag?.entityType ?? .parameter)
-            _parameterKeyText = State(initialValue: existingTag?.parameterKey ?? existingTag?.customKey ?? adjacentTokens.first ?? "")
-            _customFormatText = State(initialValue: existingTag?.format ?? "")
-        }
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
-                // Header
-                HStack(spacing: 5) {
-                    Image(systemName: "tag.fill")
-                        .foregroundStyle(Color.purple)
-                    Text("Tag Metadata Cell")
-                        .font(.system(size: 12, weight: .bold))
-                    Spacer()
-                    Text("L\(target.lineIdx + 1), Col \(target.tokenIdx + 1)")
-                        .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-
-                Divider()
-
-                // Selected Value display
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Selected Value:")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(target.token.isEmpty ? "— (empty)" : target.token)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.04)))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 0.8))
-                }
-
-                // Entity Type Picker
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Entity Type:")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Picker("", selection: $selectedEntity) {
-                        ForEach(MetadataCellTag.EntityType.allCases, id: \.self) { entity in
-                            Text(entity.rawValue).tag(entity)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                }
-
-                // Parameter Key with Suggestions
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Parameter Key / Name:")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-
-                    TextField("e.g. Scan Rate, Temperature, Date", text: $parameterKeyText)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-
-                    if !adjacentTokens.isEmpty {
-                        HStack(spacing: 4) {
-                            Text("Suggested:")
-                                .font(.system(size: 8.5))
-                                .foregroundStyle(.tertiary)
-                            ForEach(adjacentTokens.prefix(3), id: \.self) { sug in
-                                Button(sug) {
-                                    parameterKeyText = sug
-                                }
-                                .font(.system(size: 8.5, weight: .medium))
-                                .buttonStyle(.borderless)
-                                .foregroundStyle(Color.accentColor)
-                            }
-                        }
-                    }
-                }
-
-                // Optional Format (for Date/Time)
-                if selectedEntity == .dateTime || selectedEntity == .dateOnly || selectedEntity == .timeOnly {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Format (Optional):")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. yyyy-MM-dd HH:mm:ss", text: $customFormatText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 10.5, design: .monospaced))
-                    }
-                }
-
-                Divider()
-
-                // Actions
-                HStack(spacing: 8) {
-                    if existingTag != nil {
-                        Button("Clear Tag", role: .destructive) {
-                            onRemove()
-                            onDismiss()
-                        }
-                        .font(.system(size: 10.5))
-                        .controlSize(.small)
-                    }
-
-                    Spacer()
-
-                    Button("Cancel") {
-                        onDismiss()
-                    }
-                    .font(.system(size: 10.5))
-                    .controlSize(.small)
-
-                    Button("Assign Tag") {
-                        let tag = MetadataCellTag(
-                            lineIndex: target.lineIdx,
-                            tokenIndex: target.tokenIdx,
-                            rawValue: target.token,
-                            entityType: selectedEntity,
-                            customKey: parameterKeyText.isEmpty ? nil : parameterKeyText,
-                            format: customFormatText.isEmpty ? nil : customFormatText,
-                            parameterKey: parameterKeyText.isEmpty ? nil : parameterKeyText
-                        )
-                        onSave(tag)
-                        onDismiss()
-                    }
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-            }
-            .padding(12)
-            .frame(width: 280)
-        }
-    }
 
     private func skipSelectedColumns() {
         for cIdx in selectedColumns where cIdx < columns.count {
@@ -768,77 +596,10 @@ struct ParserSettingsCanvasView: View {
 
     // MARK: - Metadata Popover Content
     private var metadataPopoverContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Metadata Selection", systemImage: "tag.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.purple)
-                Spacer()
-                Button("All") {
-                    skippedMetadataLines.removeAll()
-                }
-                .font(.system(size: 10))
-                .buttonStyle(.borderless)
-
-                Button("None") {
-                    skippedMetadataLines = Set(metadataEntries.map { $0.lineNum })
-                }
-                .font(.system(size: 10))
-                .buttonStyle(.borderless)
-            }
-            Text("Check items to include in profile metadata. Unchecked lines will be skipped.")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-
-            Divider()
-
-            if metadataEntries.isEmpty {
-                Text("No metadata lines detected before data rows.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .padding(.vertical, 8)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(metadataEntries) { item in
-                            let isIncluded = !skippedMetadataLines.contains(item.lineNum)
-                            Button {
-                                if isIncluded {
-                                    skippedMetadataLines.insert(item.lineNum)
-                                } else {
-                                    skippedMetadataLines.remove(item.lineNum)
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: isIncluded ? "checkmark.square.fill" : "square")
-                                        .foregroundStyle(isIncluded ? Color.purple : Color.secondary)
-                                    Text("L\(item.lineNum)")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 28, alignment: .trailing)
-                                    Text(item.key)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(isIncluded ? Color.primary : Color.secondary)
-                                    if !item.value.isEmpty {
-                                        Text(":")
-                                            .foregroundStyle(.secondary)
-                                        Text(item.value)
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundStyle(isIncluded ? Color.primary : Color.secondary)
-                                    }
-                                    Spacer()
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .frame(maxHeight: 220)
-            }
-        }
-        .padding(12)
-        .frame(width: 320)
+        MetadataSummaryPopover(
+            metadataEntries: metadataEntries,
+            skippedMetadataLines: $skippedMetadataLines
+        )
     }
 
     // MARK: - Collapsed Data Banner

@@ -27,7 +27,7 @@ struct StreamRowView: View {
     @Binding var hoveredColumn: Int?
     @Binding var selectedLines: Set<Int>
     @Binding var skippedMetadataLines: Set<Int>
-    @Binding var activeCellPopover: ParserSettingsCanvasView.CellTarget?
+    @Binding var activeCellPopover: CellTarget?
     @Binding var headerLineChoice: Int
     @Binding var headerLineText: String
     @Binding var dataStartLineChoice: Int
@@ -191,39 +191,16 @@ struct StreamRowView: View {
     private func metadataCell(colIdx: Int, token: String, colColor: Color, colWidth: CGFloat) -> some View {
         let tag = metadataCellTags["\(lineIdx):\(colIdx)"]
 
-        return HStack(spacing: 4) {
-            Text(token.isEmpty ? "—" : token)
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundStyle(isSkipped ? Color.secondary.opacity(0.4) : Color.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Spacer(minLength: 0)
-
-            if let t = tag {
-                HStack(spacing: 2) {
-                    tagIcon(for: t.entityType)
-                        .font(.system(size: 7))
-                    Text(tagBadgeText(t))
-                        .font(.system(size: 8, weight: .bold))
-                }
-                .foregroundStyle(tagColor(for: t.entityType))
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(tagColor(for: t.entityType).opacity(0.14)))
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .frame(width: colWidth, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 3)
-                .fill(tag != nil ? tagColor(for: tag!.entityType).opacity(0.08) : colColor.opacity(isSkipped ? 0.015 : 0.03))
+        return MetadataCellPillView(
+            token: token,
+            tag: tag,
+            isSkipped: isSkipped,
+            style: .streamRow(columnColor: colColor, width: colWidth)
         )
         .contentShape(Rectangle())
         .onTapGesture {
             if !token.isEmpty {
-                activeCellPopover = ParserSettingsCanvasView.CellTarget(lineIdx: lineIdx, tokenIdx: colIdx, token: token)
+                activeCellPopover = CellTarget(lineIdx: lineIdx, tokenIdx: colIdx, token: token)
             }
         }
         .popover(isPresented: Binding(
@@ -235,7 +212,7 @@ struct StreamRowView: View {
                     .enumerated()
                     .filter { $0.offset != colIdx && !$0.element.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                     .map { $0.element.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ":", with: "").trimmingCharacters(in: .whitespaces) }
-                ParserSettingsCanvasView.MetadataCellPopoverView(
+                MetadataCellPopoverView(
                     target: target,
                     existingTag: tag,
                     adjacentTokens: adjacent,
@@ -330,54 +307,6 @@ struct StreamRowView: View {
         }
     }
 
-    // MARK: - Metadata Tag Helpers
-    private func tagBadgeText(_ tag: MetadataCellTag) -> String {
-        if let param = tag.parameterKey, !param.isEmpty {
-            return param
-        }
-        switch tag.entityType {
-        case .instrumentName: return "Model"
-        case .instrumentID: return "ID"
-        case .dateTime: return "DateTime"
-        case .dateOnly: return "Date"
-        case .timeOnly: return "Time"
-        case .operatorName: return "Operator"
-        case .sampleName: return "Sample"
-        case .technique: return "Technique"
-        case .parameter: return tag.customKey ?? "Param"
-        case .ignore: return "Skip"
-        }
-    }
-
-    private func tagIcon(for type: MetadataCellTag.EntityType) -> Image {
-        switch type {
-        case .instrumentName, .instrumentID:
-            return Image(systemName: "cpu")
-        case .dateTime, .dateOnly, .timeOnly:
-            return Image(systemName: "clock")
-        case .parameter:
-            return Image(systemName: "slider.horizontal.3")
-        case .operatorName, .sampleName, .technique:
-            return Image(systemName: "person.crop.circle")
-        case .ignore:
-            return Image(systemName: "slash.circle")
-        }
-    }
-
-    private func tagColor(for type: MetadataCellTag.EntityType) -> Color {
-        switch type {
-        case .instrumentName, .instrumentID:
-            return Color.purple
-        case .dateTime, .dateOnly, .timeOnly:
-            return Color.blue
-        case .parameter:
-            return Color.orange
-        case .operatorName, .sampleName, .technique:
-            return Color.teal
-        case .ignore:
-            return Color.secondary
-        }
-    }
 
     @ViewBuilder
     private func metadataCellContextMenu(lineIdx: Int, tokenIdx: Int, token: String, tag: MetadataCellTag?) -> some View {
