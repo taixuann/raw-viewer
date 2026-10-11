@@ -71,7 +71,7 @@ struct FilenameTokensStudioView: View {
         .background(Color(NSColor.controlBackgroundColor))
     }
 
-    // MARK: - 1. Hero Filename Canvas (To chình ình ở giữa với Mũi tên chỉ trỏ & Highlight màu)
+    // MARK: - 1. Hero Filename Canvas (Centered Inspection with Pointer Arrows and Color Highlights)
     private var heroFilenameCanvas: some View {
         VStack(spacing: 16) {
             // Container Header
