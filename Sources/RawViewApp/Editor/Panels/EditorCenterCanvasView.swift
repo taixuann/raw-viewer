@@ -1,19 +1,20 @@
 import SwiftUI
 import RawViewCore
 
-/// Panel 2 (Center Canvas): Header bar with Mode switcher (`CanvasMode`: Data Matrix vs Raw Stream & Parser),
-/// and 50:50 vertical split layout between data table (`StructuralBoxesCanvasView` / `ParserSettingsCanvasView`)
-/// and Live Sandbox Studio mini-plot (`LiveSandboxPlotView`).
-public struct EditorCenterCanvasView: View {
-    @ObservedObject public var model: EditorWorkspaceViewModel
-    @Binding public var canvasMode: CanvasMode
+/// Panel 2 (Center Canvas / Visual Studio): Full-width interactive workspace
+/// - Top Command Bar: Studio Tab switcher (`[Raw Stream Studio | Live Sandbox Studio]`), Heuristics button, Save status capsule.
+/// - Tab 1 (Raw Stream Studio): Dedicated Raw Stream Studio with ParserSettingsCanvasView (100% canvas height).
+/// - Tab 2 (Live Sandbox Studio): Dedicated Live Sandbox Studio with LiveSandboxPlotView (100% canvas height).
+struct EditorCenterCanvasView: View {
+    @ObservedObject var model: EditorWorkspaceViewModel
+    @Binding var selectedStudioTab: EditorWorkspaceView.StudioTab
 
-    public init(
+    init(
         model: EditorWorkspaceViewModel,
-        canvasMode: Binding<CanvasMode>
+        selectedStudioTab: Binding<EditorWorkspaceView.StudioTab>
     ) {
         self.model = model
-        self._canvasMode = canvasMode
+        self._selectedStudioTab = selectedStudioTab
     }
 
     public var body: some View {
@@ -21,95 +22,60 @@ public struct EditorCenterCanvasView: View {
             commandBar
             Divider()
 
-            VSplitView {
-                // Upper half: Data Table View (Data Matrix vs Raw Stream & Parser)
-                upperTableView
-                    .frame(minHeight: 220)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            switch selectedStudioTab {
+            case .rawStream:
+                // Dedicated Raw Stream Studio with Column Multi-Selection & Header Title Cards (100% Canvas Height)
+                ParserSettingsCanvasView(
+                    lines: model.editor.lines,
+                    delimiter: $model.editor.delimiter,
+                    decimalSeparator: $model.editor.decimalDelimiter,
+                    columns: $model.editor.columns,
+                    lineTags: model.editor.lineTags,
+                    metadataCellTags: model.editor.metadataCellTags,
+                    onTagMetadataCell: { tag in
+                        model.tagMetadataCell(tag)
+                    },
+                    onRemoveMetadataTag: { lineIdx, tokIdx in
+                        model.removeMetadataTag(lineIndex: lineIdx, tokenIndex: tokIdx)
+                    },
+                    onUpdateColumn: { idx, col in
+                        model.updateColumn(index: idx, column: col)
+                    },
+                    onRunAutoDetect: {
+                        model.runAutoDetect()
+                    },
+                    onApplyCustomStructure: { delim, decimal, headerLine, dataStart, skippedLines in
+                        model.applyCustomStructure(delimiter: delim, decimalSeparator: decimal, headerLine: headerLine, dataStartLine: dataStart, skippedMetadataLines: skippedLines)
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Lower half: Live Sandbox Studio Plot
-                lowerPlotView
-                    .frame(minHeight: 220)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .liveSandbox:
+                // Dedicated Live Sandbox Studio with 100% Canvas Height
+                LiveSandboxPlotView(
+                    lines: model.editor.lines,
+                    delimiter: model.editor.delimiter,
+                    columns: model.editor.columns,
+                    lineTags: model.editor.lineTags,
+                    selectedXCol: $model.sandboxXCol,
+                    selectedYCol: $model.sandboxYCol
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
 
-    // MARK: - Upper Data Table View
-    @ViewBuilder
-    private var upperTableView: some View {
-        switch canvasMode {
-        case .matrix:
-            StructuralBoxesCanvasView(
-                lines: model.editor.lines,
-                delimiter: model.editor.delimiter,
-                columns: $model.editor.columns,
-                lineTags: model.editor.lineTags,
-                metadataCellTags: model.editor.metadataCellTags,
-                onTagMetadataCell: { tag in
-                    model.tagMetadataCell(tag)
-                },
-                onRemoveMetadataTag: { lineIdx, tokIdx in
-                    model.removeMetadataTag(lineIndex: lineIdx, tokenIndex: tokIdx)
-                },
-                onUpdateColumn: { idx, col in
-                    model.updateColumn(index: idx, column: col)
-                },
-                onSelectDelimiter: { delim in
-                    model.editor.delimiter = delim
-                    model.runAutoDetect()
-                }
-            )
-
-        case .stream:
-            ParserSettingsCanvasView(
-                lines: model.editor.lines,
-                delimiter: $model.editor.delimiter,
-                decimalSeparator: $model.editor.decimalDelimiter,
-                columns: $model.editor.columns,
-                lineTags: model.editor.lineTags,
-                metadataCellTags: model.editor.metadataCellTags,
-                onTagMetadataCell: { tag in
-                    model.tagMetadataCell(tag)
-                },
-                onRemoveMetadataTag: { lineIdx, tokIdx in
-                    model.removeMetadataTag(lineIndex: lineIdx, tokenIndex: tokIdx)
-                },
-                onUpdateColumn: { idx, col in
-                    model.updateColumn(index: idx, column: col)
-                },
-                onRunAutoDetect: {
-                    model.runAutoDetect()
-                },
-                onApplyCustomStructure: { delim, decimal, headerLine, dataStart, skippedLines in
-                    model.applyCustomStructure(delimiter: delim, decimalSeparator: decimal, headerLine: headerLine, dataStartLine: dataStart, skippedMetadataLines: skippedLines)
-                }
-            )
-        }
-    }
-
-    // MARK: - Lower Live Sandbox Plot View
-    private var lowerPlotView: some View {
-        LiveSandboxPlotView(
-            lines: model.editor.lines,
-            delimiter: model.editor.delimiter,
-            columns: model.editor.columns,
-            lineTags: model.editor.lineTags,
-            selectedXCol: $model.sandboxXCol,
-            selectedYCol: $model.sandboxYCol
-        )
-    }
-
-    // MARK: - Header Command Bar
+    // MARK: - Top Command Bar
     private var commandBar: some View {
         HStack(spacing: 12) {
-            Picker("", selection: $canvasMode) {
-                ForEach(CanvasMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
+            Picker("", selection: $selectedStudioTab) {
+                Label("Raw Stream Studio", systemImage: "waveform.path.ecg")
+                    .tag(EditorWorkspaceView.StudioTab.rawStream)
+                Label("Live Sandbox Studio", systemImage: "chart.xyaxis.line")
+                    .tag(EditorWorkspaceView.StudioTab.liveSandbox)
             }
             .pickerStyle(.segmented)
-            .frame(width: 280)
+            .frame(width: 320)
 
             Button {
                 model.runAutoDetect()
@@ -122,27 +88,26 @@ public struct EditorCenterCanvasView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .help("Run smart heuristics to detect delimiter, decimal separator, headers, and metadata")
 
             Spacer()
 
-            if let status = model.saveStatusMessage {
+            if !((model.saveStatusMessage ?? "").isEmpty) {
                 HStack(spacing: 4) {
-                    Image(systemName: (status.contains("error") || status.contains("Failed")) ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .font(.system(size: 9.5))
-                    Text(status)
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .lineLimit(1)
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(model.saveStatusMessage ?? "")
+                        .foregroundStyle(.secondary)
                 }
-                .foregroundStyle((status.contains("error") || status.contains("Failed")) ? Color.red : Color.green)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(((status.contains("error") || status.contains("Failed")) ? Color.red : Color.green).opacity(0.12))
-                )
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.green.opacity(0.08))
+                .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .background(Color(NSColor.controlBackgroundColor))
     }
 }

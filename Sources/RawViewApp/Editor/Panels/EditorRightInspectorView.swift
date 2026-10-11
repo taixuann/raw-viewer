@@ -3,11 +3,11 @@ import RawViewCore
 
 /// Panel 3 (Right Inspector): Tab selection (`SpecTab` & `StudioTab`), Instrument Identity,
 /// Filename Token Rules mapper, Column Definitions & Roles list, and Save/Compile YAML actions.
-public struct EditorRightInspectorView: View {
-    @ObservedObject public var model: EditorWorkspaceViewModel
-    @Binding public var selectedSpecTab: EditorWorkspaceView.SpecTab
+struct EditorRightInspectorView: View {
+    @ObservedObject var model: EditorWorkspaceViewModel
+    @Binding var selectedSpecTab: EditorWorkspaceView.SpecTab
 
-    public init(
+    init(
         model: EditorWorkspaceViewModel,
         selectedSpecTab: Binding<EditorWorkspaceView.SpecTab>
     ) {

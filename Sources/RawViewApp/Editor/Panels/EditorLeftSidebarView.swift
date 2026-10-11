@@ -2,11 +2,11 @@ import SwiftUI
 import RawViewCore
 
 /// Panel 1 (Left Sidebar): Active Target File card, Saved Profiles Library, and Import YAML action.
-public struct EditorLeftSidebarView: View {
-    @ObservedObject public var model: EditorWorkspaceViewModel
-    public let sources: [RawSource]
+struct EditorLeftSidebarView: View {
+    @ObservedObject var model: EditorWorkspaceViewModel
+    let sources: [RawSource]
 
-    public init(model: EditorWorkspaceViewModel, sources: [RawSource]) {
+    init(model: EditorWorkspaceViewModel, sources: [RawSource]) {
         self.model = model
         self.sources = sources
     }

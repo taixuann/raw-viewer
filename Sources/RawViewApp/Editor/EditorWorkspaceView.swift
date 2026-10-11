@@ -3,7 +3,7 @@ import RawViewCore
 
 /// Clean high-level container shell assembling Profile Studio panels:
 /// - Left Sidebar: `EditorLeftSidebarView` (Active Target File card, Saved Profiles library, Import YAML)
-/// - Center Canvas: `EditorCenterCanvasView` (CanvasMode switcher, 50:50 table/live plot split)
+/// - Center Canvas: `EditorCenterCanvasView` (Studio Tab switcher: Raw Stream Studio vs Live Sandbox Studio)
 /// - Right Inspector: `EditorRightInspectorView` (SpecTab switcher, Identity, Token rules, Column roles, Build action)
 public struct EditorWorkspaceView: View {
     public let project: ProjectContext
@@ -24,9 +24,8 @@ public struct EditorWorkspaceView: View {
     }
 
     @StateObject private var model = EditorWorkspaceViewModel()
-    @State private var canvasMode: CanvasMode = .stream
+    @State private var selectedStudioTab: StudioTab = .rawStream
     @State private var selectedSpecTab: SpecTab = .identity
-    @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     public init(
         project: ProjectContext,
@@ -40,19 +39,19 @@ public struct EditorWorkspaceView: View {
 
     public var body: some View {
         HSplitView {
-            // Panel 1 (Left): Active Target File & Saved Profiles Library
+            // Panel 1 (Left): Target sample, saved profiles library, and quick actions
             EditorLeftSidebarView(model: model, sources: sources)
-                .frame(minWidth: 240, idealWidth: 280, maxWidth: 340)
+                .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
                 .frame(maxHeight: .infinity)
 
-            // Panel 2 (Center): Interactive Visual Studio (Dual Table & Live Plot Split)
-            EditorCenterCanvasView(model: model, canvasMode: $canvasMode)
-                .frame(minWidth: 460)
+            // Panel 2 (Center): Dedicated Visual Workspace (Raw Stream vs Live Sandbox Studio)
+            EditorCenterCanvasView(model: model, selectedStudioTab: $selectedStudioTab)
+                .frame(minWidth: 500)
                 .frame(maxHeight: .infinity)
 
-            // Panel 3 (Right): Instrument Specification, Token Rules & Column Roles
+            // Panel 3 (Right): Profile Specification Inspector (Identity, Filename Tokens, Column Roles, Compiler)
             EditorRightInspectorView(model: model, selectedSpecTab: $selectedSpecTab)
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 400)
                 .frame(maxHeight: .infinity)
         }
         .onAppear {
@@ -66,44 +65,44 @@ public struct EditorWorkspaceView: View {
     }
 }
 
-// MARK: - ViewModel & Subviews
+// MARK: - View Model
 @MainActor
-public final class EditorWorkspaceViewModel: ObservableObject {
-    @Published public var project: ProjectContext?
-    @Published public var sources: [RawSource] = []
-    @Published public var selectedSource: RawSource?
-    @Published public var editor = EditorWorkspaceModel()
-    @Published public var selectedLineRange: ClosedRange<Int>?
+final class EditorWorkspaceViewModel: ObservableObject {
+    @Published var project: ProjectContext?
+    @Published var sources: [RawSource] = []
+    @Published var selectedSource: RawSource?
+    @Published var editor = EditorWorkspaceModel()
+    @Published var selectedLineRange: ClosedRange<Int>?
 
-    @Published public var tokens: [String] = []
-    @Published public var semanticElements: [SemanticTokenElement] = []
-    @Published public var categoryTokenIndex: Int? {
+    @Published var tokens: [String] = []
+    @Published var semanticElements: [SemanticTokenElement] = []
+    @Published var categoryTokenIndex: Int? {
         didSet { updateSiblingPreviews() }
     }
-    @Published public var deviceTokenIndex: Int? {
+    @Published var deviceTokenIndex: Int? {
         didSet { updateSiblingPreviews() }
     }
 
-    @Published public var savedProfiles: [URL] = []
-    @Published public var sandboxXCol: String?
-    @Published public var sandboxYCol: String?
+    @Published var savedProfiles: [URL] = []
+    @Published var sandboxXCol: String?
+    @Published var sandboxYCol: String?
 
-    @Published public var cohortTestResult: String?
-    @Published public var cohortTestSuccess: Bool = false
-    @Published public var saveStatusMessage: String?
+    @Published var cohortTestResult: String?
+    @Published var cohortTestSuccess: Bool = false
+    @Published var saveStatusMessage: String?
 
-    public struct SiblingPreview: Identifiable {
-        public var id: String { filename }
-        public let filename: String
-        public let category: String?
-        public let device: String?
+    struct SiblingPreview: Identifiable {
+        var id: String { filename }
+        let filename: String
+        let category: String?
+        let device: String?
     }
 
-    @Published public var siblingPreviews: [SiblingPreview] = []
+    @Published var siblingPreviews: [SiblingPreview] = []
 
     private var isInitialized = false
 
-    public func setup(project: ProjectContext, sources: [RawSource], initialSource: RawSource? = nil) {
+    func setup(project: ProjectContext, sources: [RawSource], initialSource: RawSource? = nil) {
         guard !isInitialized || self.project?.root != project.root else { return }
         isInitialized = true
         self.project = project
@@ -114,7 +113,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func refreshSavedProfiles() {
+    func refreshSavedProfiles() {
         guard let project = project else { return }
         var collectedURLs: [URL] = []
         var seenFilenames = Set<String>()
@@ -142,7 +141,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         self.savedProfiles = collectedURLs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
     }
 
-    public func importProfile() {
+    func importProfile() {
         guard let project = project else { return }
         let panel = NSOpenPanel()
         panel.title = "Import Instrument Profile YAML"
@@ -166,7 +165,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func loadSavedProfile(url: URL) {
+    func loadSavedProfile(url: URL) {
         do {
             try editor.loadSavedProfile(url: url)
             self.tokens = editor.tokens
@@ -183,7 +182,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func syncDefaultPlotChannels() {
+    func syncDefaultPlotChannels() {
         if let primaryX = editor.primaryXColumn {
             self.sandboxXCol = primaryX.name
         }
@@ -192,7 +191,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func loadRepresentativeSampleForProfile(profileURL: URL) {
+    func loadRepresentativeSampleForProfile(profileURL: URL) {
         guard let project = project else { return }
         let profileBaseName = profileURL.deletingPathExtension().lastPathComponent
         let examplesDir = project.root.appendingPathComponent(".rawviewer/instrument/examples", isDirectory: true)
@@ -236,7 +235,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func pinCurrentAsExample() {
+    func pinCurrentAsExample() {
         guard let project = project, let current = selectedSource else { return }
         let id = editor.instrumentID.trimmingCharacters(in: .whitespaces).isEmpty
             ? current.url.deletingPathExtension().lastPathComponent
@@ -254,7 +253,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func syncSemanticElementsFromTokens() {
+    func syncSemanticElementsFromTokens() {
         guard let project = project else {
             self.semanticElements = []
             return
@@ -266,7 +265,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func addElement(token: String = "", role: String = "Remarks", tagName: String = "", formatHint: String = "") {
+    func addElement(token: String = "", role: String = "Remarks", tagName: String = "", formatHint: String = "") {
         let isDate = token.contains("-") && token.count >= 6
         let effectiveRole = role == "Remarks" && isDate ? "Date & Time" : role
         let effectiveHint = effectiveRole == "Date & Time" ? (formatHint.isEmpty ? "DDMMYYYY-HHmmSS" : formatHint) : formatHint
@@ -283,7 +282,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         objectWillChange.send()
     }
 
-    public func removeElement(id: UUID) {
+    func removeElement(id: UUID) {
         semanticElements.removeAll(where: { $0.id == id })
         for i in 0..<semanticElements.count {
             semanticElements[i].index = i
@@ -292,13 +291,13 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         objectWillChange.send()
     }
 
-    public func clearAllElements() {
+    func clearAllElements() {
         semanticElements.removeAll()
         updateSiblingPreviews()
         objectWillChange.send()
     }
 
-    public func selectSource(_ source: RawSource, preserveProfile: Bool = false) {
+    func selectSource(_ source: RawSource, preserveProfile: Bool = false) {
         self.selectedSource = source
         if !preserveProfile {
             self.saveStatusMessage = nil
@@ -329,13 +328,13 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func runAutoDetect() {
+    func runAutoDetect() {
         editor.smartAutoDetect()
         syncDefaultPlotChannels()
         objectWillChange.send()
     }
 
-    public func updateColumn(index: Int, column: ColumnDefinition) {
+    func updateColumn(index: Int, column: ColumnDefinition) {
         guard index < editor.columns.count else { return }
         editor.columns[index] = column
         if column.isDefaultX || column.isXAxis {
@@ -347,7 +346,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         objectWillChange.send()
     }
 
-    public func tagMetadataCell(_ tag: MetadataCellTag) {
+    func tagMetadataCell(_ tag: MetadataCellTag) {
         editor.tagMetadataCell(
             lineIndex: tag.lineIndex,
             tokenIndex: tag.tokenIndex,
@@ -359,17 +358,17 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         objectWillChange.send()
     }
 
-    public func removeMetadataTag(lineIndex: Int, tokenIndex: Int) {
+    func removeMetadataTag(lineIndex: Int, tokenIndex: Int) {
         editor.removeMetadataCellTag(lineIndex: lineIndex, tokenIndex: tokenIndex)
         objectWillChange.send()
     }
 
-    public func tagRange(range: ClosedRange<Int>, tag: LineRegionType) {
+    func tagRange(range: ClosedRange<Int>, tag: LineRegionType) {
         editor.tagRange(from: range.lowerBound, to: range.upperBound, as: tag)
         objectWillChange.send()
     }
 
-    public func updateSiblingPreviews() {
+    func updateSiblingPreviews() {
         guard project != nil else { return }
         let catIndex = semanticElements.first(where: { $0.role == "category" })?.index
         let devIndex = semanticElements.first(where: { $0.role == "legend" })?.index
@@ -390,7 +389,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func testAgainstCohort() {
+    func testAgainstCohort() {
         let sampleSiblings = Array(sources.prefix(20))
         guard !sampleSiblings.isEmpty else {
             cohortTestSuccess = false
@@ -409,7 +408,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         cohortTestResult = "Tested on \(sampleSiblings.count) files: \(matched)/\(sampleSiblings.count) match delimiter format."
     }
 
-    public func saveProfileAndRules() {
+    func saveProfileAndRules() {
         guard let project = project else { return }
         do {
             let savedFile = try editor.saveProfile(project: project)
@@ -446,7 +445,7 @@ public final class EditorWorkspaceViewModel: ObservableObject {
         }
     }
 
-    public func applyCustomStructure(delimiter: String, decimalSeparator: String, headerLine: Int?, dataStartLine: Int, skippedMetadataLines: Set<Int> = []) {
+    func applyCustomStructure(delimiter: String, decimalSeparator: String, headerLine: Int?, dataStartLine: Int, skippedMetadataLines: Set<Int> = []) {
         editor.delimiter = delimiter
         editor.decimalDelimiter = decimalSeparator
         editor.lineTags.removeAll()
