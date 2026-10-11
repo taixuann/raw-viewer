@@ -1,14 +1,13 @@
 import SwiftUI
 import RawViewCore
 
-/// Clean high-level container shell assembling Profile Studio panels:
-/// - Left Sidebar: `EditorLeftSidebarView` (Active Target File card, Saved Profiles library, Import YAML)
-/// - Center Canvas: `EditorCenterCanvasView` (Studio Tab switcher: Raw Stream Studio vs Live Sandbox Studio)
+/// Clean high-level container shell assembling Profile Studio:
+/// - Left Panel: `EditorLeftSidebarView` (Profile Specification: Active Target File card, Saved Profiles dropdown, Profile Identity, Filename Tokens, Sticky Build Action)
+/// - Right Panel: `EditorCenterCanvasView` (Visual Workspace: Raw Stream Studio vs Live Sandbox Studio)
 public struct EditorWorkspaceView: View {
     public let project: ProjectContext
     public let sources: [RawSource]
     public var initialSelectedSource: RawSource? = nil
-
 
     public enum StudioTab: String, CaseIterable, Identifiable {
         case rawStream = "Raw Stream Studio"
@@ -31,18 +30,14 @@ public struct EditorWorkspaceView: View {
 
     public var body: some View {
         HSplitView {
-            // Panel 1 (Left): Target sample, saved profiles library, and quick actions
+            // Panel 1 (Left): Unified Profile Specification Sidebar (Identity, Filename Tokens, Cohort, Build)
             EditorLeftSidebarView(model: model, sources: sources)
-                .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
                 .frame(maxHeight: .infinity)
 
-            // Panel 2 (Center): Dedicated Visual Workspace (Raw Stream vs Live Sandbox Studio)
+            // Panel 2 (Right): Interactive Visual Studio (Raw Stream & Parser vs Live Sandbox Plot)
             EditorCenterCanvasView(model: model, selectedStudioTab: $selectedStudioTab)
                 .frame(minWidth: 500)
-                .frame(maxHeight: .infinity)
-
-            // Panel 3 (Right): Profile Specification Inspector (Identity, Filename Tokens, Column Roles, Compiler)
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 400)
                 .frame(maxHeight: .infinity)
         }
         .onAppear {
@@ -55,8 +50,6 @@ public struct EditorWorkspaceView: View {
         }
     }
 }
-
-// MARK: - View Model
 @MainActor
 final class EditorWorkspaceViewModel: ObservableObject {
     @Published var project: ProjectContext?
