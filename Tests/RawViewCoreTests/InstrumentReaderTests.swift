@@ -64,7 +64,7 @@ struct InstrumentReaderTests {
         #expect(measurement.source.sha256 == sha256Hex(Data(csv.utf8)))
         #expect(measurement.provenance["profile_id"] == "keysight-b1500a")
         #expect(measurement.provenance["profile_hash"] == sha256Hex(Data(profile.utf8)))
-        #expect(measurement.provenance["reader_version"] == "1.2.0")
+        #expect(measurement.provenance["reader_version"] == "1.3.0")
         #expect(measurement.instrument.vendor == "Keysight Technologies")
         #expect(measurement.instrument.model == "B1500A")
         #expect(measurement.supportStatus == "supported")
@@ -238,7 +238,8 @@ struct InstrumentReaderTests {
         )
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
-        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let source = RawSource(relativePath: "data/raw/scan.ibw", url: root.appendingPathComponent("data/raw/scan.ibw"), byteSize: 10)
+        let report = await InstrumentReader.inspectMany([source], project: project)
         #expect(report.results.count == 1)
         #expect(report.results.first?.inspection == nil)
         #expect(report.results.first?.error?.contains("No instrument profile supports \".ibw\"") == true)
@@ -530,7 +531,8 @@ struct InstrumentReaderTests {
         )
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
-        let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
+        let source = RawSource(relativePath: "data/raw/scan.ibw", url: root.appendingPathComponent("data/raw/scan.ibw"), byteSize: Int64(bytes.count))
+        let report = await InstrumentReader.inspectMany([source], project: project)
         #expect(report.results.first?.error?.contains("No instrument profile supports \".ibw\"") == true)
     }
 
@@ -995,9 +997,10 @@ struct InstrumentReaderTests {
     @Test func inspectionReportsProgressAndMarksRemainingSourcesCancelled() async throws {
         var sources: [String: Data] = [:]
         for index in 0..<129 {
-            sources["data/raw/s\(index).dat"] = Data(Fixtures.dataCSV.utf8)
+            sources["data/raw/s\(index).csv"] = Data(Fixtures.dataCSV.utf8)
         }
-        let root = try makeProject(profiles: ["fixture-dat.yaml": Fixtures.dataProfile], sources: sources)
+        let profile = Fixtures.dataProfile.replacingOccurrences(of: "extensions: [\".dat\"]", with: "extensions: [\".csv\"]")
+        let root = try makeProject(profiles: ["fixture-dat.yaml": profile], sources: sources)
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
         let allSources = try project.discoverSources()

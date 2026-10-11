@@ -13,16 +13,21 @@ when that entry exists.
   per-entry metadata is requested. Other dot-prefixed files remain eligible
   for normal inventory.
 
-- A project is a folder containing a readable `data/raw` directory. A missing
-  raw directory is rejected with an actionable message so another folder can be
-  selected.
-- Readable regular files under the selected project's canonical `data/raw`
-  enter the inventory except for the excluded names and suffixes below. Other
-  symlink entries are listed lexically with no claimed target size, then
-  blocked during inspection with a no-follow diagnostic; their targets are
-  never followed or read. Symlinked directories are not traversed, and
-  descendant project roots are never discovered as additional roots — a
-  subdirectory carrying its own `data/raw` marker is pruned, not recursed into.
+- A project is a directory with a configured data root specified in
+  `.rawviewer/setting/setting.yaml` (`schema_version: 1`, default view `tree`)
+  or explicitly provided to the headless CLI or selected via the native setup
+  sheet. The suggested data root is `data/raw` when readable and regular. The data
+  root may be `.` (the project directory itself) or any contained regular
+  directory. External paths, parent navigation (`..`), and symlinked path
+  components are rejected fail-closed. Viewer metadata namespaces (`.rawviewer`,
+  `data/.rawview`, `data/snapshot`) cannot be used as the data root and are
+  always excluded from source discovery.
+- Readable regular files under the selected project's canonical data root
+  enter the inventory except for excluded names and suffixes. Symlink entries
+  are listed lexically with no claimed target size, then blocked during
+  inspection with a no-follow diagnostic; their targets are never followed or
+  read. Symlinked directories are not traversed, and descendant project roots
+  carrying their own settings or data roots are pruned, not recursed into.
 - Files ending in `.spe` or `.affm` (case-insensitive) are omitted from the
   inventory. RawView decides the exclusion from the file name and skips those
   entries before requesting any per-entry metadata from them; RawView never

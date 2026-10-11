@@ -3,14 +3,14 @@ import Foundation
 
 public enum ReaderError: Error, LocalizedError, Equatable {
     case invalidProject
-    case sourceOutsideRaw(String)
+    case sourceOutsideRaw(String, dataRoot: String)
     case cancelled
     case invalidSource(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidProject: "Choose a project containing a readable data/raw directory."
-        case .sourceOutsideRaw(let path): "\(path): resolves outside this project's data/raw folder."
+        case .sourceOutsideRaw(let path, let dataRoot): "\(path): resolves outside this project's data root (\"\(dataRoot)\")."
         case .cancelled: "The operation was cancelled."
         case .invalidSource(let message): message
         }
@@ -26,8 +26,8 @@ public struct ReaderInspectionReport: Sendable {
 /// code: profiles are data, the extraction runs in-process, and every failure is
 /// reported on the affected source without blocking unrelated sources.
 public enum InstrumentReader {
-    public static let version = "1.2.0"
-    static let progressBatchSize = 256
+    public static let version = "1.3.0"
+    static let progressBatchSize = 64
     static let headerSampleBytes = 64 * 1024
     /// Malformed-input bounds: one source line and the accumulated header
     /// section each stay below 1 MiB. Complete value arrays, row counts, and
@@ -50,7 +50,7 @@ public enum InstrumentReader {
         while index < sources.count {
             if Task.isCancelled {
                 for source in sources[index...] {
-                    results.append(SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription))
+                    results.append(SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: ReaderError.cancelled.localizedDescription))
                 }
                 await onProgress?(Array(results[index...]), sources.count)
                 break
@@ -63,7 +63,7 @@ public enum InstrumentReader {
                 batchOutcomes.reserveCapacity(slice.count)
                 for (offset, source) in slice.enumerated() {
                     if Task.isCancelled {
-                        batchOutcomes.append((offset, SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription)))
+                        batchOutcomes.append((offset, SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: ReaderError.cancelled.localizedDescription)))
                         continue
                     }
                     if concurrentTasks >= maxConcurrency {
@@ -75,7 +75,7 @@ public enum InstrumentReader {
                     concurrentTasks += 1
                     group.addTask {
                         if Task.isCancelled {
-                            return (offset, SourceInspectionResult(source: source, inspection: nil, error: ReaderError.cancelled.localizedDescription))
+                            return (offset, SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: ReaderError.cancelled.localizedDescription))
                         }
                         if let cache {
                             let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
@@ -83,10 +83,10 @@ public enum InstrumentReader {
                             }
                             if let cached {
                                 switch cached.outcome {
-                                case .supported(let inspection):
-                                    return (offset, SourceInspectionResult(source: source, inspection: inspection, error: nil))
+                                case .supported(let inspection, let disposition):
+                                    return (offset, SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil))
                                 case .blocked(let message):
-                                    return (offset, SourceInspectionResult(source: source, inspection: nil, error: message))
+                                    return (offset, SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message))
                                 }
                             }
                         }
@@ -107,14 +107,15 @@ public enum InstrumentReader {
     }
 
     /// Rejection for a symlink source, classified from the link text alone:
-    /// a lexically inside-`data/raw` link fails closed with the symlink
+    /// a lexically inside-data-root link fails closed with the symlink
     /// diagnostic, and only a lexically outside link reports the outside
-    /// diagnostic. The target is never resolved, stat-ed, opened, or read.
+    /// diagnostic naming the configured root. The target is never resolved,
+    /// stat-ed, opened, or read.
     private static func sourceLinkRejection(_ source: URL, project: ProjectContext, linkTarget: String) -> ReaderError {
         if project.symlinkTargetResolvesInsideRaw(source: source, linkTarget: linkTarget) {
             return .invalidSource("\(project.claimedPath(of: source)): source file is a symlink or was replaced by one during open; symlinks are never followed.")
         }
-        return .sourceOutsideRaw(project.claimedPath(of: source))
+        return .sourceOutsideRaw(project.claimedPath(of: source), dataRoot: project.dataRootRelativePath)
     }
 
     public static func load(_ source: URL, project: ProjectContext, cache: MeasurementCache? = nil) async throws -> NormalizedMeasurement {
@@ -129,8 +130,12 @@ public enum InstrumentReader {
         do {
             try Task.checkCancellation()
             let catalog = ProfileCatalog.load(project: project)
-            guard let relativePath = project.relativePath(of: source), relativePath.hasPrefix("data/raw/") else {
-                throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source))
+            // Single claimed-path containment helper: the claimed (unresolved)
+            // selection must sit inside the configured data root, and the
+            // project-relative identity it yields is the source identity. The
+            // descriptor verification below remains independent.
+            guard let relativePath = project.sourceRelativePath(of: source) else {
+                throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source), dataRoot: project.dataRootRelativePath)
             }
             // The selected path supplies source identity and filename evidence;
             // the opened descriptor independently proves the bytes stay in raw.
@@ -138,7 +143,7 @@ public enum InstrumentReader {
             do {
                 handle = try SecureFile.openVerified(resolvedPath: source.path, beneath: project.rawRoot.path)
             } catch let error as SecureOpenError {
-                throw error.readerError(display: project.claimedPath(of: source))
+                throw error.readerError(display: project.claimedPath(of: source), dataRoot: project.dataRootRelativePath)
             } catch {
                 throw ReaderError.invalidSource("\(project.claimedPath(of: source)): could not open the source file: \(error.localizedDescription)")
             }
@@ -261,7 +266,8 @@ public enum InstrumentReader {
                     measurement: measurement,
                     profileFingerprint: catalog.fingerprint,
                     source: RawSource(relativePath: relativePath, url: source, byteSize: descriptorSize),
-                    prefixSHA256: prefixDigest)
+                    prefixSHA256: prefixDigest,
+                    project: project)
             }
             return measurement
         } catch is CancellationError {
@@ -276,13 +282,20 @@ public enum InstrumentReader {
     private static func inspect(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) -> SourceInspectionResult {
         do {
             switch try inspectAccess(source, project: project, catalog: catalog) {
-            case .supported(let inspection):
-                return SourceInspectionResult(source: source, inspection: inspection, error: nil)
+            case .supported(let inspection, let disposition):
+                return SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil)
             case .blocked(let message):
-                return SourceInspectionResult(source: source, inspection: nil, error: message)
+                return SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message)
             }
+        } catch is CancellationError {
+            return SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: ReaderError.cancelled.localizedDescription)
+        } catch let error as ReaderError {
+            if case .cancelled = error {
+                return SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: error.localizedDescription)
+            }
+            return SourceInspectionResult(source: source, inspection: nil, disposition: .transientFailure, error: error.localizedDescription)
         } catch {
-            return SourceInspectionResult(source: source, inspection: nil, error: error.localizedDescription)
+            return SourceInspectionResult(source: source, inspection: nil, disposition: .transientFailure, error: error.localizedDescription)
         }
     }
 
@@ -296,9 +309,8 @@ public enum InstrumentReader {
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
             return .blocked("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
         }
-        guard project.relativePath(of: source.url) == source.relativePath,
-              source.relativePath.hasPrefix("data/raw/") else {
-            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url))
+        guard project.sourceRelativePath(of: source.url) == source.relativePath else {
+            throw ReaderError.sourceOutsideRaw(project.claimedPath(of: source.url), dataRoot: project.dataRootRelativePath)
         }
         try Task.checkCancellation()
         // Clear diagnostic for a claimed symlink; the open below is the gate.
@@ -310,7 +322,7 @@ public enum InstrumentReader {
             handle = try SecureFile.openVerified(resolvedPath: source.url.path, beneath: project.rawRoot.path)
         } catch let error as SecureOpenError {
             // Display from the claimed path; the descriptor check already failed closed.
-            throw error.readerError(display: project.claimedPath(of: source.url))
+            throw error.readerError(display: project.claimedPath(of: source.url), dataRoot: project.dataRootRelativePath)
         } catch {
             throw ReaderError.invalidSource("\(project.claimedPath(of: source.url)): could not read the source file: \(error.localizedDescription)")
         }
@@ -349,7 +361,7 @@ public enum InstrumentReader {
         let encoded = resolveEncoded(prefix: prefix, catalog: catalog, extension: fileExtension, basename: basename)
         switch encoded.resolution {
         case .failed(let message):
-            if let generic = try? GenericTableReader.inspect(url: source.url) {
+            if let generic = try? GenericTableReader.inspect(prefix: prefix) {
                 let facts = parseFilename(basename)
                 let delimName = generic.delimiter == "\t" ? "TSV" : (generic.delimiter == "," ? "CSV" : (generic.delimiter == ";" ? "Semicolon" : "Whitespace"))
                 let inspection = SourceInspection(
@@ -361,13 +373,13 @@ public enum InstrumentReader {
                     deviceID: facts.deviceID,
                     category: facts.category,
                     supportStatus: "supported",
-                    validationState: "generic table; unprofiled",
+                    validationState: "generic table; unprofiled (structural candidate)",
                     readerVersion: version,
                     profileID: "generic-table",
                     profileHash: "generic-fallback",
                     error: nil
                 )
-                return .supported(inspection)
+                return .supported(inspection, .structuralCandidate)
             }
             if message.contains("could not be decoded") {
                 return .blocked("\(relativePath): \(message)")
@@ -383,7 +395,7 @@ public enum InstrumentReader {
                 validationState: "profile valid; source not loaded",
                 readerVersion: version, profileID: match.profile.instrumentID, profileHash: match.profile.sha256, error: nil
             )
-            return .supported(inspection)
+            return .supported(inspection, .profileMatched)
         }
     }
 

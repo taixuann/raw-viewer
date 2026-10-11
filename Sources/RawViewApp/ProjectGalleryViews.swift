@@ -56,8 +56,14 @@ struct ProjectSourcesSidebar: View {
     let states: [String: GallerySourceState]
     @Binding var focusedSourceID: String?
     @Binding var selectedSourceIDs: Set<String>
+    var sourceTree: SourceTree? = nil
+    var inventoryIssues: [InventoryIssue] = []
+    var dataRoot: String = "data/raw"
+    @Binding var expandedDirectoryIDs: Set<String>
+    var onBuildProfile: ((String?) -> Void)? = nil
+
     @State private var search = ""
-    @State private var facet = "instrument"
+    @State private var facet = "tree"
     @State private var collapsed = Set<String>()
     @State private var filter = SourceFilter()
     @State private var groupDisplayLimits: [String: Int] = [:]
@@ -70,13 +76,23 @@ struct ProjectSourcesSidebar: View {
         inspections: [String: SourceInspection],
         states: [String: GallerySourceState],
         focusedSourceID: Binding<String?>,
-        selectedSourceIDs: Binding<Set<String>>
+        selectedSourceIDs: Binding<Set<String>>,
+        sourceTree: SourceTree? = nil,
+        inventoryIssues: [InventoryIssue] = [],
+        dataRoot: String = "data/raw",
+        expandedDirectoryIDs: Binding<Set<String>> = .constant([]),
+        onBuildProfile: ((String?) -> Void)? = nil
     ) {
         self.sources = sources
         self.inspections = inspections
         self.states = states
         self._focusedSourceID = focusedSourceID
         self._selectedSourceIDs = selectedSourceIDs
+        self.sourceTree = sourceTree
+        self.inventoryIssues = inventoryIssues
+        self.dataRoot = dataRoot
+        self._expandedDirectoryIDs = expandedDirectoryIDs
+        self.onBuildProfile = onBuildProfile
         var index: [String: RawSource] = [:]
         index.reserveCapacity(sources.count)
         for s in sources { index[s.id] = s }
@@ -84,7 +100,7 @@ struct ProjectSourcesSidebar: View {
     }
 
     static let facets: [(String, String)] = [
-        ("", "None"), ("sample", "Sample / Device"), ("instrument", "Instrument"),
+        ("tree", "Tree"), ("", "None"), ("sample", "Sample / Device"), ("instrument", "Instrument"),
         ("category", "Category"), ("mode", "Mode"), ("date", "Date / Batch"), ("status", "Status"),
     ]
 
@@ -179,6 +195,10 @@ struct ProjectSourcesSidebar: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
 
             Divider()
+            if !inventoryIssues.isEmpty {
+                inventoryIssuesBanner
+                Divider()
+            }
             filterChips
             Text("Select multiple with Shift or Command for comparison.")
                 .font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)
@@ -186,7 +206,9 @@ struct ProjectSourcesSidebar: View {
             List(selection: $selectedSourceIDs) {
                 if filteredSources.isEmpty {
                     ContentUnavailableView("No Matching Sources", systemImage: "line.3.horizontal.decrease.circle",
-                        description: Text("Adjust the search field or remove filter chips."))
+                        description: Text("Adjust the search field or remove filter chips under '\(dataRoot)'."))
+                } else if facet == "tree" {
+                    treeView
                 } else if facet.isEmpty {
                     flatList
                 } else {
@@ -331,6 +353,108 @@ struct ProjectSourcesSidebar: View {
     private func sourceRows(ids: [String]) -> some View {
         ForEach(ids, id: \.self) { id in
             if let source = sourceIndex[id] { sourceRow(source) }
+        }
+    }
+
+    @ViewBuilder
+    private var treeView: some View {
+        if let tree = sourceTree {
+            let activeNodes: [SourceTreeNode] = {
+                if search.isEmpty && filter.isEmpty {
+                    return tree.root.children
+                } else {
+                    let allowed = Set(filteredSources.map(\.id))
+                    return tree.filtered(sourceIDs: allowed)
+                }
+            }()
+            let items = tree.flatten(expandedIDs: expandedDirectoryIDs, activeNodes: activeNodes)
+            if items.isEmpty {
+                ContentUnavailableView("No Matching Files", systemImage: "folder",
+                    description: Text("No sources match the active filter under '\(dataRoot)'."))
+            } else {
+                ForEach(items) { item in
+                    treeItemRow(item)
+                }
+            }
+        } else {
+            flatList
+        }
+    }
+
+    @ViewBuilder
+    private func treeItemRow(_ item: FlattenedTreeItem) -> some View {
+        if item.isDirectory {
+            let isExpanded = expandedDirectoryIDs.contains(item.node.id)
+            HStack(spacing: 5) {
+                if item.depth > 0 {
+                    Spacer().frame(width: CGFloat(item.depth * 14))
+                }
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                Image(systemName: isExpanded ? "folder.fill" : "folder")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentColor.opacity(0.85))
+                Text(item.node.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.vertical, 3.5)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isExpanded {
+                    expandedDirectoryIDs.remove(item.node.id)
+                } else {
+                    expandedDirectoryIDs.insert(item.node.id)
+                }
+            }
+        } else if let sourceID = item.node.sourceID, let source = sourceIndex[sourceID] {
+            HStack(spacing: 0) {
+                if item.depth > 0 {
+                    Spacer().frame(width: CGFloat(item.depth * 14))
+                }
+                sourceRow(source)
+            }
+            .tag(source.id)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusedSourceID = source.id
+                selectedSourceIDs = [source.id]
+            }
+        }
+    }
+
+
+    private var inventoryIssuesBanner: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.system(size: 10))
+                Text("Partial inventory (\(inventoryIssues.count) issues)")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.orange)
+            }
+            ForEach(Array(inventoryIssues.prefix(3).enumerated()), id: \.offset) { _, issue in
+                Text(issueDescription(issue))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(Color.orange.opacity(0.08))
+    }
+
+    private func issueDescription(_ issue: InventoryIssue) -> String {
+        switch issue {
+        case .enumeration(let path, let detail):
+            return "Folder \(path): \(detail)"
+        case .metadata(let path, let detail):
+            return "File \(path): \(detail)"
         }
     }
 
@@ -526,6 +650,13 @@ struct ProjectSourcesSidebar: View {
         }
         .padding(.vertical, 3)
         .tag(source.id)
+        .contextMenu {
+            Button {
+                onBuildProfile?(source.id)
+            } label: {
+                Label("Build Profile from This File", systemImage: "sparkles.rectangle.stack")
+            }
+        }
         .help(source.url.lastPathComponent)
         .accessibilityLabel("\(info.title), \(info.subtitle)\(isFocused ? ", focused" : "")")
     }
@@ -569,11 +700,19 @@ struct ProjectGallery: View {
     var onSaveSnapshotPackage: (() -> Void)? = nil
     var projectSnapshotPackages: [RawViewModel.ProjectSnapshotPackage] = []
     var onSelectSnapshotPackage: ((RawViewModel.ProjectSnapshotPackage) -> Void)? = nil
+    var onBuildProfile: ((String) -> Void)? = nil
     var comparisonTitle: String = ""
+    var availablePresets: [ScientificPreset] = ScientificPreset.allCases
     @Binding var selectedPreset: ScientificPreset
     @Binding var showLegend: Bool
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
+
+    var customProjectPresets: [ScientificPreset] {
+        availablePresets.filter { p in
+            !ScientificPreset.allCases.contains(where: { $0.id == p.id })
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -588,6 +727,22 @@ struct ProjectGallery: View {
                 Divider().frame(height: 16)
 
                 Menu {
+                    if !customProjectPresets.isEmpty {
+                        Section("Project Presets (.rawviewer/preset)") {
+                            ForEach(customProjectPresets) { p in
+                                Button {
+                                    selectedPreset = p
+                                } label: {
+                                    if selectedPreset.id == p.id {
+                                        Label(p.displayName, systemImage: "checkmark")
+                                    } else {
+                                        Text(p.displayName)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Section("Standard Journals (Closed 4-Box)") {
                         ForEach(ScientificPreset.standardPresets) { p in
                             Button {
@@ -701,7 +856,11 @@ struct ProjectGallery: View {
                         Button {
                             onExportFigure?()
                         } label: {
-                            Label(isOverlay ? "Export Overlay Figure (PNG / PDF)…" : "Export Single Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
+                            HStack {
+                                Label(isOverlay ? "Export Overlay Figure (PNG / PDF)…" : "Export Single Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
+                                Spacer()
+                                ShortcutBadge("exportFigure")
+                            }
                         }
                     }
 
@@ -709,7 +868,11 @@ struct ProjectGallery: View {
                         Button {
                             onExportData?()
                         } label: {
-                            Label("Export Data Table (CSV)…", systemImage: "tablecells")
+                            HStack {
+                                Label("Export Data Table (CSV)…", systemImage: "tablecells")
+                                Spacer()
+                                ShortcutBadge("exportData")
+                            }
                         }
                     }
 
@@ -731,6 +894,25 @@ struct ProjectGallery: View {
                 .controlSize(.small)
                 .help("Export figure, data table, or snapshot package")
 
+                Divider().frame(height: 16)
+
+                Button {
+                    if let targetID = focusedSourceID ?? selectedIDs.first {
+                        onBuildProfile?(targetID)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "wrench.and.screwdriver")
+                        Text("Build Profile")
+                        ShortcutBadge("buildProfile")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(focusedSourceID == nil && selectedIDs.isEmpty)
+                .help("Open selected file in Profile Editor Studio to configure parsing rules")
+
                 if isLoading {
                     HStack(spacing: 6) {
                         ProgressView()
@@ -750,8 +932,11 @@ struct ProjectGallery: View {
                 Button {
                     showInspector.toggle()
                 } label: {
-                    Image(systemName: "sidebar.right")
-                        .foregroundStyle(showInspector ? .primary : .secondary)
+                    HStack(spacing: 4) {
+                        Image(systemName: "sidebar.right")
+                            .foregroundStyle(showInspector ? .primary : .secondary)
+                        ShortcutBadge("toggleInspector")
+                    }
                 }
                 .buttonStyle(.borderless)
                 .help("Toggle Inspector (⌘I)")

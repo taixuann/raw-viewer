@@ -75,7 +75,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(report.results.first?.error?.contains("outside") == true)
 }
 
-@Test func doesNotRecurseIntoNestedProjectData() throws {
+@Test func nestedDataRawMarkerInsideSelectedRootKeepsItsSources() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -87,7 +87,11 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
 
     let sources = try ProjectContext.open(root).discoverSources()
 
-    #expect(sources.map(\.relativePath) == ["data/raw/top.csv"])
+    // Task 2: the source walker no longer prunes nested data/raw markers, so a
+    // real directory inside the selected data root keeps its sources. A
+    // descendant project *outside* the selected root is covered by
+    // `doesNotDiscoverDescendantProjectRoots` (the walk never leaves it).
+    #expect(sources.map(\.relativePath) == ["data/raw/inner/data/raw/deep.csv", "data/raw/top.csv"])
 }
 
 @Test func doesNotListDirectoriesAsRawSources() throws {

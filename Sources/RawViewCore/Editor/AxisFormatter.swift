@@ -74,10 +74,14 @@ public struct AxisFormatter: Sendable {
     public static func formatTick(_ value: Double, factor: Double = 1.0, precision: Int = 1) -> String {
         guard value.isFinite else { return "—" }
         let scaled = factor != 0 ? (value / factor) : value
-        if abs(scaled) < 1e-9 {
-            return "0.0"
-        }
         let formatStr = "%.\(max(0, precision))f"
-        return String(format: formatStr, scaled)
+        var formatted = String(format: formatStr, scaled)
+        if formatted.hasPrefix("-") {
+            let withoutMinus = String(formatted.dropFirst())
+            if withoutMinus.allSatisfy({ $0 == "0" || $0 == "." }) {
+                formatted = withoutMinus
+            }
+        }
+        return formatted
     }
 }

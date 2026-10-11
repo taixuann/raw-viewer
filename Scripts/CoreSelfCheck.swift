@@ -1,10 +1,25 @@
 import CryptoKit
+import Darwin
 import Foundation
+import SQLite3
 
 private func writeFixture(_ root: URL, _ relativePath: String, _ contents: String) throws {
     let url = root.appendingPathComponent(relativePath)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data(contents.utf8).write(to: url)
+}
+
+/// Sendable visit counter for the self-check's producer/hook assertions.
+private final class VisitTally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+    @discardableResult func increment() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
+    }
 }
 
 @main
@@ -69,9 +84,17 @@ enum CoreSelfCheck {
         try await cachePreflightSelfCheck()
         try await manyShortRowsSelfCheck()
         try await genericTableFallbackSelfCheck()
+        try projectSettingsSelfCheck()
+        try await sourceTreeSelfCheck()
         try await activeProjectTestSelfCheck()
         try plotStyleAndExportSelfCheck()
         try scientificPresetsSelfCheck()
+        try presetCatalogSelfCheck()
+        try categoryRuleEngineSelfCheck()
+        try editorWorkspaceModelSelfCheck()
+        try await projectIndexStoreSelfCheck()
+        try await projectIndexerSelfCheck()
+        try await indexCommandSelfCheck()
         print("RawView core self-check passed")
     }
 
@@ -239,7 +262,7 @@ enum CoreSelfCheck {
         let emptyUsage = try small.usage()
         precondition(emptyUsage.entryCount == 0)
         let identityPrefix = sha256Hex(Data("probe".utf8))
-        try small.store(measurement: cold, profileFingerprint: "fp", source: source, prefixSHA256: identityPrefix)
+        try small.store(measurement: cold, profileFingerprint: "fp", source: source, prefixSHA256: identityPrefix, project: project)
         let firstUsage = try small.usage()
         precondition(firstUsage.entryCount == 1 && firstUsage.usedBytes <= evictionLimit)
         let fileManager = FileManager.default
@@ -252,7 +275,7 @@ enum CoreSelfCheck {
         guard let oldEntry = entryDirectories.first else { fatalError("stored LRU fixture is missing") }
         try fileManager.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1)],
                                       ofItemAtPath: oldEntry.path)
-        try small.store(measurement: big, profileFingerprint: "fp2", source: source, prefixSHA256: identityPrefix)
+        try small.store(measurement: big, profileFingerprint: "fp2", source: source, prefixSHA256: identityPrefix, project: project)
         let lruUsage = try small.usage()
         precondition(lruUsage.entryCount == 1, "LRU must evict one of two over-limit entries")
         precondition(lruUsage.usedBytes <= evictionLimit && lruUsage.usedBytes > firstUsage.usedBytes,
@@ -838,7 +861,7 @@ enum CoreSelfCheck {
     /// name file, line, column, and value; schema v1 stays fail-closed on the
     /// new layout kind.
     static func wgfmuFirstRowSelfCheck() async throws {
-        precondition(InstrumentReader.version == "1.2.0", "reader cache identity must advance with the new parser")
+        precondition(InstrumentReader.version == "1.3.0", "reader cache identity must advance with the new parser")
         let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let shipped = try String(contentsOf: packageRoot.appendingPathComponent("Examples/rawview/keysight-b1500a.yaml"), encoding: .utf8)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-wgfmu-firstrow-\(UUID().uuidString)")
@@ -1044,6 +1067,22 @@ enum CoreSelfCheck {
             try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("data/instruments/link.yaml"), withDestinationURL: root.appendingPathComponent("data/instruments/real.yaml"))
             let catalog = ProfileCatalog.load(project: try ProjectContext.open(root))
             precondition(catalog.profiles.count == 1 && catalog.issues.contains { $0.contains("link.yaml") && $0.lowercased().contains("symlink") }, "finding 3: profile symlink was resolved instead of rejected")
+
+            // Multi-source profile fallback: empty data/instruments/rawview falls back to data/.rawview/instrument
+            let fallbackRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-prof-fallback-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: fallbackRoot) }
+            try writeFixture(fallbackRoot, "data/raw/a.csv", dualSweepCSV)
+            // Empty data/instruments/rawview directory
+            try FileManager.default.createDirectory(at: fallbackRoot.appendingPathComponent("data/instruments/rawview"), withIntermediateDirectories: true)
+            // Real profile in data/.rawview/instrument/
+            try writeFixture(fallbackRoot, "data/.rawview/instrument/b1500.yaml", keysightProfile)
+            let fallbackCatalog = ProfileCatalog.load(project: try ProjectContext.open(fallbackRoot))
+            precondition(fallbackCatalog.profiles.count == 1, "profile was not discovered from data/.rawview/instrument when data/instruments/rawview is empty")
+
+            // .rawviewer/instrument takes top priority over data/.rawview/instrument
+            try writeFixture(fallbackRoot, ".rawviewer/instrument/custom.yaml", keysightProfile)
+            let topCatalog = ProfileCatalog.load(project: try ProjectContext.open(fallbackRoot))
+            precondition(topCatalog.profiles.count == 1, ".rawviewer/instrument did not take priority")
         }
         // 4. Manifest enumeration failure fails overlay membership closed.
         do {
@@ -1372,7 +1411,7 @@ enum CoreSelfCheck {
             try writeFixture(root, "data/raw/a.csv", dualSweepCSV)
             let project = try ProjectContext.open(root)
             let cacheRoot = MeasurementCache.appLocalRoot(project: project)
-            precondition(cacheRoot.pathComponents.contains("RawView-v3") || cacheRoot.pathComponents.contains("RawViewCache-v3"), "audit f4: current cache reused legacy app-local ancestors")
+            precondition(cacheRoot.pathComponents.contains("RawView-v\(MeasurementCache.schema)"), "audit f4: current cache reused legacy app-local ancestors")
         }
         // F_GETPATH may choose a different hardlink name; selected identity
         // still controls extension, profile matching, and the measurement path.
@@ -1399,7 +1438,7 @@ enum CoreSelfCheck {
                 source: source, project: project, catalog: catalog,
                 prefix: Data(bytes.prefix(InstrumentReader.headerSampleBytes)),
                 descriptorSize: Int64(bytes.count), actualURL: otherAlias)
-            guard case .supported(let selectedInspection) = inspection else {
+            guard case .supported(let selectedInspection, _) = inspection else {
                 fatalError("audit f7: a descriptor alias replaced the selected profile basename")
             }
             precondition(selectedInspection.source == source.relativePath && selectedInspection.applicationMode == "dual-sweep", "audit f7: hardlink inspection lost selected path identity")
@@ -1521,7 +1560,7 @@ enum CoreSelfCheck {
                 try Data("SetupTitle, MUTATED-NO-MATCH\nDataName, V1, I1\nDataValue, 9, 9E-9\n".utf8).write(to: source.url)
                 return try InstrumentReader.inspectPinned(source: source, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
             }
-            guard case .supported(let inspection) = result.outcome else {
+            guard case .supported(let inspection, _) = result.outcome else {
                 fatalError("tightening: pinned producer did not preserve supported outcome from pinned prefix")
             }
             precondition(inspection.instrumentID == "keysight-b1500a", "tightening: pinned producer outcome not from pinned bytes")
@@ -1549,7 +1588,7 @@ enum CoreSelfCheck {
             let pinnedSize = Int64(st.st_size)
             try? secured.handle.close()
             let outcome = try InstrumentReader.inspectPinned(source: forged, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: pinnedSize, actualURL: pinnedActual)
-            guard case .supported(let inspection) = outcome else {
+            guard case .supported(let inspection, _) = outcome else {
                 fatalError("tightening: pinned inspection with forged byteSize should still be supported")
             }
             let realSize = (try FileManager.default.attributesOfItem(atPath: discovered.url.path)[.size] as? NSNumber)?.int64Value
@@ -1783,10 +1822,10 @@ enum CoreSelfCheck {
         try? secured.handle.close()
         let probe = RawSource(relativePath: source.relativePath, url: source.url, byteSize: size)
         let before = try cache.usage().entryCount
-        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: prefixDigest, preflightCap: 50)
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: prefixDigest, preflightCap: 50, project: project)
         let afterSkip = try cache.usage().entryCount
         precondition(afterSkip == before, "preflight stored an over-cap entry")
-        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: prefixDigest)
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: prefixDigest, project: project)
         let afterStore = try cache.usage().entryCount
         precondition(afterStore == before + 1, "preflight blocked a small entry")
     }
@@ -1967,6 +2006,661 @@ enum CoreSelfCheck {
         precondition(yChannel?.values.count == 4)
     }
 
+    /// Task 2 mirror of `Tests/RawViewCoreTests/SourceTreeTests.swift`. The
+    /// Swift Testing suite cannot build in this environment (`error: no such
+    /// module 'Testing'`, recorded as NOT_ASSESSED), so these preconditions
+    /// carry the same evidence. Synthetic fixtures only: no real project data.
+    static func sourceTreeSelfCheck() async throws {
+        let fm = FileManager.default
+        // configuredRootWorksAcrossLoadInspectCacheAndManifest
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-configured-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
+            try writeFixture(root, "measurements/batch/a.csv", dualSweepCSV)
+            try writeFixture(root, "data/instruments/keysight-b1500a.yaml", keysightProfile)
+            try writeFixture(root, "study/study.yaml", "study_id: configured-study\nsources:\n  - path: measurements/batch/a.csv\n")
+            let csvURL = root.appendingPathComponent("measurements/batch/a.csv")
+            let bytesBefore = try Data(contentsOf: csvURL)
+            let mtimeBefore = try fm.attributesOfItem(atPath: csvURL.path)[.modificationDate] as? Date
+
+            let project = try ProjectContext.open(root)
+            precondition(project.dataRootRelativePath == "measurements", "configured data root was not honored")
+            precondition(project.rawRoot.path.hasSuffix("/measurements"), "raw root is not the configured root")
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.issues.isEmpty && inventory.isComplete, "complete inventory reported issues")
+            precondition(inventory.sources.map(\.relativePath) == ["measurements/batch/a.csv"], "configured-root discovery lost project-relative identity")
+            precondition(inventory.directoryPaths == ["measurements/batch"], "directory inventory changed")
+            guard let source = inventory.sources.first else { fatalError("configured root discovered no source") }
+            precondition(project.sourceRelativePath(of: source.url) == "measurements/batch/a.csv")
+
+            let measurement = try await InstrumentReader.load(source.url, project: project)
+            precondition(measurement.source.path == "measurements/batch/a.csv", "load lost the project-relative source path")
+            precondition(measurement.instrument.id == "keysight-b1500a", "configured root did not resolve the profile")
+            let report = await InstrumentReader.inspectMany(inventory.sources, project: project)
+            precondition(report.results.first?.inspection?.instrumentID == "keysight-b1500a", "inspection failed under the configured root")
+
+            let cache = MeasurementCache(project: project)
+            let catalog = ProfileCatalog.load(project: project)
+            _ = try await InstrumentReader.load(source.url, project: project, cache: cache)
+            let cached = try cache.measurement(for: source, project: project, profileFingerprint: catalog.fingerprint)
+            precondition(cached?.source.path == "measurements/batch/a.csv", "cache round trip lost the configured root")
+            let producerCalls = VisitTally()
+            let producer: @Sendable (Data, Int64, URL) async throws -> MeasurementCache.CachedInspection = { _, _, _ in
+                producerCalls.increment()
+                return .blocked("synthetic")
+            }
+            let first = try await cache.inspection(for: source, project: project, catalogFingerprint: catalog.fingerprint, producer: producer)
+            precondition(!first.fromCache, "fresh inspection cache entry came from cache")
+            let second = try await cache.inspection(for: source, project: project, catalogFingerprint: catalog.fingerprint, producer: producer)
+            precondition(second.fromCache && producerCalls.value == 1, "warm inspection cache entry re-ran the producer")
+
+            let index = ManifestIndex.load(project: project)
+            precondition(index.issues.isEmpty && index.manifests.count == 1, "configured root changed manifest discovery")
+            precondition(index.manifests.first?.members == ["measurements/batch/a.csv"], "manifest membership lost project-relative identity")
+            let bytesAfter = try Data(contentsOf: csvURL)
+            let mtimeAfter = try fm.attributesOfItem(atPath: csvURL.path)[.modificationDate] as? Date
+            precondition(bytesAfter == bytesBefore, "raw fixture bytes changed")
+            precondition(mtimeAfter == mtimeBefore, "raw fixture mtime changed")
+        }
+        // treePreservesIntermediateAndEmptyFolders + treeIDsSeparateDirectoryAndSource
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-tree-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
+            try writeFixture(root, "measurements/batch/nested/a.csv", "synthetic")
+            try fm.createDirectory(at: root.appendingPathComponent("measurements/empty"), withIntermediateDirectories: true)
+
+            let project = try ProjectContext.open(root)
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.issues.isEmpty, "tree fixture reported issues")
+            precondition(inventory.directoryPaths == ["measurements/batch", "measurements/batch/nested", "measurements/empty"],
+                         "intermediate or empty directories are missing from the inventory")
+            let tree = SourceTree(inventory: inventory, project: project)
+            precondition(tree.root.id == "directory:measurements" && tree.root.name == "measurements" && tree.root.sourceID == nil,
+                         "tree root node changed")
+            guard let batch = tree.root.children.first(where: { $0.name == "batch" }),
+                  let nested = batch.children.first(where: { $0.name == "nested" }),
+                  let empty = tree.root.children.first(where: { $0.name == "empty" }) else {
+                fatalError("tree lost an intermediate or empty folder")
+            }
+            precondition(nested.children.map(\.id) == ["source:measurements/batch/nested/a.csv"], "nested source node changed")
+            precondition(empty.id == "directory:measurements/empty" && empty.children.isEmpty, "empty directory node changed")
+
+            var directoryIDs: [String] = []
+            var sourceIDs: [String] = []
+            func walk(_ node: SourceTreeNode) {
+                if node.sourceID != nil { sourceIDs.append(node.id) } else { directoryIDs.append(node.id) }
+                node.children.forEach(walk)
+            }
+            walk(tree.root)
+            precondition(directoryIDs.allSatisfy { $0.hasPrefix("directory:") }, "directory id lost its prefix")
+            precondition(sourceIDs.allSatisfy { $0.hasPrefix("source:") }, "source id lost its prefix")
+            precondition(Set(directoryIDs).isDisjoint(with: Set(sourceIDs)), "directory and source ids collide")
+            precondition(sourceIDs == ["source:measurements/batch/nested/a.csv"], "source ids changed")
+            precondition(directoryIDs.contains("directory:measurements/batch"), "intermediate directory id missing")
+            guard let file = nested.children.first else { fatalError("file node missing") }
+            precondition(file.name == "a.csv" && file.sourceID == "measurements/batch/nested/a.csv" && file.children.isEmpty,
+                         "file node identity changed")
+        }
+        // dotRootExcludesViewerMetadataAndSnapshots
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-dot-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try ProjectSettingsStore.save(ProjectSettings(dataRoot: ".", defaultView: "tree"), projectRoot: root)
+            try writeFixture(root, ".rawviewer/evil.csv", "viewer metadata")
+            try writeFixture(root, "data/.rawview/legacy.csv", "legacy index")
+            try writeFixture(root, "data/snapshot/export.csv", "snapshot export")
+            try writeFixture(root, "data/raw/ok.csv", "synthetic")
+            try writeFixture(root, "run.csv", "synthetic")
+            try writeFixture(root, "notes/study.csv", "synthetic")
+
+            let project = try ProjectContext.open(root)
+            precondition(project.dataRootRelativePath == ".", "dot data root was not honored")
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.issues.isEmpty, "dot-root inventory reported issues")
+            precondition(inventory.sources.map(\.relativePath) == ["data/raw/ok.csv", "notes/study.csv", "run.csv"],
+                         "viewer metadata or snapshot paths entered the dot-root inventory")
+            precondition(inventory.directoryPaths == ["data", "data/raw", "notes"],
+                         "viewer metadata or snapshot directories entered the dot-root inventory")
+            let tree = SourceTree(inventory: inventory, project: project)
+            precondition(tree.root.id == "directory:." && tree.root.name == root.lastPathComponent, "dot-root tree node changed")
+
+            let index = ManifestIndex.load(project: project)
+            precondition(index.manifests.isEmpty, "dot root discovered study manifests")
+            precondition(index.issues.contains { $0.contains("data root \".\"") && $0.contains("no study manifests") },
+                         "dot root lacks the explicit no-manifest diagnostic")
+        }
+        // nestedDataRawMarkerNoLongerPrunesSelectedData
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-marker-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try writeFixture(root, "data/raw/top.csv", "synthetic")
+            try writeFixture(root, "data/raw/inner/data/raw/deep.csv", "synthetic")
+
+            let project = try ProjectContext.open(root)
+            precondition(project.dataRootRelativePath == "data/raw", "legacy default root changed")
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.issues.isEmpty, "nested-marker fixture reported issues")
+            precondition(inventory.sources.map(\.relativePath) == ["data/raw/inner/data/raw/deep.csv", "data/raw/top.csv"],
+                         "a nested data/raw marker still prunes the selected data root")
+            precondition(inventory.directoryPaths.contains("data/raw/inner") && inventory.directoryPaths.contains("data/raw/inner/data/raw"),
+                         "a directory inside the selected root is missing from the tree")
+            let tree = SourceTree(inventory: inventory, project: project)
+            guard let inner = tree.root.children.first(where: { $0.name == "inner" }),
+                  let nestedData = inner.children.first(where: { $0.name == "data" }),
+                  let nestedRaw = nestedData.children.first(where: { $0.name == "raw" }) else {
+                fatalError("nested marker directory is not in the tree")
+            }
+            precondition(nestedRaw.children.map(\.sourceID) == ["data/raw/inner/data/raw/deep.csv"], "nested source pruned")
+        }
+        // rootSwitchDoesNotReuseDerivedNamespace
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-switch-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try writeFixture(root, "data/raw/a.csv", dualSweepCSV)
+            let contained = try ProjectContext.open(root, dataRootRelativePath: "data/raw")
+            let dot = try ProjectContext.open(root, dataRootRelativePath: ".")
+            let url = root.resolvingSymlinksInPath().standardizedFileURL.appendingPathComponent("data/raw/a.csv")
+            precondition(contained.sourceRelativePath(of: url) == "data/raw/a.csv" && dot.sourceRelativePath(of: url) == "data/raw/a.csv",
+                         "equal project-relative identity changed")
+            let source = RawSource(relativePath: "data/raw/a.csv", url: url, byteSize: 64)
+
+            let cache = MeasurementCache(project: contained)
+            let calls = VisitTally()
+            let producer: @Sendable (Data, Int64, URL) async throws -> MeasurementCache.CachedInspection = { _, _, _ in
+                calls.increment()
+                return .blocked("synthetic")
+            }
+            let fingerprint = "fp-root-switch"
+            let underContained = try await cache.inspection(for: source, project: contained, catalogFingerprint: fingerprint, producer: producer)
+            precondition(!underContained.fromCache, "seeded entry came from cache")
+            let underDot = try await cache.inspection(for: source, project: dot, catalogFingerprint: fingerprint, producer: producer)
+            precondition(!underDot.fromCache, "a root switch reused the previous root's derived cache namespace")
+            precondition(calls.value == 2, "root switch did not run the producer per root")
+            let again = try await cache.inspection(for: source, project: contained, catalogFingerprint: fingerprint, producer: producer)
+            precondition(again.fromCache && calls.value == 2, "same-root inspection missed the warm entry")
+        }
+        // partialDirectoryFailureKeepsSiblingsAndFailsCLICompleteness
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-partial-\(UUID().uuidString)")
+            let locked = root.appendingPathComponent("data/raw/locked")
+            defer {
+                try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+                try? fm.removeItem(at: root)
+            }
+            try writeFixture(root, "data/raw/ok1.csv", "synthetic")
+            try writeFixture(root, "data/raw/ok2.csv", "synthetic")
+            try writeFixture(root, "data/raw/locked/hidden.csv", "synthetic")
+            try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+
+            let project = try ProjectContext.open(root)
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.sources.map(\.relativePath) == ["data/raw/ok1.csv", "data/raw/ok2.csv"],
+                         "an unreadable directory hid its accessible siblings")
+            precondition(inventory.directoryPaths.contains("data/raw/locked"), "the unreadable directory itself is missing")
+            precondition(!inventory.isComplete && !inventory.issues.isEmpty, "a partial inventory claimed completeness")
+            precondition(inventory.issues.allSatisfy {
+                if case .enumeration(let path, _) = $0 { return path == "data/raw/locked" }
+                return false
+            }, "partial I/O was not reported as a typed enumeration issue")
+        }
+        // metadataReadFailureIsReported
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-metadata-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try writeFixture(root, "data/raw/run.csv", "synthetic")
+            try writeFixture(root, "data/raw/ghost-a.csv", "synthetic")
+            try writeFixture(root, "data/raw/ghost-b.csv", "synthetic")
+            let ghostA = root.appendingPathComponent("data/raw/ghost-a.csv")
+            let ghostB = root.appendingPathComponent("data/raw/ghost-b.csv")
+            let ghostPaths = ["data/raw/ghost-a.csv", "data/raw/ghost-b.csv"]
+
+            let project = try ProjectContext.open(root)
+            let visits = VisitTally()
+            let inventory = try await project.discoverInventoryAsync(onVisitFile: { _ in
+                if visits.increment() == 1 {
+                    try? FileManager.default.removeItem(at: ghostA)
+                    try? FileManager.default.removeItem(at: ghostB)
+                }
+            })
+            precondition(!inventory.isComplete, "metadata read failure claimed completeness")
+            let metadataPaths = inventory.issues.compactMap { issue -> String? in
+                if case .metadata(let path, _) = issue { return path }
+                return nil
+            }
+            precondition(!metadataPaths.isEmpty, "metadata read failure was silent")
+            precondition(metadataPaths.allSatisfy { ghostPaths.contains($0) }, "an unrelated entry was blamed")
+            for path in metadataPaths {
+                precondition(!inventory.sources.contains { $0.relativePath == path },
+                             "a source with failed metadata entered the inventory")
+            }
+            precondition(inventory.sources.contains { $0.relativePath == "data/raw/run.csv" }, "healthy sibling dropped")
+        }
+        // fileMetadataFailureKeepsFollowingDirectorySources
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-filemeta-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try writeFixture(root, "data/raw/trigger.csv", "synthetic")
+            try writeFixture(root, "data/raw/zghost.csv", "synthetic")
+            try writeFixture(root, "data/raw/kept/s1.csv", "synthetic")
+            try writeFixture(root, "data/raw/kept/s2.csv", "synthetic")
+            let ghost = root.appendingPathComponent("data/raw/zghost.csv")
+
+            let project = try ProjectContext.open(root)
+            let visits = VisitTally()
+            let inventory = try await project.discoverInventoryAsync(onVisitFile: { _ in
+                if visits.increment() == 1 {
+                    try? FileManager.default.removeItem(at: ghost)
+                }
+            })
+            precondition(inventory.issues.contains {
+                if case .metadata(let path, _) = $0 { return path == "data/raw/zghost.csv" }
+                return false
+            }, "the file metadata failure was not recorded")
+            precondition(!inventory.isComplete, "a file metadata failure claimed completeness")
+            precondition(inventory.sources.map(\.relativePath) == [
+                "data/raw/kept/s1.csv", "data/raw/kept/s2.csv", "data/raw/trigger.csv"
+            ], "a file metadata failure pruned the following directory: \(inventory.sources.map(\.relativePath))")
+            precondition(inventory.directoryPaths.contains("data/raw/kept"), "the surviving directory left the inventory")
+        }
+        // customDataRootDataDoesNotInventorySnapshotOrLegacyIndex
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-customdata-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try ProjectSettingsStore.save(ProjectSettings(dataRoot: "data", defaultView: "tree"), projectRoot: root)
+            try writeFixture(root, "data/raw/a.csv", "synthetic")
+            try writeFixture(root, "data/study/b.csv", "synthetic")
+            try writeFixture(root, "data/snapshot/export.csv", "snapshot export")
+            try writeFixture(root, "data/.rawview/legacy.csv", "legacy index")
+            try writeFixture(root, "data/instruments/keysight-b1500a.yaml", keysightProfile)
+
+            let project = try ProjectContext.open(root)
+            precondition(project.dataRootRelativePath == "data", "custom data root was not honored")
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.issues.isEmpty, "custom-root inventory reported issues")
+            precondition(inventory.sources.map(\.relativePath) == ["data/raw/a.csv", "data/study/b.csv"],
+                         "snapshot or legacy index paths entered the custom-root inventory")
+            precondition(inventory.directoryPaths == ["data/instruments", "data/raw", "data/study"],
+                         "snapshot or legacy index directories entered the custom-root inventory")
+
+            for forbidden in ["data/snapshot", "data/snapshot/nested", "data/.rawview", ".rawviewer", ".rawviewer/setting"] {
+                var saveRejected = false
+                do {
+                    try ProjectSettingsStore.save(ProjectSettings(dataRoot: forbidden, defaultView: "tree"), projectRoot: root)
+                } catch is ProjectSettingsError { saveRejected = true }
+                precondition(saveRejected, "save accepted forbidden data root \(forbidden)")
+                var openRejected = false
+                do { _ = try ProjectContext.open(root, dataRootRelativePath: forbidden) } catch { openRejected = true }
+                precondition(openRejected, "open accepted forbidden data root \(forbidden)")
+            }
+            let settingsAfter = try ProjectSettingsStore.load(projectRoot: root)
+            precondition(settingsAfter?.dataRoot == "data", "forbidden root overwrote settings")
+
+            try writeFixture(root, "data/snapshot/snap.yaml", "study_id: snapshot-study\nsources:\n  - path: data/raw/a.csv\n")
+            try writeFixture(root, "study.yaml", "study_id: kept\nsources:\n  - path: data/raw/a.csv\n")
+            let index = ManifestIndex.load(project: project)
+            precondition(index.issues.isEmpty, "custom root reported manifest issues")
+            precondition(index.manifests.map(\.relativePath) == ["study.yaml"], "a snapshot-namespace manifest was discovered")
+            precondition(index.manifests.first?.members == ["data/raw/a.csv"], "manifest membership changed")
+        }
+        // configuredRootKeepsZeroOpenAndLinkRegressions
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-t2-regress-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
+            try writeFixture(root, "measurements/batch/a.csv", dualSweepCSV)
+            try writeFixture(root, "measurements/skip.SPE", "prohibited")
+            try writeFixture(root, "measurements/skip.affm", "prohibited")
+            try writeFixture(root, "measurements/inside-target.csv", dualSweepCSV)
+            try writeFixture(root, "outside.csv", "outside data")
+            let rawRoot = root.appendingPathComponent("measurements")
+            try fm.createSymbolicLink(at: rawRoot.appendingPathComponent("escape.csv"),
+                                      withDestinationURL: root.appendingPathComponent("outside.csv"))
+            let speURL = rawRoot.appendingPathComponent("skip.SPE")
+            let speBytes = try Data(contentsOf: speURL)
+            let speMtime = try fm.attributesOfItem(atPath: speURL.path)[.modificationDate] as? Date
+
+            let project = try ProjectContext.open(root)
+            let inventory = try await project.discoverInventoryAsync()
+            precondition(inventory.sources.map(\.relativePath) == ["measurements/batch/a.csv", "measurements/escape.csv", "measurements/inside-target.csv"],
+                         "excluded suffixes or link handling changed under a configured root: sources=\(inventory.sources.map(\.relativePath)) dirs=\(inventory.directoryPaths) issues=\(inventory.issues)")
+            precondition(inventory.sources.first(where: { $0.relativePath == "measurements/escape.csv" })?.byteSize == 0,
+                         "a symlinked source claimed a target size")
+
+            var speRejected = false
+            do { _ = try await InstrumentReader.load(speURL, project: project) } catch {
+                speRejected = true
+                precondition(error.localizedDescription.contains("skips .spe and .affm"), ".spe diagnostic changed")
+            }
+            precondition(speRejected, ".spe source was opened")
+            let speBytesAfter = try Data(contentsOf: speURL)
+            let speMtimeAfter = try fm.attributesOfItem(atPath: speURL.path)[.modificationDate] as? Date
+            precondition(speBytesAfter == speBytes, ".spe bytes changed")
+            precondition(speMtimeAfter == speMtime, ".spe mtime changed")
+
+            let linkReport = await InstrumentReader.inspectMany(inventory.sources, project: project)
+            guard let escape = linkReport.results.first(where: { $0.id == "measurements/escape.csv" }) else {
+                fatalError("escape link missing from inspection")
+            }
+            precondition(escape.inspection == nil, "an outside link produced an inspection")
+            precondition(escape.error?.contains("outside") == true, "outside link diagnostic lost \"outside\"")
+            precondition(escape.error?.contains("data root (\"measurements\")") == true,
+                         "outside link diagnostic does not name the configured root")
+
+            let swapped = rawRoot.appendingPathComponent("inside-target.csv")
+            try fm.removeItem(at: swapped)
+            try fm.createSymbolicLink(at: swapped, withDestinationURL: rawRoot.appendingPathComponent("batch/a.csv"))
+            var swapRejected = false
+            do { _ = try await InstrumentReader.load(swapped, project: project) } catch {
+                swapRejected = true
+                precondition(error.localizedDescription.contains("symlink"), "swap diagnostic lost \"symlink\"")
+                precondition(error.localizedDescription.contains("never followed"), "swap diagnostic lost \"never followed\"")
+            }
+            precondition(swapRejected, "swapped-in symlink was opened")
+            let outsideAfter = try Data(contentsOf: root.appendingPathComponent("outside.csv"))
+            precondition(outsideAfter == Data("outside data".utf8),
+                         "the outside link target was read")
+        }
+        // sessionStateRejectsStaleWorkAfterRootChange
+        do {
+            var state = ProjectSessionState()
+            let first = state.beginRootChange()
+            precondition(state.accepts(generation: first))
+            state.selectedSourceIDs.insert("measurements/batch/a.csv")
+            state.expandedDirectoryIDs.insert("directory:measurements/batch")
+            let second = state.beginRootChange()
+            precondition(second == first + 1, "root change did not advance the generation")
+            precondition(state.selectedSourceIDs.isEmpty && state.expandedDirectoryIDs.isEmpty, "root change kept root-scoped state")
+            precondition(!state.accepts(generation: first), "a superseded root generation was accepted")
+            precondition(state.accepts(generation: second), "the current root generation was rejected")
+        }
+    }
+
+    /// Task 1 mirror of ProjectSettingsTests (the Swift Testing suite cannot
+    /// run in toolchains without the Testing module): settings round trip and
+    /// exact YAML, proven absence vs corruption, the fail-closed rejection
+    /// matrix with the 64 KiB cap, symlink refusals, and whole-project move
+    /// identity with unchanged raw bytes/mtime. Synthetic fixtures only.
+    static func projectSettingsSelfCheck() throws {
+        let fm = FileManager.default
+        let validV1 = "schema_version: 1\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\n"
+        let validV2 = "schema_version: 2\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\n"
+        // 1. Round trip is project-relative and byte-exact; "." also round-trips.
+        do {
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-settings-roundtrip-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            try writeFixture(root, "measurements/batch/a.csv", "synthetic")
+            let settings = ProjectSettings(dataRoot: "measurements", defaultView: "tree", defaultPreset: "nature-single")
+            try ProjectSettingsStore.save(settings, projectRoot: root)
+            let url = ProjectSettingsStore.settingsURL(projectRoot: root)
+            precondition(url.path.hasSuffix(".rawviewer/setting.yaml"), "settings file location changed: \(url.path)")
+            let text = try String(contentsOf: url, encoding: .utf8)
+            precondition(text == "schema_version: 2\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\n",
+                         "exact schema v2 YAML changed: \(text)")
+            precondition(!text.contains(root.path), "settings stored the absolute project directory")
+            let loaded = try ProjectSettingsStore.load(projectRoot: root)
+            precondition(loaded == settings, "round trip lost settings")
+            let dot = ProjectSettings(dataRoot: ".", defaultView: "tree", defaultPreset: "nature-single")
+            try ProjectSettingsStore.save(dot, projectRoot: root)
+            let loadedDot = try ProjectSettingsStore.load(projectRoot: root)
+            precondition(loadedDot == dot, "dot data root did not round trip")
+
+            // Test legacy fallback from .rawviewer/setting/setting.yaml (schema v1)
+            let legacyRoot = fm.temporaryDirectory.appendingPathComponent("rawview-settings-legacy-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: legacyRoot) }
+            try writeFixture(legacyRoot, ".rawviewer/setting/setting.yaml", validV1)
+            let loadedLegacy = try ProjectSettingsStore.load(projectRoot: legacyRoot)
+            precondition(loadedLegacy == ProjectSettings(dataRoot: "data/raw", defaultView: "tree", defaultPreset: "nature-single"),
+                         "legacy fallback did not parse correctly")
+        }
+        // 2. Proven absence is nil; corrupt settings throw — even beside a missing data/raw.
+        do {
+            let fresh = fm.temporaryDirectory.appendingPathComponent("rawview-settings-absent-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: fresh) }
+            try writeFixture(fresh, "data/raw/a.csv", "synthetic")
+            let absent = try ProjectSettingsStore.load(projectRoot: fresh)
+            precondition(absent == nil, "missing settings were not nil")
+            let legacyRootPath = try ProjectContext.open(fresh).dataRootRelativePath
+            precondition(legacyRootPath == "data/raw", "compatibility open lost the data/raw default")
+            let corrupt = fm.temporaryDirectory.appendingPathComponent("rawview-settings-corrupt-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: corrupt) }
+            try writeFixture(corrupt, ".rawviewer/setting.yaml", "schema_version: 99\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\n")
+            var loadRejected = false
+            do { _ = try ProjectSettingsStore.load(projectRoot: corrupt) } catch is ProjectSettingsError { loadRejected = true }
+            precondition(loadRejected, "corrupt settings loaded")
+            var openRejected = false
+            do { _ = try ProjectContext.open(corrupt) } catch is ProjectSettingsError { openRejected = true }
+            precondition(openRejected, "open silently recovered corrupt settings")
+        }
+        // 3. Version/key/path rejection matrix, 64 KiB cap, and save-side validation.
+        do {
+            func expectReject(_ yaml: String, _ label: String) throws {
+                let root = fm.temporaryDirectory.appendingPathComponent("rawview-settings-reject-\(UUID().uuidString)")
+                defer { try? fm.removeItem(at: root) }
+                try writeFixture(root, ".rawviewer/setting.yaml", yaml)
+                var rejected = false
+                do { _ = try ProjectSettingsStore.load(projectRoot: root) } catch is ProjectSettingsError { rejected = true }
+                precondition(rejected, "\(label) was accepted")
+            }
+            let head = "data_root: \"data/raw\"\ndefault_view: \"tree\"\n"
+            try expectReject("schema_version: 99\n" + head, "schema_version 99")
+            try expectReject("schema_version: 2\n" + head + "extra: 1\n", "unknown key")
+            try expectReject("schema_version: 2\ndata_root: \"a\"\ndata_root: \"b\"\ndefault_view: \"tree\"\n", "duplicate key")
+            for badRoot in ["/abs", "../outside", "data/../../x", "data/./raw", "data/raw/", "~", "data\"raw", "data\\raw"] {
+                try expectReject("schema_version: 2\ndata_root: \"\(badRoot)\"\ndefault_view: \"tree\"\n", "data_root \(badRoot)")
+            }
+            try expectReject("schema_version: 2\ndata_root: \"data/raw\"\ndefault_view: \"list\"\n", "unknown default_view")
+            // 64 KiB UTF-8 cap: comment padding under the cap loads; over the cap fails closed.
+            let root = fm.temporaryDirectory.appendingPathComponent("rawview-settings-cap-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: root) }
+            let pad = "# " + String(repeating: "p", count: 97) + "\n"
+            let under = validV2 + String(repeating: pad, count: 600)
+            precondition(Data(under.utf8).count <= ProjectSettingsStore.maximumFileBytes, "under-cap fixture must fit the cap")
+            try writeFixture(root, ".rawviewer/setting.yaml", under)
+            let underLoaded = try ProjectSettingsStore.load(projectRoot: root)
+            precondition(underLoaded == ProjectSettings(dataRoot: "data/raw", defaultView: "tree", defaultPreset: "nature-single"),
+                         "under-cap padded settings were rejected")
+            let over = validV2 + String(repeating: pad, count: 700)
+            precondition(Data(over.utf8).count > ProjectSettingsStore.maximumFileBytes, "over-cap fixture must exceed the cap")
+            try writeFixture(root, ".rawviewer/setting.yaml", over)
+            var capped = false
+            do { _ = try ProjectSettingsStore.load(projectRoot: root) } catch is ProjectSettingsError { capped = true }
+            precondition(capped, "oversized settings were accepted")
+            // Save validates before touching the project.
+            var saveRejected = false
+            do { try ProjectSettingsStore.save(ProjectSettings(dataRoot: "../escape", defaultView: "tree"), projectRoot: root) } catch is ProjectSettingsError { saveRejected = true }
+            precondition(saveRejected, "save accepted an escaping data_root")
+            // A backslash would be re-read as a YAML escape sequence (a
+            // different value than the one stored), so saving it must fail.
+            var backslashSaveRejected = false
+            do { try ProjectSettingsStore.save(ProjectSettings(dataRoot: "data\\raw", defaultView: "tree"), projectRoot: root) } catch is ProjectSettingsError { backslashSaveRejected = true }
+            precondition(backslashSaveRejected, "save accepted a backslash data_root")
+        }
+        // 4. Symlinked namespace, symlinked settings file, and symlinked configured root all fail closed.
+        do {
+            let namespace = fm.temporaryDirectory.appendingPathComponent("rawview-settings-nslink-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: namespace) }
+            let outside = fm.temporaryDirectory.appendingPathComponent("rawview-settings-outside-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: outside) }
+            try writeFixture(outside, "setting.yaml", validV2)
+            try fm.createDirectory(at: namespace, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: namespace.appendingPathComponent(".rawviewer"), withDestinationURL: outside)
+            var nsLoadRejected = false
+            do { _ = try ProjectSettingsStore.load(projectRoot: namespace) } catch is ProjectSettingsError { nsLoadRejected = true }
+            precondition(nsLoadRejected, "symlinked settings namespace loaded")
+            var nsSaveRejected = false
+            do { try ProjectSettingsStore.save(ProjectSettings(dataRoot: "data/raw", defaultView: "tree"), projectRoot: namespace) } catch is ProjectSettingsError { nsSaveRejected = true }
+            precondition(nsSaveRejected, "save followed a symlinked settings namespace")
+            let targetText = try String(contentsOf: outside.appendingPathComponent("setting.yaml"), encoding: .utf8)
+            precondition(targetText == validV2, "refused save touched the symlink target")
+            let fileLink = fm.temporaryDirectory.appendingPathComponent("rawview-settings-filelink-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: fileLink) }
+            try writeFixture(fileLink, ".rawviewer/placeholder", "x")
+            try Data(validV2.utf8).write(to: fileLink.appendingPathComponent("real.yaml"))
+            try fm.createSymbolicLink(at: fileLink.appendingPathComponent(".rawviewer/setting.yaml"),
+                                      withDestinationURL: fileLink.appendingPathComponent("real.yaml"))
+            var fileLoadRejected = false
+            do { _ = try ProjectSettingsStore.load(projectRoot: fileLink) } catch is ProjectSettingsError { fileLoadRejected = true }
+            precondition(fileLoadRejected, "symlinked settings file was followed")
+            var fileSaveRejected = false
+            do { try ProjectSettingsStore.save(ProjectSettings(dataRoot: "data/raw", defaultView: "tree"), projectRoot: fileLink) } catch is ProjectSettingsError { fileSaveRejected = true }
+            precondition(fileSaveRejected, "save replaced a symlinked settings file")
+            let rootLink = fm.temporaryDirectory.appendingPathComponent("rawview-settings-rootlink-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: rootLink) }
+            try writeFixture(rootLink, ".rawviewer/setting.yaml", validV2)
+            try writeFixture(rootLink, "real-raw/a.csv", "synthetic")
+            try fm.createSymbolicLink(at: rootLink.appendingPathComponent("data"),
+                                      withDestinationURL: rootLink.appendingPathComponent("real-raw"))
+            var rootRejected = false
+            do { _ = try ProjectContext.open(rootLink) } catch is ReaderError { rootRejected = true }
+            precondition(rootRejected, "open followed a symlinked configured-root component")
+        }
+        // 5. Whole-project move preserves the data root and relative identities;
+        // raw fixture bytes and mtime stay unchanged.
+        do {
+            let a = fm.temporaryDirectory.appendingPathComponent("rawview-settings-moveA-\(UUID().uuidString)")
+            let b = fm.temporaryDirectory.appendingPathComponent("rawview-settings-moveB-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: a); try? fm.removeItem(at: b) }
+            try writeFixture(a, ".rawviewer/setting/setting.yaml", "schema_version: 1\ndata_root: \"measurements\"\ndefault_view: \"tree\"\n")
+            try writeFixture(a, "measurements/batch/a.csv", "synthetic,measurement")
+            let original = a.appendingPathComponent("measurements/batch/a.csv")
+            let bytesBefore = try Data(contentsOf: original)
+            let mtimeBefore = try fm.attributesOfItem(atPath: original.path)[.modificationDate] as? Date
+            let openedA = try ProjectContext.open(a)
+            precondition(openedA.dataRootRelativePath == "measurements", "configured open lost the data root")
+            precondition(openedA.rawRoot.path.hasSuffix("/measurements"), "configured open lost the raw root")
+            let sourcesA = try openedA.discoverSources()
+            precondition(sourcesA.map(\.relativePath) == ["measurements/batch/a.csv"],
+                         "custom-root discovery identity changed: \(sourcesA.map(\.relativePath))")
+            precondition(openedA.sourceRelativePath(of: sourcesA[0].url) == "measurements/batch/a.csv",
+                         "sourceRelativePath lost the project-relative identity")
+            precondition(openedA.sourceRelativePath(of: a.appendingPathComponent("outside.csv")) == nil,
+                         "sourceRelativePath claimed an outside path")
+            try fm.moveItem(at: a, to: b)
+            let openedB = try ProjectContext.open(b)
+            precondition(openedB.dataRootRelativePath == "measurements", "moved project lost its configured data root")
+            let movedSettings = try ProjectSettingsStore.load(projectRoot: b)
+            precondition(movedSettings == ProjectSettings(dataRoot: "measurements", defaultView: "tree"),
+                         "moved settings changed")
+            let movedPaths = try openedB.discoverSources().map(\.relativePath)
+            precondition(movedPaths == ["measurements/batch/a.csv"],
+                         "moved discovery identity changed")
+            let moved = b.appendingPathComponent("measurements/batch/a.csv")
+            let movedBytes = try Data(contentsOf: moved)
+            precondition(movedBytes == bytesBefore, "move changed raw bytes")
+            let mtimeAfter = try fm.attributesOfItem(atPath: moved.path)[.modificationDate] as? Date
+            precondition(mtimeAfter == mtimeBefore, "move changed raw mtime")
+        }
+    }
+
+    static func presetCatalogSelfCheck() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("rawview-preset-check-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        try writeFixture(root, "data/raw/seed.csv", "voltage,current\n0.1,1.0\n")
+
+        // 1. Without custom presets: PresetCatalog.load returns standard presets
+        let proj = try ProjectContext.open(root)
+        let standard = PresetCatalog.load(project: proj)
+        precondition(standard.count == ScientificPreset.allCases.count, "default preset catalog count mismatch")
+        precondition(standard.contains(where: { $0.id == "nature-single" }))
+
+        // 2. With custom preset in .rawviewer/preset/
+        let customYAML = """
+        id: custom-jacs
+        name: JACS Custom
+        publisher: JACS
+        width_mm: 82.5
+        height_mm: 60.0
+        open_frame: true
+        serif: true
+        spine_thickness_pt: 1.0
+        tick_length_pt: 5.0
+        title_pt: 9.0
+        axis_label_pt: 8.5
+        tick_label_pt: 8.0
+        legend_pt: 7.5
+        """
+        try writeFixture(root, ".rawviewer/preset/custom-jacs.yaml", customYAML)
+        let loaded = PresetCatalog.load(project: proj)
+        precondition(loaded.count == ScientificPreset.allCases.count + 1, "custom preset was not merged")
+        guard let custom = loaded.first(where: { $0.id == "custom-jacs" }) else {
+            preconditionFailure("custom-jacs preset missing")
+        }
+        precondition(custom.displayName == "JACS Custom")
+        precondition(custom.publisher == "JACS")
+        precondition(custom.widthMM == 82.5)
+        precondition(custom.heightMM == 60.0)
+        precondition(custom.isOpenFrame == true)
+        precondition(custom.isSerif == true)
+        precondition(custom.spineThicknessPt == 1.0)
+    }
+
+    static func categoryRuleEngineSelfCheck() throws {
+        // 1. Basic tokenization
+        let tokens = CategoryRuleEngine.tokenize(filename: "SampleA_IV_101026.csv", delimiters: ["_"])
+        precondition(tokens == ["SampleA", "IV", "101026"], "tokenize failed: \(tokens)")
+
+        // 2. Extract with rule mapping
+        let rule = CategoryRule(
+            delimiters: ["_"],
+            categoryIndex: 1,
+            deviceIndex: 0,
+            dateIndex: 2,
+            categoryMap: ["IV": "I-V Sweep", "CV": "C-V Characteristic"]
+        )
+        let facts = CategoryRuleEngine.extract(from: "SampleA_IV_101026.csv", rules: rule)
+        precondition(facts.category == "I-V Sweep", "category mapping failed")
+        precondition(facts.deviceID == "SampleA", "device mapping failed")
+        precondition(facts.timestamp == "101026", "date mapping failed")
+
+        // 3. Fallback when rules is nil
+        let legacyFacts = CategoryRuleEngine.extract(from: "SampleA_IV_101026.csv", rules: nil)
+        precondition(legacyFacts.category == nil, "unconfigured category should be nil")
+    }
+
+    static func editorWorkspaceModelSelfCheck() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("rawview-editor-check-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+
+        let sampleCSV = """
+        # Instrument: Custom Keithey
+        # Date: 2026-10-10
+        Voltage,Current
+        0.0,1.2e-6
+        0.1,2.5e-6
+        0.2,3.8e-6
+        """
+        try writeFixture(root, "sample.csv", sampleCSV)
+        let sampleURL = root.appendingPathComponent("sample.csv")
+
+        let model = EditorWorkspaceModel()
+        try model.loadSample(url: sampleURL)
+        precondition(model.lines.count == 6, "expected 6 preview lines, got \(model.lines.count)")
+
+        // Tag lines 0..1 as metadata, line 2 as column headers, lines 3..5 as data matrix
+        model.tagRange(from: 0, to: 1, as: .metadata)
+        model.tagRange(from: 2, to: 2, as: .columnHeaders)
+        model.tagRange(from: 3, to: 5, as: .dataMatrix)
+
+        precondition(model.lineTags[0] == .metadata)
+        precondition(model.lineTags[1] == .metadata)
+        precondition(model.lineTags[2] == .columnHeaders)
+        precondition(model.lineTags[3] == .dataMatrix)
+        precondition(model.columns.count == 2, "auto-detected 2 columns: \(model.columns.map(\.name))")
+        precondition(model.columns[0].name == "Voltage")
+        precondition(model.columns[1].name == "Current")
+
+        model.instrumentID = "test-sourcemeter"
+        model.instrumentName = "Test SourceMeter"
+        let compiledYAML = try model.compileProfile()
+        precondition(compiledYAML.contains("id: \"test-sourcemeter\""))
+        precondition(compiledYAML.contains("header_row: 3"))
+        precondition(compiledYAML.contains("data_start_row: 4"))
+    }
+
     static func activeProjectTestSelfCheck() async throws {
         let testRoot = URL(fileURLWithPath: "/Users/tai/research-projects/active-projects/test", isDirectory: true)
         guard FileManager.default.fileExists(atPath: testRoot.path) else { return }
@@ -2027,4 +2721,1118 @@ enum CoreSelfCheck {
             precondition(p.spineThicknessPt > 0 && p.tickLengthPt > 0)
         }
     }
+
+    // MARK: Task 3 — ProjectIndexStore
+
+    /// Synthetic project under the temporary directory: `data/raw/<files>`.
+    private static func pidxProject(
+        files: [String: String] = ["data/raw/seed.csv": "synthetic"]
+    ) throws -> (project: ProjectContext, root: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pidx-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for (relativePath, body) in files {
+            let url = root.appendingPathComponent(relativePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(body.utf8).write(to: url)
+        }
+        let project = try ProjectContext.open(root, dataRootRelativePath: "data/raw")
+        return (project, root)
+    }
+
+    private static func pidxDigests(_ urls: [URL]) -> [String: String] {
+        var result: [String: String] = [:]
+        for url in urls where FileManager.default.fileExists(atPath: url.path) {
+            result[url.path] = sha256Hex((try? Data(contentsOf: url)) ?? Data())
+        }
+        return result
+    }
+
+    private static func pidxTreeSnapshot(root: URL) -> [String: String] {
+        var snapshot: [String: String] = [:]
+        let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        while let entry = enumerator?.nextObject() as? URL {
+            let relative = entry.path.hasPrefix(root.path + "/")
+                ? String(entry.path.dropFirst(root.path.count + 1))
+                : entry.lastPathComponent
+            let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                snapshot[relative] = "symlink"
+            } else if values?.isDirectory == true {
+                snapshot[relative] = "dir"
+            } else if let data = try? Data(contentsOf: entry) {
+                snapshot[relative] = sha256Hex(data)
+            }
+        }
+        return snapshot
+    }
+
+    /// Real legacy WAL database whose committed rows stay in `-wal` with
+    /// `-shm` present; the caller closes the returned connection.
+    private static func pidxLegacyWAL(at url: URL, rows: Int) throws -> OpaquePointer {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
+              let db else {
+            throw NSError(domain: "CoreSelfCheck", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "cannot open legacy fixture"])
+        }
+        func exec(_ sql: String) throws {
+            var message: UnsafeMutablePointer<CChar>?
+            let rc = sqlite3_exec(db, sql, nil, nil, &message)
+            guard rc == SQLITE_OK else {
+                let text = message.map { String(cString: $0) } ?? "sqlite error \(rc)"
+                sqlite3_free(message)
+                throw NSError(domain: "CoreSelfCheck", code: Int(rc),
+                              userInfo: [NSLocalizedDescriptionKey: text])
+            }
+        }
+        try exec("PRAGMA journal_mode = WAL;")
+        try exec("""
+        CREATE TABLE sources (
+            relative_path TEXT PRIMARY KEY,
+            mtime INTEGER NOT NULL,
+            byte_size INTEGER NOT NULL,
+            instrument_id TEXT,
+            instrument_name TEXT,
+            application_mode TEXT,
+            device_id TEXT,
+            timestamp TEXT,
+            category TEXT,
+            support_status TEXT NOT NULL,
+            validation_state TEXT NOT NULL,
+            reader_version TEXT NOT NULL,
+            profile_id TEXT,
+            profile_hash TEXT NOT NULL,
+            error TEXT
+        );
+        """)
+        for index in 0..<rows {
+            try exec("INSERT OR REPLACE INTO sources (relative_path, mtime, byte_size, support_status, validation_state, reader_version, profile_hash) "
+                + "VALUES ('data/raw/f\(index).csv', \(index), 10, 'supported', 'valid', '1.3.0', 'abc');")
+        }
+        return db
+    }
+
+    private static func pidxRemoveIndexed(_ url: URL) {
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: url.path + suffix)
+        }
+    }
+
+    /// Cross-process lease probe: a flock belongs to the open file
+    /// description, not to a process. The holder descriptor (opened without
+    /// O_CLOEXEC) is inherited by a spawned child across posix_spawn, and
+    /// this process then drops its own reference, leaving the child as the
+    /// sole holder. The parent must observe busy while that holder lives and
+    /// free once the holder is SIGKILLed — crash release through OS locking,
+    /// with no stale marker consulted.
+    private static func pidxProbeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, acquiredAfterCrash: Bool) {
+        let fd = Darwin.open(leasePath, O_CREAT | O_RDWR, 0o600)
+        guard fd >= 0 else { return (false, false) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(fd)
+            return (false, false)
+        }
+        var holder: pid_t = 0
+        var arguments: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("60"), nil]
+        let spawnResult = arguments.withUnsafeMutableBufferPointer { buffer in
+            posix_spawn(&holder, "/bin/sleep", nil, nil, buffer.baseAddress, nil)
+        }
+        for case let argument? in arguments { free(argument) }
+        // Drop our reference: after a successful spawn the sleeping child
+        // holds the lock alone.
+        Darwin.close(fd)
+        guard spawnResult == 0, holder > 0 else { return (false, false) }
+
+        var busyWhileHeld = false
+        let probe = Darwin.open(leasePath, O_CREAT | O_RDWR, 0o600)
+        if probe >= 0 {
+            busyWhileHeld = flock(probe, LOCK_EX | LOCK_NB) != 0
+            Darwin.close(probe)
+        }
+
+        kill(holder, SIGKILL)
+        var status: Int32 = 0
+        _ = waitpid(holder, &status, 0)
+
+        var acquiredAfterCrash = false
+        let after = Darwin.open(leasePath, O_CREAT | O_RDWR, 0o600)
+        if after >= 0 {
+            acquiredAfterCrash = flock(after, LOCK_EX | LOCK_NB) == 0
+            if acquiredAfterCrash { _ = flock(after, LOCK_UN) }
+            Darwin.close(after)
+        }
+        return (busyWhileHeld, acquiredAfterCrash)
+    }
+
+    /// Mirror of Tests/RawViewCoreTests/ProjectIndexStoreTests.swift: Task 3
+    /// safe SQLite namespace, relocation, advisory trust, and writer lease.
+    /// Synthetic fixtures only; the failed VFS proof gate means product code
+    /// performs no project-local SQLite write here.
+    static func projectIndexStoreSelfCheck() async throws {
+        // open resolves and creates nothing.
+        let basic = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: basic.root) }
+        let beforeBasic = pidxTreeSnapshot(root: basic.root)
+        let store = try await ProjectIndexStore.open(project: basic.project)
+        let usage = try await store.usage()
+        precondition(pidxTreeSnapshot(root: basic.root) == beforeBasic,
+                     "store open/usage must not create, write, or delete anything in the project")
+        precondition(usage.storageMode == .destination, "writable project with nothing yet resolves to the preferred destination")
+        precondition(!usage.destinationExists && !usage.legacyExists && !usage.stagingExists, "clean project reports empty storage")
+        precondition(usage.projectWritable, "clean temp project must be writable")
+        precondition(usage.destinationURL.path == ProjectIndexStore.preferredDestinationURL(project: basic.project).path,
+                     "preferred destination is .rawviewer/index.db, resolved by the store")
+        precondition(usage.legacyURL.path == ProjectIndexStore.legacyIndexURL(project: basic.project).path, "legacy URL stays the existing runtime location")
+
+        // legacyWALBackupIncludesCommittedRows: migration withheld by the gate;
+        // backup mechanics still include WAL-committed rows at a non-project staging copy.
+        let wal = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: wal.root) }
+        let legacyURL = ProjectIndexStore.legacyIndexURL(project: wal.project)
+        let fixture = try pidxLegacyWAL(at: legacyURL, rows: 25)
+        defer { sqlite3_close_v2(fixture) }
+        let walURL = URL(fileURLWithPath: legacyURL.path + "-wal")
+        let shmURL = URL(fileURLWithPath: legacyURL.path + "-shm")
+        precondition(FileManager.default.fileExists(atPath: walURL.path),
+                     "fixture must keep committed rows in the WAL")
+        let legacyBefore = pidxDigests([legacyURL, walURL])
+        let shmSizeBefore = (try? Data(contentsOf: shmURL))?.count
+        precondition(legacyBefore.count == 2 && shmSizeBefore != nil,
+                     "legacy db, WAL, and SHM must all exist")
+        let walStore = try await ProjectIndexStore.open(project: wal.project)
+        let walReport = try await walStore.migrateLegacy()
+        precondition(walReport.outcome == .withheldPendingStorageDecision,
+                     "VFS proof gate failed: publication to the project-local destination is withheld")
+        precondition(walReport.copiedRows == 0, "a withheld migration copies nothing")
+        precondition(walReport.warnings.contains { $0.contains("withheld") }, "the report must carry the gate warning")
+        precondition(!FileManager.default.fileExists(
+            atPath: ProjectIndexStore.preferredDestinationURL(project: wal.project).path),
+            "the gate forbids creating the project-local destination")
+        precondition(pidxDigests([legacyURL, walURL]) == legacyBefore,
+                     "migration must never touch legacy db/WAL bytes")
+        precondition((try? Data(contentsOf: shmURL))?.count == shmSizeBefore,
+                     "migration must preserve the SHM file in place")
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("staging-" + UUID().uuidString + ".db")
+        defer { pidxRemoveIndexed(staging) }
+        let source = try IndexDatabase.openReadOnly(at: legacyURL)
+        try source.backup(to: staging)
+        let copied = try IndexDatabase.open(at: staging)
+        precondition(copied.lookupAll().count == 25, "backup must include rows committed only to the WAL")
+        let integrityOK = try copied.integrityCheck()
+        precondition(integrityOK, "staging backup must pass integrity_check")
+        try copied.checkpoint()
+        try copied.close()
+        let reopened = try IndexDatabase.open(at: staging)
+        precondition(reopened.lookupAll().count == 25, "rows survive checkpoint and close")
+        try reopened.close()
+        try source.close()
+        // db and -wal (the data and the committed log) stay byte-identical.
+        // The -shm wal-index is derived state: SQLite's own reader may
+        // refresh it in place while opening the WAL database, so it is
+        // asserted by presence and size — it is never deleted or replaced,
+        // and no committed data lives there.
+        precondition(pidxDigests([legacyURL, walURL]) == legacyBefore,
+                     "read-only backup must not modify legacy db/WAL bytes")
+        precondition(FileManager.default.fileExists(atPath: shmURL.path)
+                        && (try? Data(contentsOf: shmURL))?.count == shmSizeBefore,
+                     "SHM must be preserved in place")
+
+        // destinationConflictPreservesBoth: existing destination wins; both
+        // databases survive byte-for-byte; no staging appears.
+        let conflict = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: conflict.root) }
+        let destination = ProjectIndexStore.preferredDestinationURL(project: conflict.project)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let destinationBytes = Data("SQLite format 3\0".utf8) + Data(repeating: 0x5A, count: 4096)
+        try destinationBytes.write(to: destination)
+        let conflictLegacy = ProjectIndexStore.legacyIndexURL(project: conflict.project)
+        let conflictFixture = try pidxLegacyWAL(at: conflictLegacy, rows: 7)
+        defer { sqlite3_close_v2(conflictFixture) }
+        let conflictWAL = URL(fileURLWithPath: conflictLegacy.path + "-wal")
+        let conflictSHM = URL(fileURLWithPath: conflictLegacy.path + "-shm")
+        let conflictBefore = pidxDigests([destination, conflictLegacy, conflictWAL, conflictSHM])
+        precondition(conflictBefore.count == 4, "destination and legacy db/WAL/SHM must all exist")
+        let conflictStore = try await ProjectIndexStore.open(project: conflict.project)
+        let conflictReport = try await conflictStore.migrateLegacy()
+        precondition(conflictReport.outcome == .destinationExists, "an existing destination wins")
+        precondition(conflictReport.copiedRows == 0, "a preserved destination receives no copy")
+        precondition(pidxDigests([destination, conflictLegacy, conflictWAL, conflictSHM]) == conflictBefore,
+                     "existing destination and legacy index must both survive byte-for-byte")
+        let conflictEntries = try FileManager.default.contentsOfDirectory(
+            atPath: destination.deletingLastPathComponent().path)
+            .filter { !$0.hasSuffix(".lock") }
+        precondition(conflictEntries == ["index.db"], "no staging or replacement file may appear: \(conflictEntries)")
+
+        // migrationFailureLeavesLegacyIntact: unusable legacy is reported and
+        // retained; nothing is created or deleted.
+        let failed = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: failed.root) }
+        let failedLegacy = ProjectIndexStore.legacyIndexURL(project: failed.project)
+        try FileManager.default.createDirectory(at: failedLegacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let garbage = Data((0..<512).map { UInt8($0 % 251) })
+        try garbage.write(to: failedLegacy)
+        let failedBefore = pidxDigests([failedLegacy])
+        precondition(failedBefore.count == 1, "garbage legacy fixture must exist")
+        let failedStore = try await ProjectIndexStore.open(project: failed.project)
+        let failedReport = try await failedStore.migrateLegacy()
+        precondition(failedReport.outcome == .legacyUnavailable, "an unusable legacy index is reported")
+        precondition(failedReport.warnings.contains { $0.contains("retained") }, "the warning must say the legacy index is retained")
+        precondition(pidxDigests([failedLegacy]) == failedBefore, "an unusable legacy index is retained untouched")
+        precondition(!FileManager.default.fileExists(
+            atPath: ProjectIndexStore.preferredDestinationURL(project: failed.project).path),
+            "a failed migration creates no destination")
+        let failedEntries = try FileManager.default.contentsOfDirectory(atPath: failed.root.path)
+        precondition(!failedEntries.contains(".rawviewer"), "no destination namespace may be created by a failed migration")
+
+        // busyWriterIsReportedAndCrashReleasesLease: OS-managed lock per
+        // bounded writer job; reads never contend; SIGKILL releases it.
+        let lease = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: lease.root) }
+        let leaseStore = try await ProjectIndexStore.open(project: lease.project)
+        try await leaseStore.withWriterJob {
+            let innerUsage = try await leaseStore.usage()
+            precondition(!innerUsage.destinationExists, "reads inside a writer job still work")
+            do {
+                try await leaseStore.withWriterJob { }
+                preconditionFailure("a second concurrent writer job must report busy")
+            } catch ProjectIndexStore.StoreError.busy {
+                // expected: the first job still holds the OS lock
+            } catch {
+                preconditionFailure("unexpected error instead of busy: \(error)")
+            }
+        }
+        let probe = pidxProbeLeaseAcrossCrash(
+            leasePath: ProjectIndexStore.writerLeaseURL(project: lease.project).path)
+        precondition(probe.busyWhileHeld, "a second writer process must observe the lease as busy")
+        precondition(probe.acquiredAfterCrash, "a crashed holder's lease must be released by the OS")
+        try await leaseStore.withWriterJob { }
+
+        // indexNamespaceChangesWithRootCatalogReader: every namespace axis
+        // invalidates stored rows; matching content stays advisory only.
+        let namespace = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: namespace.root) }
+        let namespaceStore = try await ProjectIndexStore.open(project: namespace.project, catalogFingerprint: "fp-current")
+        let active = namespaceStore.activeNamespace
+        precondition(active.schemaVersion == IndexDatabase.namespaceSchemaVersion, "namespace carries the index schema version")
+        precondition(active.readerVersion == InstrumentReader.version, "namespace carries the reader version")
+        precondition(active.dataRoot == "data/raw", "namespace carries the normalized data root")
+        precondition(active.projectIdentity == sha256Hex(Data(namespace.project.root.path.utf8)),
+                     "namespace carries the canonical project identity")
+        precondition(active.catalogFingerprint == "fp-current", "namespace carries the catalog fingerprint")
+        let seed = namespace.project.root.appendingPathComponent("data/raw/seed.csv")
+        let seedSource = RawSource(relativePath: "data/raw/seed.csv", url: seed, byteSize: 8)
+        let securedSeed = try MeasurementCache.openSecuredPrefix(source: seedSource, project: namespace.project)
+        defer { try? securedSeed.handle.close() }
+        let seedDigest = sha256Hex(securedSeed.prefix)
+        let seedRecord = IndexDatabase.Record(
+            relativePath: "data/raw/seed.csv", mtime: 1, byteSize: securedSeed.descriptorSize,
+            prefixSHA256: seedDigest, descriptorSize: securedSeed.descriptorSize)
+        precondition(namespaceStore.disposition(
+            record: seedRecord, storedNamespace: active,
+            observedPrefixSHA256: seedDigest, observedDescriptorSize: securedSeed.descriptorSize
+        ) == .advisoryHint, "matching namespace and content stay advisory")
+        func axisNamespace(
+            projectIdentity: String = active.projectIdentity,
+            dataRoot: String = active.dataRoot,
+            readerVersion: String = active.readerVersion,
+            catalogFingerprint: String = active.catalogFingerprint,
+            schemaVersion: Int = active.schemaVersion
+        ) -> IndexNamespace {
+            IndexNamespace(schemaVersion: schemaVersion, projectIdentity: projectIdentity,
+                           dataRoot: dataRoot, readerVersion: readerVersion,
+                           catalogFingerprint: catalogFingerprint)
+        }
+        let axisChanges: [IndexNamespace] = [
+            axisNamespace(dataRoot: "measurements"),
+            axisNamespace(readerVersion: "0.9.0"),
+            axisNamespace(catalogFingerprint: "fp-older"),
+            axisNamespace(projectIdentity: String(repeating: "0", count: 64)),
+            axisNamespace(schemaVersion: active.schemaVersion + 1),
+        ]
+        for stored in axisChanges {
+            precondition(ProjectIndexStore.disposition(
+                record: seedRecord, storedNamespace: stored, activeNamespace: active,
+                observedPrefixSHA256: seedDigest, observedDescriptorSize: securedSeed.descriptorSize
+            ) == .staleNamespace, "namespace change must invalidate: \(stored)")
+        }
+        precondition(namespaceStore.disposition(
+            record: seedRecord, storedNamespace: active,
+            observedPrefixSHA256: String(repeating: "a", count: 64),
+            observedDescriptorSize: securedSeed.descriptorSize
+        ) == .staleContent, "content mismatch must invalidate even with a matching namespace")
+
+        // unsafeMetadataNamespaceFailsClosed: symlinked metadata namespace and
+        // symlinked destination leaf are refusals, never paths to follow.
+        let unsafeProject = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: unsafeProject.root) }
+        let metadata = unsafeProject.root.appendingPathComponent(".rawviewer")
+        let target = unsafeProject.root.deletingLastPathComponent()
+            .appendingPathComponent("elsewhere-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: target) }
+        try FileManager.default.createSymbolicLink(at: metadata, withDestinationURL: target)
+        do {
+            _ = try await ProjectIndexStore.open(project: unsafeProject.project)
+            preconditionFailure("a symlinked .rawviewer namespace must be refused")
+        } catch ProjectIndexStore.StoreError.unsafeNamespace(let path) {
+            precondition(path.contains(".rawviewer"), "the refusal names the offending namespace")
+        }
+        precondition(!FileManager.default.fileExists(atPath: target.appendingPathComponent("index.db").path),
+                     "the symlink target must never receive an index")
+        try FileManager.default.removeItem(at: metadata)
+        try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: metadata.appendingPathComponent("index.db").path,
+            withDestinationPath: "/tmp/rawview-evil.db")
+        do {
+            _ = try await ProjectIndexStore.open(project: unsafeProject.project)
+            preconditionFailure("a symlinked index.db destination must be refused")
+        } catch ProjectIndexStore.StoreError.unsafeNamespace(let path) {
+            precondition(path.hasSuffix("index.db"), "the refusal names the destination leaf")
+        }
+
+        // readOnlyProjectUsesPrivateFallback: a read-only project resolves to
+        // the owner-private app-local index and gains no project namespace.
+        let readOnly = try pidxProject()
+        defer {
+            chmod(readOnly.root.path, 0o755)
+            try? FileManager.default.removeItem(at: readOnly.root)
+        }
+        guard chmod(readOnly.root.path, 0o555) == 0 else {
+            preconditionFailure("chmod 0555 failed on the synthetic project root")
+        }
+        let readOnlyStore = try await ProjectIndexStore.open(project: readOnly.project)
+        let readOnlyUsage = try await readOnlyStore.usage()
+        precondition(!readOnlyUsage.projectWritable, "the project root is no longer writable")
+        precondition(readOnlyUsage.storageMode == .privateFallback, "read-only project selects the private fallback")
+        precondition(!readOnlyUsage.destinationExists, "no private index exists yet")
+        let appLocal = MeasurementCache.appLocalRoot(project: readOnly.project)
+        precondition(readOnlyUsage.destinationURL.path.hasPrefix(appLocal.path),
+                     "read-only project must resolve to the private app-local index: \(readOnlyUsage.destinationURL.path)")
+        precondition(!FileManager.default.fileExists(atPath: readOnly.root.appendingPathComponent(".rawviewer").path),
+                     "a read-only project must never gain a project-local index namespace")
+
+        // forgedIndexCannotPromoteTrustedInspection: forged scientific fields
+        // with correct digest/catalog metadata stay advisory; imported legacy
+        // rows without validity fields are never restorable.
+        let forged = try pidxProject()
+        defer { try? FileManager.default.removeItem(at: forged.root) }
+        let forgedFile = forged.project.root.appendingPathComponent("data/raw/seed.csv")
+        let forgedSource = RawSource(relativePath: "data/raw/seed.csv", url: forgedFile, byteSize: 8)
+        let securedForged = try MeasurementCache.openSecuredPrefix(source: forgedSource, project: forged.project)
+        defer { try? securedForged.handle.close() }
+        let forgedDigest = sha256Hex(securedForged.prefix)
+        let forgedNamespace = ProjectIndexStore.makeNamespace(project: forged.project, catalogFingerprint: "fp-forged")
+        let forgedDBURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("forged-" + UUID().uuidString + ".db")
+        defer { pidxRemoveIndexed(forgedDBURL) }
+        let forgedDB = try IndexDatabase.open(at: forgedDBURL)
+        try forgedDB.writeMetadata(forgedNamespace)
+        let readBack = try forgedDB.readMetadata()
+        precondition(readBack == forgedNamespace, "index_metadata round-trips the namespace")
+        precondition(readBack == forgedNamespace, "metadata row reads back stable")
+        let forgedRecord = IndexDatabase.Record(
+            relativePath: "data/raw/seed.csv", mtime: 1, byteSize: securedForged.descriptorSize,
+            instrumentID: "keysight-b1500a", applicationMode: "forged-mode",
+            supportStatus: "supported", validationState: "profile valid; source not loaded",
+            readerVersion: InstrumentReader.version, profileID: "forged-profile",
+            profileHash: "forged-profile-hash",
+            prefixSHA256: forgedDigest, descriptorSize: securedForged.descriptorSize,
+            recordState: .advisoryHint)
+        try forgedDB.upsertBatch([forgedRecord])
+        guard let storedForged = forgedDB.lookupAll()["data/raw/seed.csv"] else {
+            preconditionFailure("forged row must round-trip through the index database")
+        }
+        precondition(storedForged.prefixSHA256 == forgedDigest, "the forge keeps correct digest metadata")
+        precondition(storedForged.descriptorSize == securedForged.descriptorSize, "descriptor size round-trips")
+        precondition(storedForged.recordState == .advisoryHint, "every project row is explicitly advisory")
+        guard let metadataNamespace = try forgedDB.readMetadata() else {
+            preconditionFailure("index_metadata row must exist")
+        }
+        let forgedDisposition = ProjectIndexStore.disposition(
+            record: storedForged, storedNamespace: metadataNamespace, activeNamespace: forgedNamespace,
+            observedPrefixSHA256: forgedDigest, observedDescriptorSize: securedForged.descriptorSize)
+        precondition(forgedDisposition == .advisoryHint, "correct digest metadata still resolves to a hint")
+        precondition(!forgedDisposition.grantsInspectionAuthority,
+                     "correct digest metadata must never promote a forged row to trusted inspection authority")
+        let legacyRow = IndexDatabase.Record(
+            relativePath: "data/raw/legacy.csv", mtime: 2, byteSize: 4,
+            applicationMode: "legacy-mode", supportStatus: "supported")
+        precondition(ProjectIndexStore.disposition(
+            record: legacyRow, storedNamespace: forgedNamespace, activeNamespace: forgedNamespace,
+            observedPrefixSHA256: forgedDigest, observedDescriptorSize: 4
+        ) == .staleContent, "legacy rows without a matching prefix digest are not restorable")
+
+        // sameSizeSameTimeHeaderEditInvalidatesIndex: size and recorded mtime
+        // stay identical after a header edit; only the prefix digest notices.
+        let edited = try pidxProject(files: ["data/raw/edited.csv": String(repeating: "A", count: 2048)])
+        defer { try? FileManager.default.removeItem(at: edited.root) }
+        let editedFile = edited.project.root.appendingPathComponent("data/raw/edited.csv")
+        let attributesBefore = try FileManager.default.attributesOfItem(atPath: editedFile.path)
+        let mtimeBefore = (attributesBefore[.modificationDate] as? Date) ?? Date(timeIntervalSince1970: 0)
+        let sizeBefore = (attributesBefore[.size] as? NSNumber)?.int64Value ?? 0
+        let editedSource = RawSource(relativePath: "data/raw/edited.csv", url: editedFile, byteSize: sizeBefore)
+        let securedEditedBefore = try MeasurementCache.openSecuredPrefix(source: editedSource, project: edited.project)
+        let digestBefore = sha256Hex(securedEditedBefore.prefix)
+        try securedEditedBefore.handle.close()
+        let editedNamespace = ProjectIndexStore.makeNamespace(project: edited.project, catalogFingerprint: "fp-edit")
+        let editedRecord = IndexDatabase.Record(
+            relativePath: "data/raw/edited.csv", mtime: Int64(mtimeBefore.timeIntervalSince1970),
+            byteSize: sizeBefore, instrumentID: "keysight-b1500a",
+            applicationMode: "list-sweep", supportStatus: "supported",
+            readerVersion: InstrumentReader.version,
+            prefixSHA256: digestBefore, descriptorSize: sizeBefore, recordState: .advisoryHint)
+        precondition(ProjectIndexStore.disposition(
+            record: editedRecord, storedNamespace: editedNamespace, activeNamespace: editedNamespace,
+            observedPrefixSHA256: digestBefore, observedDescriptorSize: sizeBefore
+        ) == .advisoryHint, "fresh content matches its recorded digest")
+        var editedBytes = try Data(contentsOf: editedFile)
+        precondition(editedBytes.count == Int(sizeBefore), "fixture size precondition")
+        editedBytes.replaceSubrange(0..<4, with: Data("EVIL".utf8))
+        try editedBytes.write(to: editedFile)
+        try FileManager.default.setAttributes([.modificationDate: mtimeBefore], ofItemAtPath: editedFile.path)
+        let attributesAfter = try FileManager.default.attributesOfItem(atPath: editedFile.path)
+        let mtimeAfter = (attributesAfter[.modificationDate] as? Date) ?? Date(timeIntervalSince1970: 0)
+        let sizeAfter = (attributesAfter[.size] as? NSNumber)?.int64Value ?? 0
+        precondition(sizeAfter == sizeBefore, "the edit must keep the same size")
+        precondition(Int64(mtimeAfter.timeIntervalSince1970) == Int64(mtimeBefore.timeIntervalSince1970),
+                     "the edit must keep the same recorded mtime — size/mtime lookup still matches")
+        let securedEditedAfter = try MeasurementCache.openSecuredPrefix(source: editedSource, project: edited.project)
+        let digestAfter = sha256Hex(securedEditedAfter.prefix)
+        try securedEditedAfter.handle.close()
+        precondition(digestAfter != digestBefore, "the secured prefix digest must notice the edit")
+        precondition(ProjectIndexStore.disposition(
+            record: editedRecord, storedNamespace: editedNamespace, activeNamespace: editedNamespace,
+            observedPrefixSHA256: digestAfter, observedDescriptorSize: sizeAfter
+        ) == .staleContent, "a same-size/same-time header edit must invalidate the index row")
+    }
+
+    // MARK: - Task 4: shared indexing coordinator, validated restoration, cutover
+
+    private static let indexerGenericCSV = "time,voltage\n0.1,1\n0.2,2\n0.3,3\n"
+    private static let indexerUnresolvableCSV = "notes\nplain prose without numbers\nmore prose without digits\n"
+
+    private static func indexerProject(
+        files: [String: String],
+        withProfile: Bool = false
+    ) throws -> (project: ProjectContext, root: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pidxc-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if withProfile {
+            try writeFixture(root, "data/instruments/keysight-b1500a.yaml", keysightProfile)
+        }
+        for (relativePath, body) in files {
+            try writeFixture(root, relativePath, body)
+        }
+        return (try ProjectContext.open(root, dataRootRelativePath: "data/raw"), root)
+    }
+
+    private static func indexerRows(_ project: ProjectContext) -> [String: IndexDatabase.Record] {
+        guard let db = try? IndexDatabase.open(at: project.indexDatabaseURL) else { return [:] }
+        defer { try? db.close() }
+        return db.lookupAll()
+    }
+
+    private static func indexerCohort() -> [String: String] {
+        [
+            "data/raw/matched-a.csv": dualSweepCSV,
+            "data/raw/matched-b.csv": dualSweepCSV,
+            "data/raw/generic-a.csv": indexerGenericCSV,
+            "data/raw/generic-b.csv": indexerGenericCSV,
+            "data/raw/notes.csv": indexerUnresolvableCSV
+        ]
+    }
+
+    /// Removes the synthetic project together with its owner-private
+    /// app-local state (cache, index, lease) for this project digest.
+    private static func removeIndexerProject(_ root: URL, _ project: ProjectContext) {
+        try? FileManager.default.removeItem(
+            at: MeasurementCache.appLocalRoot(project: project).deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Task 4 mirror of Tests/RawViewCoreTests/ProjectIndexerTests.swift:
+    /// bounded prefix-only generic inspection, typed dispositions, the shared
+    /// coordinator/store validity seam, and the app-local cutover.
+    static func projectIndexerSelfCheck() async throws {
+        // prefixOnlyInspectionNeverReopensSource: generic inspection consumes
+        // only the pinned 64 KiB prefix; the pathname is gone afterwards.
+        let prefixCase = try indexerProject(files: ["data/raw/table.csv": indexerGenericCSV])
+        defer { removeIndexerProject(prefixCase.root, prefixCase.project) }
+        let prefixURL = prefixCase.root.appendingPathComponent("data/raw/table.csv")
+        let prefixSource = RawSource(relativePath: "data/raw/table.csv", url: prefixURL,
+                                      byteSize: Int64(indexerGenericCSV.utf8.count))
+        let securedPrefix = try MeasurementCache.openSecuredPrefix(source: prefixSource, project: prefixCase.project)
+        let pinnedPrefix = securedPrefix.prefix
+        try securedPrefix.handle.close()
+        try FileManager.default.removeItem(at: prefixURL)
+        let preview = try GenericTableReader.inspect(prefix: pinnedPrefix)
+        precondition(preview.delimiter == ",", "prefix preview must detect the delimiter from pinned bytes")
+        precondition(preview.headerLineIndex == 0, "prefix preview must detect the header line")
+        precondition(preview.sampleRows.first == [0.1, 1.0], "prefix preview must sample pinned rows")
+        precondition(preview.sampleRows.count <= 5, "the preview samples rows; it never counts the file")
+        let prefixCatalog = ProfileCatalog.load(project: prefixCase.project)
+        guard case .supported(let prefixInspection, let prefixDisposition) = try InstrumentReader.inspectPinned(
+            source: prefixSource, project: prefixCase.project, catalog: prefixCatalog,
+            prefix: pinnedPrefix, descriptorSize: Int64(indexerGenericCSV.utf8.count), actualURL: prefixURL) else {
+            preconditionFailure("pinned bytes must still produce a structural candidate")
+        }
+        precondition(prefixDisposition == .structuralCandidate, "unprofiled generic inspection is a structural candidate")
+        precondition(prefixInspection.instrumentID == "generic-table", "structural candidate keeps its reader identity")
+        precondition(prefixInspection.validationState?.contains("structural candidate") == true,
+                     "structural candidate carries unresolved semantic status")
+
+        // truncatedSampleRemainsUnresolved: a prefix cut before any resolvable
+        // numeric block stays an unresolved deterministic block.
+        let truncatedCase = try indexerProject(files: ["data/raw/cut.csv": indexerGenericCSV])
+        defer { removeIndexerProject(truncatedCase.root, truncatedCase.project) }
+        let cutURL = truncatedCase.root.appendingPathComponent("data/raw/cut.csv")
+        let cutSource = RawSource(relativePath: "data/raw/cut.csv", url: cutURL, byteSize: 64)
+        let truncated = Data("time,voltage,current\n0.1,1".utf8)
+        var previewThrew = false
+        do { _ = try GenericTableReader.inspect(prefix: truncated) } catch { previewThrew = true }
+        precondition(previewThrew, "an unresolvable prefix must not produce a preview")
+        guard case .blocked(let cutMessage) = try InstrumentReader.inspectPinned(
+            source: cutSource, project: truncatedCase.project,
+            catalog: ProfileCatalog.load(project: truncatedCase.project),
+            prefix: truncated, descriptorSize: 64, actualURL: cutURL) else {
+            preconditionFailure("an unresolvable prefix must resolve to a deterministic block")
+        }
+        precondition(!cutMessage.isEmpty, "the unresolved block keeps its reader diagnostic")
+
+        // genericReadFailureRemainsTransient: an unreadable source is a typed
+        // transient failure — never an inspection and never a persisted row.
+        let transientCase = try indexerProject(files: ["data/raw/present.csv": indexerGenericCSV])
+        defer { removeIndexerProject(transientCase.root, transientCase.project) }
+        let goneSource = RawSource(relativePath: "data/raw/gone.csv",
+                                   url: transientCase.root.appendingPathComponent("data/raw/gone.csv"),
+                                   byteSize: 64)
+        let transientReport = await InstrumentReader.inspectMany([goneSource], project: transientCase.project, cache: nil)
+        guard let transientResult = transientReport.results.first else {
+            preconditionFailure("inspectMany must report every requested source")
+        }
+        precondition(transientResult.inspection == nil, "a read failure never produces an inspection")
+        precondition(transientResult.disposition == .transientFailure, "a read failure is transient, not blocked")
+        precondition(transientResult.error?.isEmpty == false, "a transient failure keeps its diagnostic")
+
+        // CLIAndGUIShareIndexValidity: the headless coordinator and the GUI
+        // restore seam are one store, and both report typed outcomes.
+        let shared = try indexerProject(files: indexerCohort(), withProfile: true)
+        defer { removeIndexerProject(shared.root, shared.project) }
+        let cliReport = try await ProjectIndexer.run(project: shared.project)
+        precondition(cliReport.complete, "a clean cohort run is complete")
+        precondition(cliReport.discovered == 5 && cliReport.inspected == 5, "every source is inspected: \(cliReport)")
+        precondition(cliReport.structuralCandidates == 2, "two unprofiled generic sources are structural candidates")
+        precondition(cliReport.deterministicBlocked == 1, "one unresolvable source is deterministically blocked")
+        precondition(cliReport.inspected - cliReport.structuralCandidates - cliReport.deterministicBlocked == 2,
+                     "the remaining inspected sources are profile matches")
+        precondition(cliReport.transientFailures == 0 && cliReport.cancelled == 0 && cliReport.inventoryFailures == 0,
+                     "a clean run reports no failures: \(cliReport)")
+        precondition(cliReport.storageMode == .destination,
+                     "the writable index resolves to the store destination")
+
+        let sharedStore = try await ProjectIndexStore.open(project: shared.project)
+        let sharedSources = try shared.project.discoverSources()
+        for source in sharedSources {
+            let restored = try await sharedStore.validatedInspection(for: source, project: shared.project)
+            let freshReport = await InstrumentReader.inspectMany([source], project: shared.project, cache: nil)
+            guard let fresh = freshReport.results.first else { continue }
+            precondition(restored?.disposition == fresh.disposition,
+                         "\(source.relativePath): restored disposition diverged from a fresh inspection")
+            precondition(restored?.inspection?.instrumentID == fresh.inspection?.instrumentID,
+                         "\(source.relativePath): restored identity diverged from a fresh inspection")
+            precondition(restored?.inspection?.applicationMode == fresh.inspection?.applicationMode,
+                         "\(source.relativePath): restored mode diverged from a fresh inspection")
+            precondition(restored?.error == fresh.error,
+                         "\(source.relativePath): restored diagnostic diverged from a fresh inspection")
+        }
+        // GUI-side focused write is visible to the next coordinator run.
+        let focused = try requireLike(sharedSources.first)
+        let focusedReport = await InstrumentReader.inspectMany([focused], project: shared.project, cache: nil)
+        let focusedResult = try requireLike(focusedReport.results.first)
+        try await sharedStore.withWriterJob {
+            try await sharedStore.record(focusedResult, source: focused, project: shared.project)
+        }
+        let rerun = try await ProjectIndexer.run(project: shared.project)
+        precondition(rerun.complete && rerun.discovered == cliReport.discovered && rerun.inspected == cliReport.inspected,
+                     "the shared seam must not change reported outcomes: \(rerun)")
+        precondition(rerun.structuralCandidates == cliReport.structuralCandidates
+                        && rerun.deterministicBlocked == cliReport.deterministicBlocked,
+                     "disposition counts must be stable across runs")
+
+        // catalogChangeInvalidatesAllAffectedHints: a new catalog fingerprint
+        // makes every previously recorded hint unrestorable.
+        try writeFixture(shared.root, "data/instruments/extra.yaml", """
+        schema_version: 1
+        instrument:
+          id: extra-instrument
+          name: Extra Fixture
+        formats: []
+        modes: []
+        """)
+        let afterCatalog = try await ProjectIndexStore.open(project: shared.project)
+        for source in sharedSources {
+            let restored = try await afterCatalog.validatedInspection(for: source, project: shared.project)
+            precondition(restored == nil, "\(source.relativePath): stale-catalog hint was restored")
+        }
+        try? FileManager.default.removeItem(at: shared.root.appendingPathComponent("data/instruments/extra.yaml"))
+
+        // deletedFilesDisappear: refresh drops rows whose source is gone.
+        let deleted = try indexerProject(files: indexerCohort(), withProfile: true)
+        defer { removeIndexerProject(deleted.root, deleted.project) }
+        _ = try await ProjectIndexer.run(project: deleted.project)
+        precondition(indexerRows(deleted.project).count == 5, "the first run records every source")
+        try FileManager.default.removeItem(at: deleted.root.appendingPathComponent("data/raw/matched-b.csv"))
+        let refresh = try await ProjectIndexer.run(project: deleted.project)
+        precondition(refresh.complete && refresh.discovered == 4, "the refreshed run sees the deletion")
+        precondition(indexerRows(deleted.project).count == 4, "refresh removes the stale row")
+        precondition(indexerRows(deleted.project)["data/raw/matched-b.csv"] == nil, "the deleted path disappears")
+        let deletedStore = try await ProjectIndexStore.open(project: deleted.project)
+        let ghost = RawSource(relativePath: "data/raw/matched-b.csv",
+                               url: deleted.root.appendingPathComponent("data/raw/matched-b.csv"), byteSize: 10)
+        let deletedGhostRestored = try await deletedStore.validatedInspection(for: ghost, project: deleted.project)
+        precondition(deletedGhostRestored == nil,
+                     "a deleted source never restores")
+
+        // blockedSourcesRemainVisible: deterministic blocks stay recorded and
+        // restore to a recomputed diagnostic, never to the stored payload.
+        let blocked = try indexerProject(
+            files: ["data/raw/notes.csv": indexerUnresolvableCSV, "data/raw/table.csv": indexerGenericCSV])
+        defer { removeIndexerProject(blocked.root, blocked.project) }
+        let blockedReport = try await ProjectIndexer.run(project: blocked.project)
+        precondition(blockedReport.complete && blockedReport.deterministicBlocked == 1
+                        && blockedReport.structuralCandidates == 1, "\(blockedReport)")
+        let blockedRows = indexerRows(blocked.project)
+        precondition(blockedRows.count == 2, "both sources stay visible in the index")
+        guard let blockedRow = blockedRows["data/raw/notes.csv"], blockedRow.error?.isEmpty == false else {
+            preconditionFailure("the blocked source keeps a recorded diagnostic")
+        }
+        let blockedStore = try await ProjectIndexStore.open(project: blocked.project)
+        let blockedSource = try requireLike(try blocked.project.discoverSources().first {
+            $0.relativePath == "data/raw/notes.csv"
+        })
+        let blockedRestored = try await blockedStore.validatedInspection(for: blockedSource, project: blocked.project)
+        precondition(blockedRestored?.disposition == .deterministicBlocked, "the block is restorable")
+        precondition(blockedRestored?.inspection == nil, "a blocked source never carries an inspection")
+        precondition(blockedRestored?.error == blockedRow.error,
+                     "the diagnostic is recomputed from the pinned prefix, not promoted from the row")
+
+        // transientErrorsAreNotCached: a source that cannot be opened is not
+        // persisted, does not restore, and keeps the report incomplete.
+        let transient = try indexerProject(
+            files: ["data/raw/table.csv": indexerGenericCSV, "data/raw/locked.csv": indexerGenericCSV])
+        defer {
+            chmod(transient.root.appendingPathComponent("data/raw/locked.csv").path, 0o644)
+            removeIndexerProject(transient.root, transient.project)
+        }
+        let lockedURL = transient.root.appendingPathComponent("data/raw/locked.csv")
+        guard chmod(lockedURL.path, 0o000) == 0 else {
+            preconditionFailure("chmod 000 failed on the synthetic fixture")
+        }
+        let transientRun = try await ProjectIndexer.run(project: transient.project)
+        precondition(transientRun.transientFailures == 1 && transientRun.inspected == 1, "\(transientRun)")
+        precondition(transientRun.complete == false, "a transient failure keeps the report incomplete")
+        let transientRows = indexerRows(transient.project)
+        precondition(transientRows["data/raw/locked.csv"] == nil, "a transient failure must not be persisted")
+        precondition(transientRows["data/raw/table.csv"] != nil, "verified outcomes are still persisted")
+        let transientStore = try await ProjectIndexStore.open(project: transient.project)
+        let lockedSource = try requireLike(try transient.project.discoverSources().first {
+            $0.relativePath == "data/raw/locked.csv"
+        })
+        let lockedRestored = try await transientStore.validatedInspection(for: lockedSource, project: transient.project)
+        precondition(lockedRestored == nil,
+                     "a transient source never restores from the index")
+
+        // cancelledIndexKeepsCompletedBatches: cancellation after the first
+        // batch keeps completed batches durable and never inflates inspected.
+        var many: [String: String] = [:]
+        for index in 0..<300 {
+            many["data/raw/run-\(String(format: "%03d", index)).csv"] = indexerGenericCSV
+        }
+        let cancelled = try indexerProject(files: many, withProfile: true)
+        defer { removeIndexerProject(cancelled.root, cancelled.project) }
+        let indexTask = Task {
+            try await ProjectIndexer.run(project: cancelled.project, rebuild: false) { completed, _ in
+                if completed >= 1 {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+            }
+        }
+        let cancelledReport = try await indexTask.value
+        precondition(cancelledReport.discovered == 300, "every source was discovered")
+        precondition(cancelledReport.inspected == 256, "exactly the first batch was inspected: \(cancelledReport)")
+        precondition(cancelledReport.cancelled == 44, "unvisited sources are cancelled, not inspected")
+        precondition(cancelledReport.transientFailures == 0 && cancelledReport.structuralCandidates == 256,
+                     "completed work keeps its typed outcomes: \(cancelledReport)")
+        precondition(cancelledReport.complete == false, "a cancelled run is never complete")
+        precondition(indexerRows(cancelled.project).count == 256, "completed batches stay durable")
+
+        // sourceFailureDoesNotDropOtherResults: one unreadable source is
+        // isolated; the other results survive and the report stays incomplete.
+        let mixed = try indexerProject(
+            files: ["data/raw/a.csv": indexerGenericCSV, "data/raw/b.csv": indexerGenericCSV,
+                    "data/raw/c.csv": indexerUnresolvableCSV, "data/raw/locked.csv": indexerGenericCSV],
+            withProfile: true)
+        defer {
+            chmod(mixed.root.appendingPathComponent("data/raw/locked.csv").path, 0o644)
+            removeIndexerProject(mixed.root, mixed.project)
+        }
+        guard chmod(mixed.root.appendingPathComponent("data/raw/locked.csv").path, 0o000) == 0 else {
+            preconditionFailure("chmod 000 failed on the synthetic fixture")
+        }
+        let mixedReport = try await ProjectIndexer.run(project: mixed.project)
+        precondition(mixedReport.discovered == 4 && mixedReport.inspected == 3 && mixedReport.transientFailures == 1,
+                     "\(mixedReport)")
+        precondition(mixedReport.deterministicBlocked == 1 && mixedReport.structuralCandidates == 2, "\(mixedReport)")
+        precondition(mixedReport.complete == false, "an isolated failure keeps the report incomplete")
+        precondition(mixedReport.inspected + mixedReport.transientFailures + mixedReport.cancelled == mixedReport.discovered,
+                     "outcome classes must partition the discovered sources")
+        let mixedRows = indexerRows(mixed.project)
+        precondition(mixedRows.count == 3, "only verified outcomes are persisted")
+        precondition(mixedRows["data/raw/locked.csv"] == nil, "the failing source stays unpersisted")
+
+        // forgedRecordCannotPromoteInspection: correct validity metadata with
+        // forged scientific fields still recomputes from the pinned prefix.
+        let forged = try indexerProject(files: ["data/raw/matched.csv": dualSweepCSV], withProfile: true)
+        defer { removeIndexerProject(forged.root, forged.project) }
+        _ = try await ProjectIndexer.run(project: forged.project)
+        guard let forgedDB = try? IndexDatabase.open(at: forged.project.indexDatabaseURL),
+              let original = forgedDB.lookupAll()["data/raw/matched.csv"] else {
+            preconditionFailure("the run must persist the matched source")
+        }
+        try forgedDB.upsertBatch([IndexDatabase.Record(
+            relativePath: original.relativePath, mtime: original.mtime, byteSize: original.byteSize,
+            instrumentID: "forged-instrument", instrumentName: "Forged", applicationMode: "forged-mode",
+            supportStatus: "supported", validationState: "profile valid; source not loaded",
+            readerVersion: original.readerVersion, profileID: "forged-profile", profileHash: "forged-hash",
+            prefixSHA256: original.prefixSHA256, descriptorSize: original.descriptorSize,
+            recordState: .advisoryHint)])
+        try forgedDB.close()
+        let forgedStore = try await ProjectIndexStore.open(project: forged.project)
+        let forgedSource = try requireLike(try forged.project.discoverSources().first)
+        let forgedRestored = try await forgedStore.validatedInspection(for: forgedSource, project: forged.project)
+        precondition(forgedRestored?.inspection?.instrumentID == "keysight-b1500a",
+                     "a forged row must never reach restoration")
+        precondition(forgedRestored?.inspection?.applicationMode == "dual-sweep",
+                     "the outcome is recomputed from the pinned prefix and current catalog")
+        precondition(forgedRestored?.inspection?.profileID != "forged-profile", "forged fields never survive")
+        precondition(forgedRestored?.disposition == .profileMatched, "the recomputed outcome keeps its disposition")
+
+        // sameSizeSameTimeEditInvalidatesStoredInspection: size and mtime stay
+        // identical; only the pinned prefix digest notices the edit.
+        let edited = try indexerProject(
+            files: ["data/raw/edited.csv": String(repeating: "A", count: 2048) + "\n"])
+        defer { removeIndexerProject(edited.root, edited.project) }
+        _ = try await ProjectIndexer.run(project: edited.project)
+        let editedStore = try await ProjectIndexStore.open(project: edited.project)
+        let editedURL = edited.root.appendingPathComponent("data/raw/edited.csv")
+        let editedSource = try requireLike(try edited.project.discoverSources().first)
+        let untouchedRestored = try await editedStore.validatedInspection(for: editedSource, project: edited.project)
+        precondition(untouchedRestored != nil,
+                     "the untouched source restores")
+        let beforeEdit = try FileManager.default.attributesOfItem(atPath: editedURL.path)
+        let editMtime = (beforeEdit[.modificationDate] as? Date) ?? Date(timeIntervalSince1970: 0)
+        let editSize = (beforeEdit[.size] as? NSNumber)?.int64Value ?? 0
+        var editBytes = try Data(contentsOf: editedURL)
+        precondition(Int64(editBytes.count) == editSize, "fixture size precondition")
+        editBytes.replaceSubrange(0..<4, with: Data("EVIL".utf8))
+        try editBytes.write(to: editedURL)
+        try FileManager.default.setAttributes([.modificationDate: editMtime], ofItemAtPath: editedURL.path)
+        let afterEdit = try FileManager.default.attributesOfItem(atPath: editedURL.path)
+        precondition((afterEdit[.size] as? NSNumber)?.int64Value == editSize, "the edit keeps the same size")
+        precondition(abs(((afterEdit[.modificationDate] as? Date)?.timeIntervalSince(editMtime) ?? 999)) < 0.002,
+                     "the edit keeps the same recorded mtime")
+        let editedRestored = try await editedStore.validatedInspection(for: editedSource, project: edited.project)
+        precondition(editedRestored == nil,
+                     "same-size/same-mtime edits must not restore")
+
+        // rebuildBypassesIndexWithoutDeletingRawOrCache: poisoned rows are
+        // rewritten, raw bytes/mtimes and cache entries survive, and outcomes
+        // match the ordinary run exactly.
+        let rebuild = try indexerProject(files: indexerCohort(), withProfile: true)
+        defer { removeIndexerProject(rebuild.root, rebuild.project) }
+        let rebuildCold = try await ProjectIndexer.run(project: rebuild.project)
+        precondition(rebuildCold.complete, "the first run completes")
+        let rebuildURL = rebuild.root.appendingPathComponent("data/raw/matched-a.csv")
+        let rawBytesBefore = try Data(contentsOf: rebuildURL)
+        let rawMtimeBefore = (try FileManager.default.attributesOfItem(atPath: rebuildURL.path)[.modificationDate] as? Date)
+        let rebuildCache = MeasurementCache(project: rebuild.project)
+        let cacheBefore = try rebuildCache.usage().entryCount
+        precondition(cacheBefore > 0, "the private cache holds verified entries after a run")
+        guard let rebuildDB = try? IndexDatabase.open(at: rebuild.project.indexDatabaseURL),
+              let rebuildOriginal = rebuildDB.lookupAll()["data/raw/matched-a.csv"] else {
+            preconditionFailure("the run must persist the matched source")
+        }
+        try rebuildDB.upsertBatch([IndexDatabase.Record(
+            relativePath: rebuildOriginal.relativePath, mtime: rebuildOriginal.mtime,
+            byteSize: rebuildOriginal.byteSize, instrumentID: "poisoned", applicationMode: "poisoned-mode",
+            prefixSHA256: rebuildOriginal.prefixSHA256, descriptorSize: rebuildOriginal.descriptorSize)])
+        try rebuildDB.close()
+        let rebuilt = try await ProjectIndexer.run(project: rebuild.project, rebuild: true)
+        precondition(rebuilt == rebuildCold, "rebuild and ordinary run report identical outcomes")
+        precondition(indexerRows(rebuild.project)["data/raw/matched-a.csv"]?.instrumentID == "keysight-b1500a",
+                     "rebuild rewrites poisoned rows from a fresh inspection")
+        let rawBytes = try Data(contentsOf: rebuildURL)
+        precondition(rawBytes == rawBytesBefore, "rebuild never writes raw bytes")
+        let rawMtime = try FileManager.default.attributesOfItem(atPath: rebuildURL.path)[.modificationDate] as? Date
+        precondition(rawMtime == rawMtimeBefore,
+                     "rebuild never rewrites raw mtimes")
+        let rebuildUsage = try rebuildCache.usage()
+        precondition(rebuildUsage.entryCount >= cacheBefore,
+                     "rebuild never deletes private cache data")
+
+        // coldAndWarmRunsReportOutcomeParity: identical outcomes and counts on
+        // one fixed synthetic cohort; timings are recorded, never thresholded.
+        let parity = try indexerProject(files: indexerCohort(), withProfile: true)
+        defer { removeIndexerProject(parity.root, parity.project) }
+        let coldStart = Date()
+        let coldReport = try await ProjectIndexer.run(project: parity.project)
+        let coldSeconds = Date().timeIntervalSince(coldStart)
+        let warmStart = Date()
+        let warmReport = try await ProjectIndexer.run(project: parity.project)
+        let warmSeconds = Date().timeIntervalSince(warmStart)
+        precondition(coldReport.complete && warmReport.complete, "both parity runs complete")
+        precondition(coldReport == warmReport, "cold and warm runs must report identical outcomes")
+        precondition(coldReport.discovered == 5 && coldReport.inspected == 5
+                        && coldReport.structuralCandidates == 2 && coldReport.deterministicBlocked == 1,
+                     "the parity cohort counts are fixed: \(coldReport)")
+        print(String(format: "index parity cohort (5 sources): cold %.3fs, warm %.3fs revalidation; no threshold asserted",
+                     coldSeconds, warmSeconds))
+
+        // firstGUIOpenMigratesBeforeDestinationCreation: read-only seams create
+        // nothing, the first leased write imports legacy hints and only then
+        // creates the app-local destination, and legacy stays byte-identical.
+        let cutover = try indexerProject(files: ["data/raw/table.csv": indexerGenericCSV])
+        defer { removeIndexerProject(cutover.root, cutover.project) }
+        let legacyURL = ProjectIndexStore.legacyIndexURL(project: cutover.project)
+        let legacyFixture = try pidxLegacyWAL(at: legacyURL, rows: 3)
+        defer { sqlite3_close_v2(legacyFixture) }
+        let legacyWAL = URL(fileURLWithPath: legacyURL.path + "-wal")
+        let legacySHM = URL(fileURLWithPath: legacyURL.path + "-shm")
+        let legacyBefore = pidxDigests([legacyURL, legacyWAL])
+        precondition(legacyBefore.count == 2 && FileManager.default.fileExists(atPath: legacySHM.path),
+                     "legacy db, WAL, and SHM must exist")
+        let destination = ProjectIndexStore.preferredDestinationURL(project: cutover.project)
+        precondition(cutover.project.indexDatabaseURL.path == destination.path,
+                     "the runtime index URL is the store-resolved app-local destination")
+        let cutoverStore = try await ProjectIndexStore.open(project: cutover.project)
+        let cutoverUsage = try await cutoverStore.usage()
+        precondition(cutoverUsage.legacyExists && !cutoverUsage.destinationExists, "only the legacy index exists yet")
+        precondition(cutoverUsage.legacyURL.path == legacyURL.path, "usage reports the legacy source")
+        let cutoverSource = try requireLike(try cutover.project.discoverSources().first)
+        let beforeMigrationRestored = try await cutoverStore.validatedInspection(for: cutoverSource, project: cutover.project)
+        precondition(beforeMigrationRestored == nil,
+                     "nothing restores before migration")
+        precondition(!FileManager.default.fileExists(atPath: destination.path),
+                     "read-only seams must not create the destination")
+        let firstWrite = try requireLike(
+            (await InstrumentReader.inspectMany([cutoverSource], project: cutover.project, cache: nil)).results.first)
+        var refusedWithoutLease = false
+        do { try await cutoverStore.record(firstWrite, source: cutoverSource, project: cutover.project) }
+        catch { refusedWithoutLease = true }
+        precondition(refusedWithoutLease, "destination creation must require the writer lease")
+        precondition(!FileManager.default.fileExists(atPath: destination.path),
+                     "the refused write created nothing")
+        try await cutoverStore.withWriterJob {
+            try await cutoverStore.record(firstWrite, source: cutoverSource, project: cutover.project)
+        }
+        precondition(FileManager.default.fileExists(atPath: destination.path),
+                     "the writer job creates the destination after migration")
+        let cutoverRows = indexerRows(cutover.project)
+        precondition(cutoverRows.count == 4, "3 imported legacy hints plus the recorded source: \(cutoverRows.keys.sorted())")
+        guard let importedHint = cutoverRows["data/raw/f0.csv"] else {
+            preconditionFailure("legacy hints must be imported into the app-local destination")
+        }
+        precondition(importedHint.recordState == .advisoryHint, "imported rows stay advisory hints")
+        precondition(importedHint.prefixSHA256 == nil, "an imported hint carries no verified prefix")
+        precondition(cutoverRows["data/raw/table.csv"] != nil, "the fresh record sits beside the imported hints")
+        let cutoverRestored = try await cutoverStore.validatedInspection(for: cutoverSource, project: cutover.project)
+        precondition(cutoverRestored != nil,
+                     "post-migration restoration validates through the store")
+        let hintGhost = RawSource(relativePath: "data/raw/f0.csv",
+                                   url: cutover.root.appendingPathComponent("data/raw/f0.csv"), byteSize: 10)
+        let hintGhostRestored = try await cutoverStore.validatedInspection(for: hintGhost, project: cutover.project)
+        precondition(hintGhostRestored == nil,
+                     "an unverifiable imported hint never restores an inspection")
+        precondition(pidxDigests([legacyURL, legacyWAL]) == legacyBefore,
+                     "legacy db/WAL must stay byte-identical after migration")
+        precondition(FileManager.default.fileExists(atPath: legacySHM.path),
+                     "legacy SHM is preserved, never deleted")
+
+        // Cutover audit: no GUI source opens or reads the index database
+        // directly any more — stats, rebuild, focused, resumed, lazy and
+        // eager restoration all go through the store/coordinator.
+        let appSourcesRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/RawViewApp", isDirectory: true)
+        let appSources = (try FileManager.default.contentsOfDirectory(atPath: appSourcesRoot.path))
+            .filter { $0.hasSuffix(".swift") }
+        precondition(!appSources.isEmpty, "app source audit must find files")
+        for name in appSources {
+            let text = String(data: try Data(contentsOf: appSourcesRoot.appendingPathComponent(name)),
+                              encoding: .utf8) ?? ""
+            precondition(!text.contains("IndexDatabase"),
+                         "\(name) still opens the index database directly; the cutover is incomplete")
+            precondition(!text.contains("asInspection"),
+                         "\(name) still restores from advisory record payloads")
+        }
+        precondition(cutover.project.indexDatabaseURL.path
+                        .hasSuffix(".rawviewer/index.db"),
+                     "the writable index is project-local .rawviewer/index.db")
+        precondition(ProjectIndexStore.legacyIndexURL(project: cutover.project).path
+                        .hasSuffix("data/.rawview/index.db"),
+                     "the legacy project path stays named for hints and rollback only")
+    }
+
+    private static func indexCommandSelfCheck() async throws {
+        // 1. Argument parsing assertions
+        let parsed = try IndexCommand.parse(["--project", "/tmp/p", "--data-root", "data/raw", "--save-settings", "--rebuild", "--json"])
+        precondition(parsed.projectURL.path == URL(fileURLWithPath: "/tmp/p").standardizedFileURL.path)
+        precondition(parsed.dataRoot == "data/raw")
+        precondition(parsed.saveSettings && parsed.rebuild && parsed.jsonOutput)
+
+        var missingCaught = false
+        do { _ = try IndexCommand.parse([]) } catch IndexCommandError.missingProjectArgument { missingCaught = true } catch {}
+        precondition(missingCaught, "missing project throws IndexCommandError.missingProjectArgument")
+
+        var saveWithoutRootCaught = false
+        do { _ = try IndexCommand.parse(["--project", "/tmp/p", "--save-settings"]) } catch IndexCommandError.saveSettingsRequiresDataRoot { saveWithoutRootCaught = true } catch {}
+        precondition(saveWithoutRootCaught, "--save-settings without --data-root throws")
+
+        var outsideCaught = false
+        do { _ = try IndexCommand.parse(["--project", "/tmp/p", "--data-root", "../esc"]) } catch IndexCommandError.outsideProjectBoundary { outsideCaught = true } catch {}
+        precondition(outsideCaught, "outside relative root throws")
+
+        // 2. Synthetic fixture execution:
+        let fixture = try indexerProject(files: ["data/raw/f1.csv": indexerGenericCSV, "data/raw/f2.csv": dualSweepCSV], withProfile: true)
+        defer { removeIndexerProject(fixture.root, fixture.project) }
+
+        // Without saved settings and without explicit --data-root: exit code 2
+        let noConfigOpts = IndexCommandOptions(projectURL: fixture.root)
+        let (_, codeNoConfig) = await IndexCommand.run(options: noConfigOpts)
+        precondition(codeNoConfig == .configurationOrArguments, "no config and no explicit root is exit 2")
+
+        // With explicit --data-root and --save-settings: exit code 0, complete == true
+        let saveOpts = IndexCommandOptions(projectURL: fixture.root, dataRoot: "data/raw", saveSettings: true)
+        let (saveReport, codeSave) = await IndexCommand.run(options: saveOpts)
+        precondition(codeSave == .success, "explicit data-root with save-settings succeeds")
+        precondition(saveReport?.complete == true, "report is complete")
+        precondition(saveReport?.discovered == 2, "discovered 2 files")
+
+        // Subsequent run with no --data-root now succeeds using saved settings
+        let savedRunOpts = IndexCommandOptions(projectURL: fixture.root)
+        let (savedRunReport, codeSavedRun) = await IndexCommand.run(options: savedRunOpts)
+        precondition(codeSavedRun == .success, "run with saved settings succeeds")
+        precondition(savedRunReport?.complete == true, "saved settings run is complete")
+
+        // Rebuild run
+        let rebuildOpts = IndexCommandOptions(projectURL: fixture.root, rebuild: true)
+        let (rebuildReport, codeRebuild) = await IndexCommand.run(options: rebuildOpts)
+        precondition(codeRebuild == .success, "rebuild succeeds")
+        precondition(rebuildReport?.complete == true, "rebuild is complete")
+
+        // Writer busy check: hold flock lease
+        let leaseURL = MeasurementCache.appLocalRoot(project: fixture.project)
+            .appendingPathComponent(ProjectIndexStore.writerLeaseFileName)
+        try FileManager.default.createDirectory(at: leaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fd = Darwin.open(leaseURL.path, O_RDWR | O_CREAT, 0o600)
+        precondition(fd >= 0, "open lease fd")
+        let lockRc = flock(fd, LOCK_EX | LOCK_NB)
+        precondition(lockRc == 0, "acquired external lease lock")
+
+        let busyOpts = IndexCommandOptions(projectURL: fixture.root)
+        let (_, codeBusy) = await IndexCommand.run(options: busyOpts)
+        flock(fd, LOCK_UN)
+        Darwin.close(fd)
+        precondition(codeBusy == .writerBusy, "when lease is held, exit code is writerBusy (3)")
+
+        // FlattenedTree arbitrary depth test
+        let leaf = SourceTreeNode(id: "source:a/b/c/d/sample.csv", name: "sample.csv", sourceID: "a/b/c/d/sample.csv", children: [])
+        let nodeD = SourceTreeNode(id: "directory:a/b/c/d", name: "d", sourceID: nil, children: [leaf])
+        let nodeC = SourceTreeNode(id: "directory:a/b/c", name: "c", sourceID: nil, children: [nodeD])
+        let nodeB = SourceTreeNode(id: "directory:a/b", name: "b", sourceID: nil, children: [nodeC])
+        let nodeA = SourceTreeNode(id: "directory:a", name: "a", sourceID: nil, children: [nodeB])
+
+        // Test collapse/expand with depth tracking
+        let itemsCollapsed = SourceTree.flattenNodes([nodeA], depth: 0, expandedIDs: [])
+        precondition(itemsCollapsed.count == 1, "collapsed tree has only root directory")
+        precondition(itemsCollapsed[0].depth == 0, "depth 0")
+
+        let itemsAllExpanded = SourceTree.flattenNodes([nodeA], depth: 0, expandedIDs: ["directory:a", "directory:a/b", "directory:a/b/c", "directory:a/b/c/d"])
+        precondition(itemsAllExpanded.count == 5, "fully expanded tree has 5 items (4 dirs + 1 file)")
+        precondition(itemsAllExpanded[4].node.sourceID == "a/b/c/d/sample.csv", "leaf sourceID matches")
+        precondition(itemsAllExpanded[4].depth == 4, "deep-nested leaf depth is 4")
+        precondition(!itemsAllExpanded[4].isDirectory, "leaf is not directory")
+
+        // Test Smart Auto Detect
+        let editorModel = EditorWorkspaceModel()
+        editorModel.lines = [
+            "Date: 2026-10-10",
+            "Instrument: Keithley 2400",
+            "Scan Rate: 50 mV/s",
+            "Voltage (V)\tCurrent (A)",
+            "0.000E+00\t1.050E-06",
+            "1.000E-01\t2.500E-06",
+            "2.000E-01\t4.800E-06"
+        ]
+        let detected = editorModel.smartAutoDetect()
+        precondition(detected.columnSeparator == "\t", "sniffed tab separator")
+        precondition(detected.metadataPairs.count == 3, "detected 3 metadata pairs")
+        precondition(detected.headerLineIndex == 3, "header line is 3")
+        precondition(detected.dataStartLineIndex == 4, "data start line is 4")
+        precondition(detected.suggestedChannels.count == 2, "suggested 2 channels")
+        precondition(detected.suggestedChannels[0].isXAxis, "channel 0 is X Axis")
+        precondition(detected.suggestedChannels[0].unit == "V", "channel 0 unit is V")
+        precondition(detected.suggestedChannels[1].isYAxis, "channel 1 is Y Axis")
+        precondition(detected.suggestedChannels[1].unit == "A", "channel 1 unit is A")
+
+        // Test Universal Profile Loader
+        let b1500URL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Examples/rawview/keysight-b1500a.yaml")
+        if FileManager.default.fileExists(atPath: b1500URL.path) {
+            let loadedModel = EditorWorkspaceModel()
+            try loadedModel.loadSavedProfile(url: b1500URL)
+            precondition(loadedModel.instrumentID == "keysight-b1500a", "loaded B1500A id")
+            precondition(loadedModel.delimiter == ",", "loaded B1500A delimiter")
+            precondition(!loadedModel.columns.isEmpty, "loaded B1500A columns")
+            precondition(loadedModel.columns.contains(where: { $0.isXAxis }), "loaded B1500A X axis")
+            precondition(loadedModel.columns.contains(where: { $0.isYAxis }), "loaded B1500A Y axis")
+        }
+
+        let flatYAML = """
+        id: autolab-cv
+        name: Autolab PGSTAT302N
+        delimiter: ";"
+        columns:
+          - name: Potential applied (V)
+            unit: V
+            label: Potential
+            is_x: true
+          - name: Current (A)
+            unit: A
+            label: Current
+            is_y: true
+        """
+        let tempYAMLURL = FileManager.default.temporaryDirectory.appendingPathComponent("test-flat-\(UUID().uuidString).yaml")
+        try flatYAML.write(to: tempYAMLURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tempYAMLURL) }
+
+        let flatModel = EditorWorkspaceModel()
+        try flatModel.loadSavedProfile(url: tempYAMLURL)
+        precondition(flatModel.instrumentID == "autolab-cv", "loaded flat ID")
+        precondition(flatModel.delimiter == ";", "loaded flat delimiter")
+        precondition(flatModel.columns.count == 2, "loaded 2 flat columns")
+        precondition(flatModel.columns[0].unit == "V", "loaded flat unit V")
+        precondition(flatModel.columns[0].isXAxis, "loaded flat X axis")
+        precondition(flatModel.columns[1].isYAxis, "loaded flat Y axis")
+    }
 }
+
+

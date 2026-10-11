@@ -10,9 +10,16 @@ struct SettingsView: View {
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
     @AppStorage("cacheLimitMB") private var cacheLimitMB: Int = 2048
     @State private var cacheClearedMessage: String?
+    @ObservedObject private var hotkeyManager = HotkeyManager.shared
 
     var body: some View {
         TabView {
+            projectTab
+                .tabItem {
+                    Label("Project", systemImage: "folder")
+                }
+                .tag("project")
+
             appearanceTab
                 .tabItem {
                     Label("Appearance", systemImage: "paintbrush")
@@ -30,8 +37,14 @@ struct SettingsView: View {
                     Label("Storage", systemImage: "internaldrive")
                 }
                 .tag("storage")
+
+            hotkeysTab
+                .tabItem {
+                    Label("Hotkeys", systemImage: "keyboard")
+                }
+                .tag("hotkeys")
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 560, height: 500)
         .padding(20)
     }
 
@@ -151,6 +164,115 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.top, 2)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var projectTab: some View {
+        Form {
+            Section("Active Project & Data Location") {
+                if let project = model.project {
+                    LabeledContent("Project Path:", value: project.root.path)
+                    LabeledContent("Data Root:", value: project.dataRootRelativePath == "." ? ". (Project Root)" : project.dataRootRelativePath)
+
+                    HStack {
+                        Button("Change Data Root…") {
+                            pickNewDataRoot(for: project)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Spacer()
+
+                        let hasSettings = (try? ProjectSettingsStore.load(projectRoot: project.root)) != nil
+                        Text(hasSettings ? "Saved in .rawviewer/setting" : "Unsaved (session only)")
+                            .font(.caption)
+                            .foregroundStyle(hasSettings ? .green : .secondary)
+                    }
+
+                    LabeledContent("Writable Index:", value: project.indexDatabaseURL.path)
+                    LabeledContent("Storage Mode:", value: "Owner-Private App-Local (Application Support)")
+                } else {
+                    Text("No project currently open.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func pickNewDataRoot(for project: ProjectContext) {
+        let panel = NSOpenPanel()
+        panel.directoryURL = project.root
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose New Data Root"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let canonicalProject = project.root.resolvingSymlinksInPath().standardizedFileURL.path
+        let canonicalChosen = url.resolvingSymlinksInPath().standardizedFileURL.path
+
+        let rel: String
+        if canonicalChosen == canonicalProject {
+            rel = "."
+        } else if canonicalChosen.hasPrefix(canonicalProject + "/") {
+            rel = String(canonicalChosen.dropFirst(canonicalProject.count + 1))
+        } else {
+            return
+        }
+
+        Task {
+            do {
+                try await model.changeDataRoot(to: rel, persist: true)
+            } catch {
+                model.error = "Failed to change data root: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private var hotkeysTab: some View {
+        Form {
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keyboard Shortcuts & Gestures")
+                            .font(.headline)
+                        Text("Configured shortcuts update dynamically across all buttons and contextual badges.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Restore Defaults") {
+                        hotkeyManager.resetToDefaults()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            let categories = ["Navigation", "Profile Studio", "View", "Export"]
+            ForEach(categories, id: \.self) { cat in
+                let items = hotkeyManager.hotkeys.filter { $0.category == cat }
+                if !items.isEmpty {
+                    Section(cat) {
+                        ForEach(items) { hk in
+                            HStack(alignment: .center, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(hk.name)
+                                        .font(.system(size: 13, weight: .medium))
+                                    Text(hk.description)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                ShortcutBadge(hk.id)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
             }
         }
         .formStyle(.grouped)

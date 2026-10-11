@@ -7,16 +7,20 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cache="${TMPDIR:-/tmp}/rawview-swift-module-cache"
 binary="${TMPDIR:-/tmp}/rawview-core-self-check"
 mkdir -p "$cache"
+core_sources=$(find "$repo_root/Sources/RawViewCore" -name "*.swift")
+app_sources=$(find "$repo_root/Sources/RawViewApp" -name "*.swift")
+
 swiftc -module-cache-path "$cache" \
-  "$repo_root/Sources/RawViewCore/"*.swift \
+  $core_sources \
   "$repo_root/Scripts/CoreSelfCheck.swift" \
   -o "$binary"
 "$binary"
 echo "Type-checking app layer..."
 swiftc -module-cache-path "$cache" -emit-module -module-name RawViewCore \
-  "$repo_root/Sources/RawViewCore/"*.swift \
+  $core_sources \
   -o "$cache/RawViewCore.swiftmodule"
 swiftc -module-cache-path "$cache" -I "$cache" -typecheck \
-  "$repo_root/Sources/RawViewCore/"*.swift \
-  "$repo_root/Sources/RawViewApp/"*.swift
+  $core_sources \
+  $app_sources
 echo "App layer type-check passed"
+

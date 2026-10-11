@@ -151,7 +151,7 @@ struct MeasurementCacheTests {
         let info = try securedPrefixInfo(source, project: project)
         try cache.store(measurement: measurement, profileFingerprint: fingerprint,
                         source: RawSource(relativePath: source.relativePath, url: source.url, byteSize: info.size),
-                        prefixSHA256: info.prefixSHA256)
+                        prefixSHA256: info.prefixSHA256, project: project)
     }
 
     // MARK: Slice 4 — measurement store/hit/miss with full-digest verification
@@ -379,7 +379,7 @@ struct MeasurementCacheTests {
         let first = try await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
             try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
-        guard case .supported(let coldInspection) = first.outcome else {
+        guard case .supported(let coldInspection, _) = first.outcome else {
             Issue.record("clean fixture should resolve to a supported inspection")
             return
         }
@@ -394,7 +394,7 @@ struct MeasurementCacheTests {
             try InstrumentReader.inspectPinned(source: source, project: project, catalog: ProfileCatalog.load(project: project), prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
         }
         #expect(second.fromCache == true)
-        guard case .supported(let warmInspection) = second.outcome else {
+        guard case .supported(let warmInspection, _) = second.outcome else {
             Issue.record("warm outcome lost the supported inspection")
             return
         }
@@ -824,10 +824,10 @@ struct MeasurementCacheTests {
         #expect(packedBytes > 100)
         let info = try securedPrefixInfo(source, project: project)
         let probe = RawSource(relativePath: source.relativePath, url: source.url, byteSize: info.size)
-        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256, preflightCap: 100)
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256, preflightCap: 100, project: project)
         #expect(try cache.usage().entryCount == 0)
         // Control: same small measurement stores under the real cap.
-        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256)
+        try cache.store(measurement: measurement, profileFingerprint: "fp-preflight", source: probe, prefixSHA256: info.prefixSHA256, project: project)
         #expect(try cache.usage().entryCount == 1)
     }
 

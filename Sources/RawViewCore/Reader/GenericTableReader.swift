@@ -32,7 +32,141 @@ public struct GenericTableInspection: Sendable, Equatable {
     }
 }
 
+public struct GenericTablePreview: Sendable, Equatable {
+    public let delimiter: Character
+    public let decimalSeparator: Character
+    public let headerLineIndex: Int?
+    public let dataStartLineIndex: Int
+    public let columnNames: [String]
+    public let columnUnits: [String?]
+    public let sampleRows: [[Double]]
+
+    public init(
+        delimiter: Character,
+        decimalSeparator: Character,
+        headerLineIndex: Int?,
+        dataStartLineIndex: Int,
+        columnNames: [String],
+        columnUnits: [String?],
+        sampleRows: [[Double]]
+    ) {
+        self.delimiter = delimiter
+        self.decimalSeparator = decimalSeparator
+        self.headerLineIndex = headerLineIndex
+        self.dataStartLineIndex = dataStartLineIndex
+        self.columnNames = columnNames
+        self.columnUnits = columnUnits
+        self.sampleRows = sampleRows
+    }
+}
+
 public enum GenericTableReader {
+    public static func inspect(prefix: Data, maxSampleLines: Int = 100) throws -> GenericTablePreview {
+        let content = try readPrefixContent(prefix: prefix)
+        var lines = splitLines(content)
+        guard !lines.isEmpty else {
+            throw ReaderError.emptyFile
+        }
+
+        // If the prefix does not end with a newline and there are multiple lines,
+        // discard the trailing unterminated line because it may be truncated.
+        if !content.hasSuffix("\n") && !content.hasSuffix("\r") && lines.count > 1 {
+            lines.removeLast()
+        }
+
+        let sampleLimit = min(lines.count, maxSampleLines)
+        let sampleLines = Array(lines.prefix(sampleLimit))
+
+        let candidateDelimiters: [Character] = ["\t", ",", ";"]
+        var bestConfig: (delimiter: Character, decimal: Character, dataStart: Int, colCount: Int, headerIdx: Int?)?
+
+        for delim in candidateDelimiters {
+            if let config = findNumericBlock(lines: sampleLines, delimiter: delim) {
+                bestConfig = config
+                break
+            }
+        }
+
+        if bestConfig == nil {
+            if let config = findNumericBlock(lines: sampleLines, delimiter: " ") {
+                bestConfig = config
+            }
+        }
+
+        guard let config = bestConfig else {
+            throw ReaderError.noNumericDataFound
+        }
+
+        // Parse Column Headers
+        var columnNames: [String] = []
+        var columnUnits: [String?] = []
+
+        if let hIdx = config.headerIdx, hIdx >= 0, hIdx < lines.count {
+            let rawHeader = cleanLine(lines[hIdx])
+            let tokens = splitLine(rawHeader, delimiter: config.delimiter)
+            guard tokens.count == config.colCount else {
+                throw ReaderError.noNumericDataFound
+            }
+            for i in 0..<config.colCount {
+                if i < tokens.count {
+                    let cleaned = tokens[i].trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"\'#;")))
+                    let parsed = parseHeaderAndUnit(cleaned)
+                    columnNames.append(parsed.name.isEmpty ? "Column \(i + 1)" : parsed.name)
+                    columnUnits.append(parsed.unit)
+                } else {
+                    columnNames.append("Column \(i + 1)")
+                    columnUnits.append(nil)
+                }
+            }
+        } else {
+            for i in 0..<config.colCount {
+                columnNames.append("Column \(i + 1)")
+                columnUnits.append(nil)
+            }
+        }
+
+        // Gather up to 5 sample rows ONLY — no total row count, no path reopen
+        var sampleRows: [[Double]] = []
+        for idx in config.dataStart..<lines.count {
+            let line = cleanLine(lines[idx])
+            guard !line.isEmpty, !isCommentLine(line) else { continue }
+            let tokens = splitLine(line, delimiter: config.delimiter)
+            guard tokens.count >= config.colCount else { continue }
+
+            var rowValues: [Double] = []
+            var valid = true
+            for c in 0..<config.colCount {
+                if let val = parseDouble(tokens[c], decimalSeparator: config.decimal) {
+                    rowValues.append(val)
+                } else {
+                    valid = false
+                    break
+                }
+            }
+
+            if valid {
+                sampleRows.append(rowValues)
+                if sampleRows.count >= 5 {
+                    break
+                }
+            }
+        }
+
+        guard !sampleRows.isEmpty else {
+            throw ReaderError.noNumericDataFound
+        }
+
+        return GenericTablePreview(
+            delimiter: config.delimiter,
+            decimalSeparator: config.decimal,
+            headerLineIndex: config.headerIdx,
+            dataStartLineIndex: config.dataStart,
+            columnNames: columnNames,
+            columnUnits: columnUnits,
+            sampleRows: sampleRows
+        )
+    }
+
     public static func inspect(url: URL, maxSampleLines: Int = 100) throws -> GenericTableInspection {
         let content = try readFileContent(at: url)
         let lines = splitLines(content)
@@ -254,6 +388,27 @@ public enum GenericTableReader {
             case .unreadableEncoding: return "The file could not be read with text encoding."
             }
         }
+    }
+
+    private static func readPrefixContent(prefix: Data) throws -> String {
+        var candidate = prefix
+        for _ in 0..<4 {
+            if let utf8 = String(data: candidate, encoding: .utf8) {
+                if utf8.starts(with: "\u{FEFF}") {
+                    return String(utf8.dropFirst())
+                }
+                return utf8
+            }
+            guard !candidate.isEmpty else { break }
+            candidate = candidate.dropLast()
+        }
+        if let latin1 = String(data: prefix, encoding: .isoLatin1) {
+            return latin1
+        }
+        if let utf16 = String(data: prefix, encoding: .utf16) {
+            return utf16
+        }
+        throw ReaderError.unreadableEncoding
     }
 
     private static func readFileContent(at url: URL) throws -> String {

@@ -23,6 +23,30 @@ struct RawViewApp: App {
         }
         .defaultSize(width: 1320, height: 820)
         .windowToolbarStyle(.unified)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Open Project…") {
+                    model.openProject()
+                }
+                .keyboardShortcut("o", modifiers: [.command])
+
+                Menu("Open Recent") {
+                    if model.recentProjects.isEmpty {
+                        Text("No Recent Projects").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(model.recentProjects, id: \.self) { url in
+                            Button(url.lastPathComponent) {
+                                model.openRecentProject(url: url)
+                            }
+                        }
+                        Divider()
+                        Button("Clear Menu") {
+                            model.clearRecentProjects()
+                        }
+                    }
+                }
+            }
+        }
 
         Settings {
             SettingsView(model: model)
@@ -77,6 +101,7 @@ struct PlotSnapshot: Identifiable, Equatable {
 @MainActor
 final class RawViewModel: ObservableObject {
     @Published var project: ProjectContext?
+    @Published var recentProjects: [URL] = []
     @Published var sources: [RawSource] = []
     @Published var sourceStates: [String: GallerySourceState] = [:]
     @Published var inspections: [String: SourceInspection] = [:]
@@ -143,6 +168,30 @@ final class RawViewModel: ObservableObject {
     @Published var showLegend = true
     @Published var customSeriesLabels: [String: String] = [:]
     @Published var legendOffset: CGSize = .zero
+    public enum WorkspaceMode: String, CaseIterable, Identifiable {
+        case explorer = "Explorer"
+        case editor = "Profile Editor"
+        public var id: String { rawValue }
+    }
+
+    @Published var activeWorkspaceMode: WorkspaceMode = .explorer
+    @Published var editorInitialSource: RawSource? = nil
+
+    func buildProfileForSource(_ sourceID: String?) {
+        let targetID = sourceID ?? focusedSourceID
+        guard let targetID = targetID,
+              let src = sources.first(where: {
+                  $0.id == targetID ||
+                  $0.relativePath == targetID ||
+                  $0.url.lastPathComponent == targetID ||
+                  $0.url.path == targetID ||
+                  targetID.hasSuffix($0.relativePath)
+              }) else { return }
+        self.editorInitialSource = src
+        self.activeWorkspaceMode = .editor
+    }
+
+    @Published var availablePresets: [ScientificPreset] = ScientificPreset.allCases
     @Published var selectedPreset: ScientificPreset = .natureSingle
     @Published var snapshots: [PlotSnapshot] = []
     @Published var activeSnapshotID: UUID? = nil
@@ -464,6 +513,16 @@ final class RawViewModel: ObservableObject {
     private var inspectionID = UUID()
     private var activeScopeURL: URL?
     private let discoveryGate = DiscoveryGate()
+    @Published var inventory: SourceInventory?
+    @Published var inventoryIssues: [InventoryIssue] = []
+    @Published var sourceTree: SourceTree?
+    @Published var expandedDirectoryIDs: Set<String> = []
+    @Published var activeNavigationMode: String = "tree"
+    @Published var sessionState = ProjectSessionState()
+    @Published var isProjectSetupPresented: Bool = false
+    @Published var pendingSetupProjectURL: URL?
+    @Published var pendingSetupDiagnostic: String?
+
     // Content-verified per-project cache (Issues 6–7). The limit is user
     // configurable; 0 disables storing and lookups for this project.
     @Published var cacheLimitBytes: Int64 = MeasurementCache.defaultLimitBytes {
@@ -526,11 +585,10 @@ final class RawViewModel: ObservableObject {
         guard let project else { return nil }
         let dbURL = project.indexDatabaseURL
         let size = (try? dbURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
-        let count = (try? IndexDatabase.open(at: dbURL))?.lookupAll().count ?? 0
         return DatabaseStats(
             path: dbURL.path,
             fileSizeBytes: size,
-            indexedCount: count,
+            indexedCount: inspectedSources,
             totalSources: sources.count
         )
     }
@@ -539,10 +597,6 @@ final class RawViewModel: ObservableObject {
         guard let project else { return }
         inspectionTask?.cancel()
         inspectionTask = nil
-
-        if let db = try? IndexDatabase.open(at: project.indexDatabaseURL) {
-            try? db.deleteAll()
-        }
 
         for source in sources {
             var state = sourceStates[source.id] ?? GallerySourceState()
@@ -560,8 +614,7 @@ final class RawViewModel: ObservableObject {
         inspectionTotal = sources.count
         inspectedSources = 0
 
-        let indexDB = try? IndexDatabase.open(at: project.indexDatabaseURL)
-        inspectSources(sources, project: project, requestID: requestID, baseCompleted: 0, indexDB: indexDB)
+        inspectSources(sources, project: project, requestID: requestID, baseCompleted: 0, rebuild: true)
     }
 
     init() {
@@ -589,6 +642,9 @@ final class RawViewModel: ObservableObject {
            let savedInterp = PlotInterpolation(rawValue: savedInterpRaw) {
             interpolation = savedInterp
         }
+        if let savedRecent = UserDefaults.standard.stringArray(forKey: "rawView.recentProjects.v1") {
+            recentProjects = savedRecent.compactMap { URL(fileURLWithPath: $0) }
+        }
         // Never auto-reopen previous project on launch.
         // User explicitly opens via the "Open Project" button.
     }
@@ -596,18 +652,99 @@ final class RawViewModel: ObservableObject {
     func openProject() {
         let panel = NSOpenPanel()
         panel.title = "Open Research Project"
-        panel.message = "Choose the project folder containing data/raw."
+        panel.message = "Choose the project folder."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+
         do {
-            let openedProject = try ProjectContext.open(url)
-            _ = url.startAccessingSecurityScopedResource()
-            activeScopeURL?.stopAccessingSecurityScopedResource()
-            activeScopeURL = url
-            install(openedProject)
-        } catch { self.error = error.localizedDescription }
+            if let settings = try ProjectSettingsStore.load(projectRoot: url) {
+                let openedProject = try ProjectContext.open(url, dataRootRelativePath: settings.dataRoot)
+                _ = url.startAccessingSecurityScopedResource()
+                activeScopeURL?.stopAccessingSecurityScopedResource()
+                activeScopeURL = url
+                install(openedProject)
+                return
+            }
+        } catch {
+            pendingSetupProjectURL = url
+            pendingSetupDiagnostic = "Existing settings are invalid: \(error.localizedDescription)"
+            isProjectSetupPresented = true
+            return
+        }
+
+        pendingSetupProjectURL = url
+        pendingSetupDiagnostic = nil
+        isProjectSetupPresented = true
+    }
+
+    func recordRecentProject(url: URL) {
+        var list = recentProjects.filter { $0.path != url.path }
+        list.insert(url, at: 0)
+        if list.count > 10 { list = Array(list.prefix(10)) }
+        recentProjects = list
+        UserDefaults.standard.set(list.map { $0.path }, forKey: "rawView.recentProjects.v1")
+    }
+
+    func clearRecentProjects() {
+        recentProjects.removeAll()
+        UserDefaults.standard.removeObject(forKey: "rawView.recentProjects.v1")
+    }
+
+    func openRecentProject(url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            recentProjects.removeAll { $0.path == url.path }
+            UserDefaults.standard.set(recentProjects.map { $0.path }, forKey: "rawView.recentProjects.v1")
+            error = "Project folder not found: \(url.path)"
+            return
+        }
+        do {
+            if let settings = try ProjectSettingsStore.load(projectRoot: url) {
+                let openedProject = try ProjectContext.open(url, dataRootRelativePath: settings.dataRoot)
+                _ = url.startAccessingSecurityScopedResource()
+                activeScopeURL?.stopAccessingSecurityScopedResource()
+                activeScopeURL = url
+                install(openedProject)
+                return
+            }
+        } catch {
+            pendingSetupProjectURL = url
+            pendingSetupDiagnostic = "Existing settings are invalid: \(error.localizedDescription)"
+            isProjectSetupPresented = true
+            return
+        }
+        pendingSetupProjectURL = url
+        pendingSetupDiagnostic = nil
+        isProjectSetupPresented = true
+    }
+
+    func configureProject(root: URL, dataRoot: String, persist: Bool) async throws {
+        cancelLoad()
+        let token = sessionState.beginRootChange()
+        if persist {
+            let settings = ProjectSettings(dataRoot: dataRoot, defaultView: "tree")
+            try ProjectSettingsStore.save(settings, projectRoot: root)
+        }
+        let opened = try ProjectContext.open(root, dataRootRelativePath: dataRoot)
+        guard sessionState.accepts(generation: token) else { return }
+        _ = root.startAccessingSecurityScopedResource()
+        activeScopeURL?.stopAccessingSecurityScopedResource()
+        activeScopeURL = root
+        install(opened)
+    }
+
+    func changeDataRoot(to relativePath: String, persist: Bool) async throws {
+        guard let currentProj = project else { return }
+        cancelLoad()
+        let token = sessionState.beginRootChange()
+        if persist {
+            let settings = ProjectSettings(dataRoot: relativePath, defaultView: "tree")
+            try ProjectSettingsStore.save(settings, projectRoot: currentProj.root)
+        }
+        let updated = try ProjectContext.open(currentProj.root, dataRootRelativePath: relativePath)
+        guard sessionState.accepts(generation: token) else { return }
+        install(updated)
     }
 
     func cancelLoad() {
@@ -819,10 +956,12 @@ final class RawViewModel: ObservableObject {
                         self.sourceStates[id] = state
                         if let inspection = result.inspection {
                             self.inspections[id] = inspection
-                            let mtime: Int64 = source.mtime != 0 ? source.mtime : ((try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
-                            let record = IndexDatabase.Record(source: source, inspection: inspection, mtime: mtime)
-                            if let indexDB = try? IndexDatabase.open(at: project.indexDatabaseURL) {
-                                try? indexDB.upsertBatch([record])
+                            Task.detached(priority: .utility) {
+                                if let store = try? await ProjectIndexStore.open(project: project) {
+                                    try? await store.withWriterJob {
+                                        try? await store.record(result, source: source, project: project)
+                                    }
+                                }
                             }
                         }
                     }
@@ -846,6 +985,8 @@ final class RawViewModel: ObservableObject {
 
     private func install(_ context: ProjectContext) {
         cancelLoad()
+        _ = sessionState.beginRootChange()
+        recordRecentProject(url: context.root)
         project = context
         focusedSourceID = nil
         selectedSourceIDs = []
@@ -857,8 +998,20 @@ final class RawViewModel: ObservableObject {
         profileIssues = []
         sources = []
         sourceStates = [:]
+        inventory = nil
+        inventoryIssues = []
+        sourceTree = nil
+        expandedDirectoryIDs.removeAll()
         inspectionCancelled = false
         rebuildCache()
+        let loadedPresets = PresetCatalog.load(project: context)
+        availablePresets = loadedPresets
+        if let settings = try? ProjectSettingsStore.load(projectRoot: context.root),
+           let matched = loadedPresets.first(where: { $0.id == settings.defaultPreset }) {
+            selectedPreset = matched
+        } else if let defaultNature = loadedPresets.first(where: { $0.id == "nature-single" }) {
+            selectedPreset = defaultNature
+        }
         refreshProjectSnapshotPackages()
         // Discovery runs through the cancellable core seam off the main actor so
         // large raw directories never block the UI. Cancellation propagates to
@@ -876,26 +1029,33 @@ final class RawViewModel: ObservableObject {
                 self.refreshLoading()
             }
             let generation = await self.discoveryGate.begin()
-            let discovered: [RawSource]
+            let inv: SourceInventory
             do {
-                discovered = try await context.discoverSourcesAsync()
+                inv = try await context.discoverInventoryAsync()
             } catch is CancellationError {
                 return
             } catch {
                 guard requestID == self.activeLoadID, await self.discoveryGate.isCurrent(generation) else { return }
                 self.sources = []
                 self.sourceStates = [:]
-                self.error = "Could not inventory data/raw: \(error.localizedDescription)"
+                self.inventory = nil
+                self.inventoryIssues = []
+                self.sourceTree = nil
+                self.error = "Could not inventory \(context.dataRootRelativePath): \(error.localizedDescription)"
                 return
             }
             guard !Task.isCancelled, requestID == self.activeLoadID,
                   await self.discoveryGate.isCurrent(generation) else { return }
+            self.inventory = inv
+            self.inventoryIssues = inv.issues
+            self.sourceTree = SourceTree(inventory: inv, project: context)
+            let discovered = inv.sources
             self.sources = discovered
             self.sourceStates = Dictionary(uniqueKeysWithValues: discovered.map { ($0.id, GallerySourceState()) })
             self.studyManifests = []
             self.manifestIssues = []
             if discovered.isEmpty {
-                self.error = "No readable regular files were found under data/raw."
+                self.error = "No readable regular files were found under \(context.dataRootRelativePath)."
             } else {
                 if self.focusedSourceID == nil { self.focusedSourceID = discovered.first?.id }
                 if self.selectedSourceIDs.isEmpty, let first = discovered.first?.id {
@@ -929,19 +1089,17 @@ final class RawViewModel: ObservableObject {
 
             Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
-                let indexDB = try? IndexDatabase.open(at: context.indexDatabaseURL)
-                let cachedMap = indexDB?.lookupAll() ?? [:]
+                let store = try? await ProjectIndexStore.open(project: context)
 
                 var initialStates: [String: GallerySourceState] = [:]
                 var cachedCount = 0
 
                 for source in capturedSources {
                     if Task.isCancelled { return }
-                    let mtime: Int64 = source.mtime != 0 ? source.mtime : ((try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
-                    if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
+                    if let restored = try? await store?.validatedInspection(for: source, project: context) {
                         var state = GallerySourceState()
-                        state.inspection = record.asInspection
-                        state.error = record.error
+                        state.inspection = restored.inspection
+                        state.error = restored.error
                         initialStates[source.id] = state
                         cachedCount += 1
                     } else {
@@ -968,11 +1126,10 @@ final class RawViewModel: ObservableObject {
         loadingPhase = "Inspecting"
         inspectedSources = 0
 
-        // Perform fast SQLite Cache Restoration off the MainActor:
+        // Perform fast Cache Restoration off the MainActor:
         inspectionTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            let indexDB = try? IndexDatabase.open(at: context.indexDatabaseURL)
-            let cachedMap = indexDB?.lookupAll() ?? [:]
+            let store = try? await ProjectIndexStore.open(project: context)
 
             var uninspected: [RawSource] = []
             var initialStates: [String: GallerySourceState] = [:]
@@ -980,11 +1137,10 @@ final class RawViewModel: ObservableObject {
 
             for source in capturedSources {
                 if Task.isCancelled { return }
-                let mtime: Int64 = source.mtime != 0 ? source.mtime : ((try? source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
-                if let record = cachedMap[source.id], record.mtime == mtime, record.byteSize == source.byteSize {
+                if let restored = try? await store?.validatedInspection(for: source, project: context) {
                     var state = GallerySourceState()
-                    state.inspection = record.asInspection
-                    state.error = record.error
+                    state.inspection = restored.inspection
+                    state.error = restored.error
                     initialStates[source.id] = state
                     cachedCount += 1
                 } else {
@@ -1011,7 +1167,7 @@ final class RawViewModel: ObservableObject {
                     return
                 }
 
-                self.inspectSources(finalUninspected, project: context, requestID: requestID, baseCompleted: finalCached, indexDB: indexDB)
+                self.inspectSources(finalUninspected, project: context, requestID: requestID, baseCompleted: finalCached)
             }
         }
     }
@@ -1030,26 +1186,23 @@ final class RawViewModel: ObservableObject {
         loadingPhase = "Inspecting"
         inspectionTotal = sources.count
         inspectedSources = sources.count - pending.count
-        let indexDB = try? IndexDatabase.open(at: project.indexDatabaseURL)
-        inspectSources(pending, project: project, requestID: requestID, baseCompleted: sources.count - pending.count, indexDB: indexDB)
+        inspectSources(pending, project: project, requestID: requestID, baseCompleted: sources.count - pending.count)
         return true
     }
 
-    private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int, indexDB: IndexDatabase? = nil) {
+    private func inspectSources(_ targets: [RawSource], project: ProjectContext, requestID: UUID, baseCompleted: Int, rebuild: Bool = false) {
         inspectionTask = Task {
             let accumulator = InspectionProgressAccumulator()
+            let store = try? await ProjectIndexStore.open(project: project)
 
             let report = await InstrumentReader.inspectMany(targets, project: project, cache: cache,
                 onProgress: { results, completed in
-                    var dbRecords: [IndexDatabase.Record] = []
-                    for result in results {
-                        if let inspection = result.inspection {
-                            let mtime: Int64 = result.source.mtime != 0 ? result.source.mtime : ((try? result.source.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970).map { Int64($0) } ?? 0)
-                            dbRecords.append(IndexDatabase.Record(source: result.source, inspection: inspection, mtime: mtime))
+                    if let store {
+                        Task.detached(priority: .utility) {
+                            try? await store.withWriterJob {
+                                try? await store.recordBatch(results, project: project)
+                            }
                         }
-                    }
-                    if let indexDB, !dbRecords.isEmpty {
-                        try? indexDB.upsertBatch(dbRecords)
                     }
                     let (shouldFlush, toFlush) = await accumulator.record(results: results, totalCompleted: completed, totalTarget: targets.count)
                     if shouldFlush {
@@ -1145,51 +1298,58 @@ struct RawViewShell: View {
     @ObservedObject var model: RawViewModel
 
     var body: some View {
-        HSplitView {
-            sidebarPane
-                .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
-                .frame(maxHeight: .infinity)
-            ProjectGallery(sources: model.sources, states: model.sourceStates,
-                           focusedSourceID: $model.focusedSourceID,
-                           selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
-                           lineWidth: model.lineWidth,
-                           renderStyle: model.renderStyle,
-                           markType: model.markType,
-                           interpolation: model.interpolation,
-                           markerSize: model.markerSize,
-                           colorBySweepProgress: model.colorBySweepProgress,
-                           overlay: model.overlayResult(),
-                           tab: $model.tab,
-                           xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
-                           xScale: $model.xScale, yScale: $model.yScale,
-                           showInspector: $model.showInspector,
-                           isLoading: model.isPlotLoading,
-                           loadingStatus: model.isPlotLoading ? (model.isOverlayLoading ? "Loading comparison…" : "Loading plot…") : nil,
-                           retry: model.loadFocused,
-                           snapshots: model.snapshots,
-                           activeSnapshotID: model.activeSnapshotID,
-                           onSaveSnapshot: { model.saveSnapshot() },
-                           onSelectSnapshot: { model.loadSnapshot($0) },
-                           onToggleSnapshot: { model.toggleSnapshot($0) },
-                           onDeleteSnapshot: { model.deleteSnapshot($0) },
-                           onExportFigure: { model.exportCurrentFigure() },
-                           onExportData: { model.exportCurrentData() },
-                           onSaveSnapshotPackage: { model.saveSnapshotPackage() },
-                           projectSnapshotPackages: model.projectSnapshotPackages,
-                           onSelectSnapshotPackage: { model.loadSnapshotPackage($0) },
-                           comparisonTitle: model.comparisonTitle,
-                           selectedPreset: $model.selectedPreset,
-                           showLegend: $model.showLegend,
-                           customSeriesLabels: model.customSeriesLabels,
-                           legendOffset: $model.legendOffset)
-                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-            if model.showInspector {
-                inspector
-                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
-                    .frame(maxHeight: .infinity)
+        Group {
+            if model.activeWorkspaceMode == .editor, let project = model.project {
+                EditorWorkspaceView(project: project, sources: model.sources, initialSelectedSource: model.editorInitialSource)
+            } else {
+                HSplitView {
+                    sidebarPane
+                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
+                        .frame(maxHeight: .infinity)
+                    galleryPane
+                    if model.showInspector {
+                        inspector
+                            .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
+                            .frame(maxHeight: .infinity)
+                    }
+                }
             }
         }
         .frame(minWidth: 880, minHeight: 560)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Workspace Mode", selection: $model.activeWorkspaceMode) {
+                    ForEach(RawViewModel.WorkspaceMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
+        }
+        .sheet(isPresented: $model.isProjectSetupPresented) {
+            if let rootURL = model.pendingSetupProjectURL {
+                ProjectSetupView(
+                    projectRoot: rootURL,
+                    initialDiagnostic: model.pendingSetupDiagnostic,
+                    onOpen: { dataRoot, persist in
+                        model.isProjectSetupPresented = false
+                        Task {
+                            do {
+                                try await model.configureProject(root: rootURL, dataRoot: dataRoot, persist: persist)
+                            } catch {
+                                model.error = error.localizedDescription
+                            }
+                        }
+                    },
+                    onCancel: {
+                        model.isProjectSetupPresented = false
+                        model.pendingSetupProjectURL = nil
+                        model.pendingSetupDiagnostic = nil
+                    }
+                )
+            }
+        }
         .overlay(alignment: .top) {
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -1201,6 +1361,46 @@ struct RawViewShell: View {
         .onChange(of: model.selectedSourceIDs) { _, new in model.updateSelection(new) }
     }
 
+    @ViewBuilder
+    private var galleryPane: some View {
+        ProjectGallery(sources: model.sources, states: model.sourceStates,
+                       focusedSourceID: $model.focusedSourceID,
+                       selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
+                       lineWidth: model.lineWidth,
+                       renderStyle: model.renderStyle,
+                       markType: model.markType,
+                       interpolation: model.interpolation,
+                       markerSize: model.markerSize,
+                       colorBySweepProgress: model.colorBySweepProgress,
+                       overlay: model.overlayResult(),
+                       tab: $model.tab,
+                       xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
+                       xScale: $model.xScale, yScale: $model.yScale,
+                       showInspector: $model.showInspector,
+                       isLoading: model.isPlotLoading,
+                       loadingStatus: model.isPlotLoading ? (model.isOverlayLoading ? "Loading comparison…" : "Loading plot…") : nil,
+                       retry: model.loadFocused,
+                       snapshots: model.snapshots,
+                       activeSnapshotID: model.activeSnapshotID,
+                       onSaveSnapshot: { model.saveSnapshot() },
+                       onSelectSnapshot: { model.loadSnapshot($0) },
+                       onToggleSnapshot: { model.toggleSnapshot($0) },
+                       onDeleteSnapshot: { model.deleteSnapshot($0) },
+                       onExportFigure: { model.exportCurrentFigure() },
+                       onExportData: { model.exportCurrentData() },
+                       onSaveSnapshotPackage: { model.saveSnapshotPackage() },
+                       projectSnapshotPackages: model.projectSnapshotPackages,
+                       onSelectSnapshotPackage: { model.loadSnapshotPackage($0) },
+                       onBuildProfile: { model.buildProfileForSource($0) },
+                       comparisonTitle: model.comparisonTitle,
+                       availablePresets: model.availablePresets,
+                       selectedPreset: $model.selectedPreset,
+                       showLegend: $model.showLegend,
+                       customSeriesLabels: model.customSeriesLabels,
+                       legendOffset: $model.legendOffset)
+            .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var sidebarPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -1208,9 +1408,29 @@ struct RawViewShell: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(action: model.openProject) { Image(systemName: "folder.badge.plus") }
-                    .buttonStyle(.borderless)
-                    .help("Open project")
+                if !model.recentProjects.isEmpty {
+                    Menu {
+                        ForEach(model.recentProjects, id: \.self) { url in
+                            Button(url.lastPathComponent) {
+                                model.openRecentProject(url: url)
+                            }
+                        }
+                        Divider()
+                        Button("Clear Recent", action: model.clearRecentProjects)
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("Recent projects")
+                }
+                Button(action: model.openProject) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder.badge.plus")
+                        ShortcutBadge("openProject")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .help("Open project (⌘O)")
             }
             .padding(.horizontal, 14)
             .frame(height: 44)
@@ -1268,10 +1488,19 @@ struct RawViewShell: View {
                 }
                 .padding(.horizontal, 14).padding(.top, 8)
 
-                ProjectSourcesSidebar(sources: model.sources,
+                ProjectSourcesSidebar(
+                    sources: model.sources,
                     inspections: model.inspections,
-                    states: model.sourceStates, focusedSourceID: $model.focusedSourceID,
-                    selectedSourceIDs: $model.selectedSourceIDs)
+                    states: model.sourceStates,
+                    focusedSourceID: $model.focusedSourceID,
+                    selectedSourceIDs: $model.selectedSourceIDs,
+                    sourceTree: model.sourceTree,
+                    inventoryIssues: model.inventoryIssues,
+                    dataRoot: project.dataRootRelativePath,
+                    expandedDirectoryIDs: $model.expandedDirectoryIDs,
+                    onBuildProfile: { model.buildProfileForSource($0) }
+                )
+                .id("\(project.root.path):\(project.dataRootRelativePath)")
                 if !model.profileIssues.isEmpty {
                     profileIssueList
                         .padding(.horizontal, 12)
@@ -1280,12 +1509,66 @@ struct RawViewShell: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding([.bottom, .horizontal], 12)
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: 16) {
                     Spacer()
                     ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
-                    Button("Open Project…", action: model.openProject)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.regular)
+                    Button(action: model.openProject) {
+                        HStack(spacing: 6) {
+                            Text("Open Project…")
+                            ShortcutBadge("openProject")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+
+                    if !model.recentProjects.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("RECENT PROJECTS")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Clear", action: model.clearRecentProjects)
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 4)
+
+                            VStack(spacing: 4) {
+                                ForEach(model.recentProjects.prefix(5), id: \.self) { url in
+                                    Button {
+                                        model.openRecentProject(url: url)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "folder")
+                                                .foregroundStyle(Color.accentColor)
+                                                .font(.system(size: 12))
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(url.lastPathComponent)
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(1)
+                                                Text(url.path)
+                                                    .font(.system(size: 10))
+                                                    .foregroundStyle(.tertiary)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                            }
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 6)
+                                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: 280)
+                        .padding(.top, 10)
+                    }
+
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1316,7 +1599,7 @@ struct RawViewShell: View {
             currentSource = model.sources.first(where: { $0.id == focusedID })
         }
         return InspectorPane(measurement: currentState?.measurement, inspection: currentState?.inspection,
-                             source: currentSource?.url, error: currentState?.error ?? model.error,
+                             source: currentSource?.url, sourceID: currentSource?.id, error: currentState?.error ?? model.error,
                              states: model.sourceStates,
                              selectedIDs: model.selectedSourceIDs, focusedID: $model.focusedSourceID,
                              hidden: $model.hiddenSeries, lineWidth: $model.lineWidth,
@@ -1339,7 +1622,8 @@ struct RawViewShell: View {
                                  if let id = model.focusedSourceID {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
                                  }
-                             })
+                             },
+                             onBuildProfile: { model.buildProfileForSource($0) })
     }
 }
 
@@ -1689,6 +1973,7 @@ struct InspectorPane: View {
     let measurement: NormalizedMeasurement?
     let inspection: SourceInspection?
     let source: URL?
+    var sourceID: String? = nil
     let error: String?
     let states: [String: GallerySourceState]
     let selectedIDs: Set<String>
@@ -1713,6 +1998,7 @@ struct InspectorPane: View {
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
+    var onBuildProfile: ((String?) -> Void)? = nil
 
     @State private var isSeriesExpanded = true
     @State private var isDataMappingExpanded = true

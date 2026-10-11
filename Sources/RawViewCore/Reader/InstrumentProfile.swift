@@ -184,6 +184,21 @@ struct ProfileCatalog: Sendable {
     }
 
     static func load(project: ProjectContext) -> ProfileCatalog {
+        // Priority 1: <project>/.rawviewer/instrument/
+        let rawviewerRoot = project.root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        if isDirectoryWithYAMLs(rawviewerRoot, within: project.root) {
+            return loadProfiles(from: rawviewerRoot, displayRoot: ".rawviewer/instrument", project: project)
+        }
+
+        // Priority 2: <project>/data/.rawview/instrument/
+        let legacyRawviewRoot = project.root.appendingPathComponent("data/.rawview/instrument", isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        if isDirectoryWithYAMLs(legacyRawviewRoot, within: project.root) {
+            return loadProfiles(from: legacyRawviewRoot, displayRoot: "data/.rawview/instrument", project: project)
+        }
+
+        // Priority 3: <project>/data/instruments/
         let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
             .resolvingSymlinksInPath().standardizedFileURL
         guard instrumentsRoot.path.hasPrefix(project.root.path + "/") else {
@@ -227,6 +242,26 @@ struct ProfileCatalog: Sendable {
             ], brokenClaims: [])
         }
         return loadProfiles(from: instrumentsRoot, displayRoot: "data/instruments", project: project)
+    }
+
+    private static func isDirectoryWithYAMLs(_ url: URL, within projectRoot: URL) -> Bool {
+        var statInfo = stat()
+        guard lstat(url.path, &statInfo) == 0 else { return false }
+        guard (statInfo.st_mode & S_IFMT) != S_IFLNK else { return false }
+        guard url.path.hasPrefix(projectRoot.path + "/") || url.path == projectRoot.path else { return false }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+              isDir.boolValue,
+              FileManager.default.isReadableFile(atPath: url.path) else { return false }
+        return hasYAMLProfiles(at: url)
+    }
+
+    private static func hasYAMLProfiles(at root: URL) -> Bool {
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else { return false }
+        return entries.contains { entry in
+            let lower = entry.lowercased()
+            return lower.hasSuffix(".yaml") || lower.hasSuffix(".yml")
+        }
     }
 
     private static func loadProfiles(from root: URL, displayRoot: String, project: ProjectContext) -> ProfileCatalog {

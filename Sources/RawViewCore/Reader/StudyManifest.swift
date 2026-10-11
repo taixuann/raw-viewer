@@ -22,6 +22,12 @@ public enum ManifestIndex {
     static let maximumManifestBytes = 1 << 20
 
     public static func load(project: ProjectContext) -> (manifests: [StudyManifest], issues: [String]) {
+        // A "." data root claims every project path, and the manifest walker
+        // prunes the configured data root, so no manifest namespace remains.
+        // Say so explicitly instead of silently discovering nothing.
+        if project.dataRootRelativePath == "." {
+            return ([], ["project data root \".\" claims every path, so no manifest namespace exists outside it; no study manifests were discovered."])
+        }
         var manifests: [StudyManifest] = []
         var issues: [String] = []
         var visitedDirectories = Set<String>()
@@ -56,13 +62,17 @@ public enum ManifestIndex {
                 continue
             }
             if values.isDirectory == true {
-                // Manifests belong to project metadata, never raw data. Prune
-                // before enumerating files so .spe/.affm and other raw sources
-                // receive no per-entry metadata access from this scanner.
-                // The cache is derived runtime state, not manifest authority;
-                // pruning it also prevents repeat opens from walking thousands
+                // Manifests belong to project metadata, never raw data or
+                // viewer metadata. Prune before enumerating files so
+                // .spe/.affm and other raw sources receive no per-entry
+                // metadata access from this scanner. The configured data
+                // root, the RawView viewer-metadata/snapshot namespaces and
+                // the derived cache are pruned for every configured root;
+                // pruning also prevents repeat opens from walking thousands
                 // of cache entries.
-                if projectRelative == "data/raw" || projectRelative == "data/.cache" {
+                if projectRelative == project.dataRootRelativePath
+                    || projectRelative == "data/.cache"
+                    || ProjectSettingsStore.isViewerMetadataNamespace(projectRelative) {
                     enumerator.skipDescendants()
                     continue
                 }
@@ -257,7 +267,10 @@ public enum ManifestIndex {
             let projectResolved = projectCandidate.resolvingSymlinksInPath().standardizedFileURL
             let manifestResolved = manifestCandidate.resolvingSymlinksInPath().standardizedFileURL
             func rawMember(_ url: URL) -> String? {
-                guard let relative = project.relativePath(of: url), relative.hasPrefix("data/raw/") else { return nil }
+                // Membership is the resolved path inside the configured data
+                // root; the root itself is a directory, never a member.
+                guard let relative = project.sourceRelativePath(of: url),
+                      relative != project.dataRootRelativePath else { return nil }
                 return relative
             }
             let projectMember = rawMember(projectResolved)
@@ -267,7 +280,7 @@ public enum ManifestIndex {
             let member: String
             if projectInside && manifestInside {
                 guard projectMember == manifestMember, let projectMember else {
-                    issues.append("\(relativePath): source path \"\(raw)\" is ambiguous between project-relative and manifest-relative paths inside data/raw; skipped.")
+                    issues.append("\(relativePath): source path \"\(raw)\" is ambiguous between project-relative and manifest-relative paths inside data root \"\(project.dataRootRelativePath)\"; skipped.")
                     return nil
                 }
                 member = projectMember
@@ -276,7 +289,7 @@ public enum ManifestIndex {
             } else if let manifestMember {
                 member = manifestMember
             } else {
-                issues.append("\(relativePath): source path \"\(raw)\" does not resolve inside the selected project's data/raw directory; skipped.")
+                issues.append("\(relativePath): source path \"\(raw)\" does not resolve inside the selected project's data root (\"\(project.dataRootRelativePath)\"); skipped.")
                 return nil
             }
             members.append(member)
@@ -332,12 +345,12 @@ public enum OverlayEvaluator {
     public static func evaluate(
         measurements: [NormalizedMeasurement],
         manifests: [StudyManifest] = [],
-        requireManifest: Bool? = nil
+        requireManifest: Bool = true
     ) -> OverlayEligibility {
         guard measurements.count >= 2 else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")
         }
-        let shouldRequire = requireManifest ?? !manifests.isEmpty
+        let shouldRequire = requireManifest
         let shared: String
         let gate = sharedManifest(measurements: measurements, manifests: manifests)
         if let gateShared = gate.shared {
@@ -391,7 +404,7 @@ public enum OverlayEvaluator {
         measurements: [NormalizedMeasurement],
         manifests: [StudyManifest] = [],
         focusedSourceID: String?,
-        requireManifest: Bool? = nil
+        requireManifest: Bool = true
     ) -> OverlayEligibility {
         guard measurements.count >= 2 else {
             return .blocked(reason: "Select at least two sources to compare. The focused source remains shown alone.")
@@ -400,7 +413,7 @@ public enum OverlayEvaluator {
               measurements.contains(where: { $0.source.path == focusID }) else {
             return evaluate(measurements: measurements, manifests: manifests, requireManifest: requireManifest)
         }
-        let shouldRequire = requireManifest ?? !manifests.isEmpty
+        let shouldRequire = requireManifest
         let shared: String
         let gate = sharedManifest(measurements: measurements, manifests: manifests)
         if let gateShared = gate.shared {

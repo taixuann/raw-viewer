@@ -16,7 +16,8 @@ import Foundation
 /// request but are not stored.
 public struct MeasurementCache: Sendable {
     /// Cache schema version; bumping it invalidates every existing entry.
-    static let schema = 3
+    /// v5: inspection entries also carry the typed InspectionDisposition.
+    static let schema = 5
     /// Default per-project disk budget (the app exposes Off/larger presets).
     public static let defaultLimitBytes: Int64 = 512 * 1024 * 1024
     /// Keep one decoded entry below a bounded memory ceiling even when the
@@ -489,25 +490,28 @@ public struct MeasurementCache: Sendable {
         let key: String
     }
 
-    /// Inspection identity: project-relative source identity, lowercase
-    /// extension, descriptor size (already secured), the SHA-256 of the exact
-    /// bounded 64 KiB prefix read from the no-follow handle, the complete
-    /// profile-catalog fingerprint, reader version, and cache schema.
-    static func inspectionIdentity(source: RawSource, prefixSHA256: String, catalogFingerprint: String) -> EntryIdentity {
+    /// Inspection identity: configured data root, project-relative source
+    /// identity, lowercase extension, descriptor size (already secured), the
+    /// SHA-256 of the exact bounded 64 KiB prefix read from the no-follow
+    /// handle, the complete profile-catalog fingerprint, reader version, and
+    /// cache schema.
+    static func inspectionIdentity(source: RawSource, prefixSHA256: String, catalogFingerprint: String, dataRoot: String) -> EntryIdentity {
         let extensionPart = source.url.pathExtension.lowercased()
-        let text = "inspection|\(schema)|\(source.relativePath)|\(extensionPart)|\(source.byteSize)|\(prefixSHA256)|\(catalogFingerprint)|\(InstrumentReader.version)"
+        let text = "inspection|\(schema)|\(dataRoot)|\(source.relativePath)|\(extensionPart)|\(source.byteSize)|\(prefixSHA256)|\(catalogFingerprint)|\(InstrumentReader.version)"
         return EntryIdentity(key: sha256Hex(Data(text.utf8)))
     }
 
-    /// Measurement identity: hashed project-relative identity plus the exact
-    /// bounded prefix digest, descriptor size, resolved profile/catalog
-    /// fingerprint, reader version, and schema. The candidate key must be
-    /// content-derived (size + prefix), so a same-size/same-mtime header edit
-    /// never even finds an entry; the full-content digest recorded in the
-    /// entry is verified separately before decode.
-    static func measurementIdentity(source: RawSource, prefixSHA256: String, catalogFingerprint: String) -> EntryIdentity {
+    /// Measurement identity: configured data root plus hashed project-relative
+    /// identity, the exact bounded prefix digest, descriptor size, resolved
+    /// profile/catalog fingerprint, reader version, and schema. The candidate
+    /// key must be content-derived (size + prefix), so a same-size/same-mtime
+    /// header edit never even finds an entry; the full-content digest recorded
+    /// in the entry is verified separately before decode. The data root joins
+    /// the key so a root switch can never reuse another root's namespace even
+    /// when both roots claim the same project-relative identity.
+    static func measurementIdentity(source: RawSource, prefixSHA256: String, catalogFingerprint: String, dataRoot: String) -> EntryIdentity {
         let extensionPart = source.url.pathExtension.lowercased()
-        let text = "measurement|\(schema)|\(source.relativePath)|\(extensionPart)|\(source.byteSize)|\(prefixSHA256)|\(catalogFingerprint)|\(InstrumentReader.version)"
+        let text = "measurement|\(schema)|\(dataRoot)|\(source.relativePath)|\(extensionPart)|\(source.byteSize)|\(prefixSHA256)|\(catalogFingerprint)|\(InstrumentReader.version)"
         return EntryIdentity(key: sha256Hex(Data(text.utf8)))
     }
 
@@ -515,17 +519,19 @@ public struct MeasurementCache: Sendable {
 
     /// Claimed-path open with descriptor-pinned verification. Opens the
     /// claimed path itself with `O_NOFOLLOW` before any path resolution, then
-    /// checks that selected-path identity is in data/raw and the opened
-    /// descriptor remains beneath that root before reading bytes. The
-    /// descriptor's F_GETPATH alias is not identity for hardlinked sources.
+    /// checks that selected-path identity is inside the configured data root
+    /// and the opened descriptor remains beneath that root before reading
+    /// bytes. The descriptor's F_GETPATH alias is not identity for hardlinked
+    /// sources.
     static func openSecuredPrefix(source: RawSource, project: ProjectContext) throws -> (handle: FileHandle, prefix: Data, selectedURL: URL, descriptorSize: Int64) {
         // Excluded suffixes are rejected from the claimed name alone, before
         // any path resolution or filesystem access touches them.
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
             throw SecureOpenError.unreadable(path: source.url.path)
         }
-        guard project.relativePath(of: source.url) == source.relativePath,
-              source.relativePath.hasPrefix("data/raw/") else {
+        // Single claimed-path containment helper; the descriptor check below
+        // remains independent and never becomes a string check.
+        guard project.sourceRelativePath(of: source.url) == source.relativePath else {
             throw SecureOpenError.escaped(path: source.url.path)
         }
         // Clear diagnostic for a claimed symlink; the open below remains the
@@ -559,7 +565,7 @@ public struct MeasurementCache: Sendable {
     /// after the contained no-follow open and exact-prefix read may reach the
     /// cache, and access/open/read/cancellation failures throw instead.
     public enum CachedInspection: Codable, Sendable, Equatable {
-        case supported(SourceInspection)
+        case supported(SourceInspection, InspectionDisposition)
         case blocked(String)
     }
 
@@ -584,7 +590,7 @@ public struct MeasurementCache: Sendable {
         let selectedURL = secured.selectedURL
         // Identity follows the selected source name, not a non-unique
         // descriptor alias, plus pinned size/prefix and the catalog fingerprint.
-        let identity = MeasurementCache.inspectionIdentity(source: RawSource(relativePath: source.relativePath, url: selectedURL, byteSize: size), prefixSHA256: prefixDigest, catalogFingerprint: catalogFingerprint)
+        let identity = MeasurementCache.inspectionIdentity(source: RawSource(relativePath: source.relativePath, url: selectedURL, byteSize: size), prefixSHA256: prefixDigest, catalogFingerprint: catalogFingerprint, dataRoot: project.dataRootRelativePath)
         if let (payload, _) = try? readEntry(key: identity.key, kind: "inspection"),
            let cached = try? PropertyListDecoder().decode(CachedInspection.self, from: payload) {
             try? secured.handle.close()
@@ -632,7 +638,7 @@ public struct MeasurementCache: Sendable {
         let size = secured.descriptorSize
         let selectedURL = secured.selectedURL
         let probe = RawSource(relativePath: source.relativePath, url: selectedURL, byteSize: size)
-        let identity = MeasurementCache.measurementIdentity(source: probe, prefixSHA256: sha256Hex(prefix), catalogFingerprint: profileFingerprint)
+        let identity = MeasurementCache.measurementIdentity(source: probe, prefixSHA256: sha256Hex(prefix), catalogFingerprint: profileFingerprint, dataRoot: project.dataRootRelativePath)
         guard let (payload, meta) = try? readEntry(key: identity.key, kind: "measurement"),
               let recorded = meta?["full_sha256"] as? String else { return nil }
         // Full-content verification on the same descriptor: its read offset
@@ -689,16 +695,18 @@ public struct MeasurementCache: Sendable {
     /// Stores a successful measurement. The entry's identity is derived from
     /// the source descriptor (size + exact prefix digest) exactly like the
     /// lookup path; the recorded full-content digest is the measurement's own
-    /// `source.sha256` (the reader hashes exactly the bytes it parsed).
-    public func store(measurement: NormalizedMeasurement, profileFingerprint: String, source: RawSource, prefixSHA256: String) throws {
+    /// `source.sha256` (the reader hashes exactly the bytes it parsed). The
+    /// project's configured data root joins the identity so a root switch
+    /// never reuses another root's namespace.
+    public func store(measurement: NormalizedMeasurement, profileFingerprint: String, source: RawSource, prefixSHA256: String, project: ProjectContext) throws {
         try store(measurement: measurement, profileFingerprint: profileFingerprint, source: source,
-                  prefixSHA256: prefixSHA256, preflightCap: Self.maximumEntryBytes)
+                  prefixSHA256: prefixSHA256, preflightCap: Self.maximumEntryBytes, project: project)
     }
 
-    func store(measurement: NormalizedMeasurement, profileFingerprint: String, source: RawSource, prefixSHA256: String, preflightCap: Int64) throws {
+    func store(measurement: NormalizedMeasurement, profileFingerprint: String, source: RawSource, prefixSHA256: String, preflightCap: Int64, project: ProjectContext) throws {
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else { return }
         if Self.minimumPackedSampleBytesExceedsCap(sampleCounts: measurement.channels.map({ $0.values.count }), cap: preflightCap) { return }
-        let identity = MeasurementCache.measurementIdentity(source: source, prefixSHA256: prefixSHA256, catalogFingerprint: profileFingerprint)
+        let identity = MeasurementCache.measurementIdentity(source: source, prefixSHA256: prefixSHA256, catalogFingerprint: profileFingerprint, dataRoot: project.dataRootRelativePath)
         storeEntry(key: identity.key, kind: "measurement", payload: try MeasurementCache.encode(measurement: measurement),
                    fullSHA256: measurement.source.sha256, sourceSize: source.byteSize)
     }

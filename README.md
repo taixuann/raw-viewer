@@ -71,11 +71,32 @@ Build a production-optimized, code-signed macOS `.app` bundle:
 
 ---
 
+### Headless Indexing (CLI)
+RawView includes a standalone CLI tool `rawview-index` for automated, non-interactive project indexing:
+
+```bash
+# Build and run the pre-indexing CLI tool:
+swift run rawview-index --project /path/to/project --data-root data/raw --save-settings --json
+```
+
+Flags:
+- `--project <path>` (required): Path to project root.
+- `--data-root <path>`: Project-relative data directory (e.g. `data/raw` or `.`).
+- `--save-settings`: Persist the configured data root into `.rawviewer/setting/setting.yaml`.
+- `--rebuild`: Reindex all sources without using cached advisory hints.
+- `--json`: Output machine-readable JSON summary to stdout.
+
+Exit codes: `0` complete, `1` incomplete/fatal, `2` configuration error, `3` writer busy, `130` interrupted.
+
+---
+
 ## Architecture & Security Contract
 
 1. **In-Process Reading**: All parsing occurs within `RawViewCore` using standard Swift Foundation. No subprocesses or shell scripts are executed.
-2. **Deterministic Caching**: Inspection summaries are cached in project-local SQLite WAL databases (`data/.rawview/index.db`) or user Application Support.
-3. **Fail-Closed Parsing**: Corrupt rows, malformed YAML, or unsupported versions produce actionable diagnostic banners rather than silent misinterpretations.
+2. **Configurable Data Root**: Configured via `.rawviewer/setting/setting.yaml` (`schema_version: 1`). Supports `.` (project root) or any contained regular directory. Symlinked components and escaping paths are rejected fail-closed.
+3. **Tree Navigator**: Native folder disclosure tree preserving directory ancestors and project-relative source identities.
+4. **App-Local Writable Index**: Writable SQLite indexes are stored in owner-private Application Support (`~/Library/Application Support/RawView/<project-digest>/index.db`). Zero project-local SQLite writes ensure immutable projects and eliminate VFS race risks. Legacy `data/.rawview/index.db` is preserved read-only as advisory hints and rollback.
+5. **Fail-Closed Parsing**: Corrupt rows, malformed YAML, or unsupported versions produce actionable diagnostic banners rather than silent misinterpretations.
 
 ---
 

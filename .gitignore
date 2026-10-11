@@ -7,3 +7,12 @@ RawView-Installer.dmg
 *.zip
 dist/
 release/
+# Derived project index only (destination, WAL/SHM, migration staging).
+# Project settings YAML (.rawviewer/setting/setting.yaml) stays tracked.
+.rawviewer/index.db*
+**/.rawviewer/index.db*
+
+# Graphify knowledge graph outputs
+graphify-out/
+graph.html
+

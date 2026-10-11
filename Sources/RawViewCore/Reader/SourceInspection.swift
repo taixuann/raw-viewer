@@ -18,15 +18,30 @@ public struct SourceInspection: Identifiable, Sendable, Equatable, Codable {
     public let error: String?
 }
 
+public enum InspectionDisposition: String, Sendable, Codable, Equatable {
+    case profileMatched = "profile_matched"
+    case structuralCandidate = "structural_candidate"
+    case deterministicBlocked = "deterministic_blocked"
+    case transientFailure = "transient_failure"
+    case cancelled = "cancelled"
+}
+
 public struct SourceInspectionResult: Identifiable, Sendable {
     public var id: String { source.relativePath }
     public let source: RawSource
     public let inspection: SourceInspection?
+    public let disposition: InspectionDisposition
     public let error: String?
 
-    public init(source: RawSource, inspection: SourceInspection?, error: String?) {
+    public init(
+        source: RawSource,
+        inspection: SourceInspection?,
+        disposition: InspectionDisposition = .profileMatched,
+        error: String?
+    ) {
         self.source = source
         self.inspection = inspection
+        self.disposition = disposition
         self.error = error
     }
 }

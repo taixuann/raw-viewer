@@ -6,26 +6,59 @@ public struct ProjectContext: Sendable {
 
     public let root: URL
     public let rawRoot: URL
+    /// Configured project-relative data root (schema-validated, normalized;
+    /// "." means the project directory itself). Source identity stays
+    /// project-relative; `rawRoot` is derived from this value.
+    public let dataRootRelativePath: String
 
-    /// Project-local index database location: <root>/data/.rawview/index.db
+    /// Writable project index database location: owner-private app-local
+    /// under Application Support (Decision b).
     public var indexDatabaseURL: URL {
-        root.appendingPathComponent("data/.rawview/index.db")
+        ProjectIndexStore.preferredDestinationURL(project: self)
     }
 
-    public static func open(_ root: URL) throws -> Self {
+    /// Opens a project with an explicit configured data root. The root must be
+    /// a normalized project-relative path (schema v1 rules), every configured
+    /// component must be a regular directory — symlinked components are
+    /// rejected, never followed — and the resolved root must be an existing
+    /// readable directory contained in the project. `.` selects the project
+    /// directory itself as the data root.
+    public static func open(_ root: URL, dataRootRelativePath: String) throws -> Self {
+        try ProjectSettingsStore.validateDataRoot(dataRootRelativePath)
         let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
-        let raw = canonicalRoot.appendingPathComponent("data/raw", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-        guard raw.path.hasPrefix(canonicalRoot.path + "/") else { throw ReaderError.invalidProject }
+        if dataRootRelativePath != "." {
+            let components = dataRootRelativePath.split(separator: "/").map(String.init)
+            guard SecureFile.firstSymlinkedComponent(components, beneath: canonicalRoot.path) == nil else {
+                throw ReaderError.invalidProject
+            }
+        }
+        let raw: URL
+        if dataRootRelativePath == "." {
+            raw = canonicalRoot
+        } else {
+            raw = canonicalRoot.appendingPathComponent(dataRootRelativePath, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+            guard raw.path.hasPrefix(canonicalRoot.path + "/") else { throw ReaderError.invalidProject }
+        }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: raw.path, isDirectory: &isDirectory), isDirectory.boolValue,
               FileManager.default.isReadableFile(atPath: raw.path) else { throw ReaderError.invalidProject }
-        return .init(root: canonicalRoot, rawRoot: raw)
+        return .init(root: canonicalRoot, rawRoot: raw, dataRootRelativePath: dataRootRelativePath)
+    }
+
+    /// Compatibility open: consults saved project settings first; only a
+    /// proven-absent settings file falls back to the legacy data/raw default.
+    /// Invalid settings throw — they are never silently recovered.
+    public static func open(_ root: URL) throws -> Self {
+        if let settings = try ProjectSettingsStore.load(projectRoot: root) {
+            return try open(root, dataRootRelativePath: settings.dataRoot)
+        }
+        return try open(root, dataRootRelativePath: "data/raw")
     }
 
     public func containsSource(_ source: URL) -> Bool {
         // Pure containment on the resolved path: readability is decided by the
         // secured open, so a missing or unreadable in-root file is never
-        // mislabeled as outside data/raw.
+        // mislabeled as outside the configured data root.
         let canonical = source.resolvingSymlinksInPath().standardizedFileURL
         return canonical.path.hasPrefix(rawRoot.path + "/")
     }
@@ -34,9 +67,10 @@ public struct ProjectContext: Sendable {
     /// `readlink` touches only the link, and only the target's parent
     /// directory is kernel-canonicalized so containment compares in one path
     /// space. The target leaf itself is never resolved, stat-ed, opened, or
-    /// read. Returns whether the link text lexically stays inside `data/raw`;
-    /// an unclassifiable link counts as inside so the caller fails closed
-    /// with the symlink diagnostic instead of claiming an outside path.
+    /// read. Returns whether the link text lexically stays inside the
+    /// configured data root; an unclassifiable link counts as inside so the
+    /// caller fails closed with the symlink diagnostic instead of claiming an
+    /// outside path.
     func symlinkTargetResolvesInsideRaw(source: URL, linkTarget: String) -> Bool {
         let joined = linkTarget.hasPrefix("/")
             ? URL(fileURLWithPath: linkTarget)
@@ -73,11 +107,32 @@ public struct ProjectContext: Sendable {
         return nil
     }
 
-    public func discoverSources() throws -> [RawSource] {
-        try walkRawSources(onVisitDirectory: nil, onVisitFile: nil, cancellable: false)
+    /// Lexical claimed containment: the project-relative identity of `source`
+    /// when its claimed (unresolved) path sits inside the configured data
+    /// root, else nil. This never follows symlinks and never replaces the
+    /// descriptor verification performed by the secure open, which
+    /// independently validates the opened object.
+    public func sourceRelativePath(of source: URL) -> String? {
+        let claimed = source.standardizedFileURL.path
+        let relative: String
+        if claimed.hasPrefix(root.path + "/") {
+            relative = String(claimed.dropFirst(root.path.count + 1))
+        } else {
+            let kernelRoot = SecureFile.kernelCanonical(root.path)
+            guard claimed.hasPrefix(kernelRoot + "/") else { return nil }
+            relative = String(claimed.dropFirst(kernelRoot.count + 1))
+        }
+        guard dataRootRelativePath != "." else { return relative }
+        guard relative == dataRootRelativePath || relative.hasPrefix(dataRootRelativePath + "/") else { return nil }
+        return relative
     }
 
-    /// Cancellable off-main inventory. This is the production seam used by
+    public func discoverSources() throws -> [RawSource] {
+        try walkRawSources(onVisitDirectory: nil, onVisitFile: nil, cancellable: false).sources
+    }
+
+    /// Cancellable off-main source discovery (compatibility seam returning
+    /// `inventory.sources`). This is the production seam used by
     /// `RawViewModel.install`: discovery runs detached (never on the main
     /// actor), outer cancellation propagates to the worker through a
     /// cancellation handler, and the walk itself stops at incremental
@@ -86,6 +141,18 @@ public struct ProjectContext: Sendable {
         onVisitDirectory: (@Sendable (URL) -> Void)? = nil,
         onVisitFile: (@Sendable (URL) -> Void)? = nil
     ) async throws -> [RawSource] {
+        try await discoverInventoryAsync(onVisitDirectory: onVisitDirectory, onVisitFile: onVisitFile).sources
+    }
+
+    /// Cancellable off-main inventory: sources, every visited directory
+    /// (including intermediate and empty ones), and typed partial-I/O issues.
+    /// Cancellation throws `CancellationError`; partial enumeration/metadata
+    /// failures never throw — they are returned as `InventoryIssue` values
+    /// beside the accessible siblings, marking the inventory incomplete.
+    public func discoverInventoryAsync(
+        onVisitDirectory: (@Sendable (URL) -> Void)? = nil,
+        onVisitFile: (@Sendable (URL) -> Void)? = nil
+    ) async throws -> SourceInventory {
         try Task.checkCancellation()
         let worker = Task.detached(priority: .userInitiated) {
             try self.walkRawSources(onVisitDirectory: onVisitDirectory, onVisitFile: onVisitFile, cancellable: true)
@@ -101,8 +168,10 @@ public struct ProjectContext: Sendable {
         onVisitDirectory: (@Sendable (URL) -> Void)?,
         onVisitFile: (@Sendable (URL) -> Void)?,
         cancellable: Bool
-    ) throws -> [RawSource] {
+    ) throws -> SourceInventory {
         var discovered: [String: RawSource] = [:]
+        var directoryPaths: [String] = []
+        var issues: [InventoryIssue] = []
         var visitedDirectories = Set<String>()
         var filesSinceCheck = 0
 
@@ -116,13 +185,18 @@ public struct ProjectContext: Sendable {
         // prefetched: traversal decisions come from the directory read
         // itself, and per-entry metadata is requested below only for entries
         // that pass the excluded-suffix name filter.
-        var enumerationError: Error?
         guard let enumerator = FileManager.default.enumerator(
             at: rawRoot,
             includingPropertiesForKeys: nil,
             options: [],
-            errorHandler: { _, error in enumerationError = error; return false }
-        ) else {
+            errorHandler: { url, error in
+                // Partial enumeration failure: record the typed issue and keep
+                // enumerating, so accessible siblings stay in the inventory.
+                issues.append(.enumeration(path: self.relativePath(of: url) ?? url.lastPathComponent,
+                                           detail: error.localizedDescription))
+                return true
+            })
+        else {
             throw ReaderError.invalidProject
         }
         try checkpoint()
@@ -166,7 +240,14 @@ public struct ProjectContext: Sendable {
             // target size) so inspection can report the no-follow diagnostic
             // and plotting stays blocked.
             if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
-                enumerator.skipDescendants()
+                // Never `skipDescendants()` for a symlink: the prefetch-less
+                // enumerator does not descend symlinked directories by itself,
+                // and calling it while the current entry is a FILE poisons the
+                // next real directory's traversal (probed: the directory is
+                // yielded but its children are silently dropped, losing real
+                // sources). Containment of any child the enumerator might still
+                // yield is enforced by the canonical-path guard below, which
+                // skips descendants only while a real directory is current.
                 // A symlink without a supported extension or whose canonical path is not supported
                 // is not a measurement source.
                 let ext = url.pathExtension.lowercased()
@@ -194,8 +275,29 @@ public struct ProjectContext: Sendable {
                 }
                 continue
             }
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey, .fileSizeKey, .contentModificationDateKey])
-            guard let values else { continue }
+            let values: URLResourceValues
+            do {
+                values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
+            } catch {
+                // Per-entry metadata failure: typed issue, entry skipped, and
+                // its unclassified subtree is not descended (fail closed, so no
+                // child can enter the inventory without a visited parent).
+                issues.append(.metadata(path: self.relativePath(of: url) ?? url.lastPathComponent,
+                                        detail: error.localizedDescription))
+                // Prune only when the failed entry is positively known to be a
+                // directory. The entry type is exactly what the failed read
+                // could not report, so an unconfirmed entry (a FILE, or one
+                // whose type cannot be determined) must never be pruned:
+                // `skipDescendants()` while the current entry is a FILE poisons
+                // the next real directory's traversal (see the symlink branch
+                // above), silently losing its sources with no issue recorded.
+                var failedEntryIsDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &failedEntryIsDirectory),
+                   failedEntryIsDirectory.boolValue {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
             let canonical = url.resolvingSymlinksInPath().standardizedFileURL
             // A supported name whose canonical path carries an excluded
             // extension stays out of the inventory (fail-closed catch for
@@ -206,12 +308,14 @@ public struct ProjectContext: Sendable {
                 continue
             }
             if values.isDirectory == true {
-                // A descendant project carries its own data/raw marker: prune
-                // the whole subtree instead of recursing into its project data.
-                var isNestedProjectData: ObjCBool = false
-                let marker = canonical.appendingPathComponent("data/raw", isDirectory: true).path
-                if FileManager.default.fileExists(atPath: marker, isDirectory: &isNestedProjectData),
-                   isNestedProjectData.boolValue {
+                // RawView viewer metadata and snapshot namespaces are excluded
+                // from traversal for every configured data root (not only for
+                // "."), so settings, indexes and exports never become sources.
+                guard let directoryRelative = relativePath(of: canonical) else {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                if ProjectSettingsStore.isViewerMetadataNamespace(directoryRelative) {
                     enumerator.skipDescendants()
                     continue
                 }
@@ -220,8 +324,15 @@ public struct ProjectContext: Sendable {
                     continue
                 }
                 try checkpoint()
+                // Directories are inventoried directly, including intermediate
+                // and empty ones; the data root itself is known from context.
+                directoryPaths.append(directoryRelative)
                 onVisitDirectory?(canonical)
-            } else if values.isRegularFile == true, values.isReadable == true, let size = values.fileSize {
+            } else if values.isRegularFile == true, let size = values.fileSize {
+                // Readability is an inspection-time property, not a discovery
+                // filter: an unreadable regular file stays in the inventory so
+                // the indexer reports it as a typed transient failure instead
+                // of silently omitting a file that exists on disk.
                 onVisitFile?(canonical)
                 let relativePath = String(canonical.path.dropFirst(root.path.count + 1))
                 let mtime = Int64(values.contentModificationDate?.timeIntervalSince1970 ?? 0)
@@ -234,8 +345,10 @@ public struct ProjectContext: Sendable {
                 }
             }
         }
-        if let enumerationError { throw enumerationError }
-        return discovered.values.sorted { $0.relativePath < $1.relativePath }
+        return SourceInventory(
+            sources: discovered.values.sorted { $0.relativePath < $1.relativePath },
+            directoryPaths: directoryPaths.sorted(),
+            issues: issues)
     }
 }
 
@@ -313,6 +426,22 @@ enum SecureFile {
         return String(cString: buffer)
     }
 
+    /// lstat walk that stops at the first symlinked component beneath `base`.
+    /// Returns the offending path, or nil when every existing component is a
+    /// regular entry. A component that cannot be stat-ed returns nil: it
+    /// cannot be followed, and the caller's own existence/open gate fails
+    /// closed on it.
+    static func firstSymlinkedComponent(_ components: [String], beneath base: String) -> String? {
+        var path = base
+        for component in components {
+            path += "/" + component
+            var info = stat()
+            guard lstat(path, &info) == 0 else { return nil }
+            if (info.st_mode & S_IFMT) == S_IFLNK { return path }
+        }
+        return nil
+    }
+
     /// Opens `resolvedPath` without following a final-component symlink and
     /// verifies the opened object itself still sits beneath `rootPath`.
     static func openVerified(resolvedPath: String, beneath rootPath: String) throws -> FileHandle {
@@ -328,17 +457,18 @@ enum SecureFile {
 }
 
 extension SecureOpenError {
-    /// Source-local diagnostic carrying the project-relative display path.
-    func readerError(display: String) -> ReaderError {
+    /// Source-local diagnostic carrying the project-relative display path and
+    /// the configured data root the claim must stay inside.
+    func readerError(display: String, dataRoot: String) -> ReaderError {
         switch self {
         case .symlink:
             return .invalidSource("\(display): source file is a symlink or was replaced by one during open; symlinks are never followed.")
         case .missing:
-            return .invalidSource("\(display): source file is missing from this project's data/raw (it may have been moved or deleted after discovery).")
+            return .invalidSource("\(display): source file is missing from this project's data root (\"\(dataRoot)\") (it may have been moved or deleted after discovery).")
         case .unreadable:
             return .invalidSource("\(display): source file exists but is not readable.")
         case .escaped(let path):
-            return .sourceOutsideRaw(display.isEmpty ? path : display)
+            return .sourceOutsideRaw(display.isEmpty ? path : display, dataRoot: dataRoot)
         }
     }
 
