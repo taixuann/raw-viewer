@@ -2,41 +2,46 @@ import SwiftUI
 import RawViewCore
 
 /// Dedicated Workspace Tab: Filename Tokens Studio
-/// Provides an unbiased, flexible workspace for inspecting filename tokenization across cohort samples:
-/// - Delimiter configurator (supports freeform delimiters: _, -, ., whitespace, custom symbols)
-/// - Visual interactive token segment chips with role assignment
-/// - Cohort Filename Matrix: parses 10+ samples in project into aligned token columns (Excel-style)
-/// - Live category & device extraction preview
+/// Provides an ergonomic visual workspace for filename tokenization and category rule mapping:
+/// - Prominent Centered Hero Filename Canvas (16–18pt monospaced bold)
+/// - Visual pointer arrows (↓) and interactive text segment chips with synchronized color highlights
+/// - Streamlined Delimiter selector (Dropdown / Menu with None, Underscore, Hyphen, Dot, Space, Custom)
+/// - Configured Token Elements list
+/// - Cohort Token Matrix reordered to the bottom for clear project-wide validation
 struct FilenameTokensStudioView: View {
     @ObservedObject var model: EditorWorkspaceViewModel
 
     @State private var customDelimiterText: String = ""
-    @State private var selectedSampleBasename: String = ""
+    @State private var isShowingCustomInput: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbarBar
+            headerBar
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // SECTION 1: Token Delimiters & Active Sample Chips
-                    tokenConfigurationCard
+                VStack(spacing: 20) {
+                    // 1. CENTERED HERO FILENAME CANVAS (Highlight, Pointer Arrows & Direct Tagging)
+                    heroFilenameCanvas
 
-                    // SECTION 2: Cohort Token Matrix Table (Excel-like token breakdown across files)
+                    // 2. DELIMITER SELECTOR BAR
+                    delimiterBar
+
+                    // 3. CONFIGURED TOKEN ELEMENTS TABLE
+                    configuredElementsCard
+
+                    // 4. COHORT TOKEN MATRIX (Aligned at the bottom for cross-file inspection)
                     cohortTokensMatrixCard
-
-                    // SECTION 3: Mapped Semantic Category Rules
-                    mappedRulesCard
                 }
-                .padding(16)
+                .padding(20)
+                .frame(maxWidth: .infinity)
             }
         }
         .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
     }
 
-    // MARK: - Toolbar Bar
-    private var toolbarBar: some View {
+    // MARK: - Header Bar
+    private var headerBar: some View {
         HStack(spacing: 12) {
             Label("Filename Tokens & Category Rules", systemImage: "text.word.spacing")
                 .font(.system(size: 13, weight: .bold))
@@ -44,235 +49,362 @@ struct FilenameTokensStudioView: View {
             Spacer()
 
             if let target = model.selectedSource {
-                Text("Sample: \(target.url.lastPathComponent)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                    Text("Target:")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(target.url.lastPathComponent)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.04))
+                .cornerRadius(5)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 9)
         .background(Color(NSColor.controlBackgroundColor))
     }
 
-    // MARK: - Section 1: Token Configuration & Segment Chips
-    private var tokenConfigurationCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Label("Token Segmentation Rules", systemImage: "scissors")
-                        .font(.system(size: 12, weight: .bold))
-                    Spacer()
-                    Text("\(model.tokens.count) tokens detected in sample")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
+    // MARK: - 1. Hero Filename Canvas (To chình ình ở giữa với Mũi tên chỉ trỏ & Highlight màu)
+    private var heroFilenameCanvas: some View {
+        VStack(spacing: 16) {
+            // Container Header
+            HStack {
+                Label("Active Sample Filename Inspection", systemImage: "sparkles")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.primary)
 
-                // Delimiter selector
-                HStack(spacing: 10) {
-                    Text("Token Delimiters:")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                Spacer()
 
-                    HStack(spacing: 6) {
-                        delimiterToggleChip("_", label: "Underscore (_)")
-                        delimiterToggleChip("-", label: "Hyphen (-)")
-                        delimiterToggleChip(".", label: "Dot (.)")
-                        delimiterToggleChip(" ", label: "Space")
+                Text("\(model.tokens.count) segments detected")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Big Centered Filename Display
+            if let target = model.selectedSource {
+                VStack(spacing: 14) {
+                    // Monospaced Full Basename Banner (Big, clear, centered)
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(Color.accentColor)
+
+                        Text(target.url.lastPathComponent)
+                            .font(.system(size: 15, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color.primary)
+                            .multilineTextAlignment(.center)
+                            .textSelection(.enabled)
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                    )
 
-                    // Custom freeform delimiter input
-                    HStack(spacing: 4) {
-                        TextField("Custom…", text: $customDelimiterText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 10, design: .monospaced))
-                            .frame(width: 65)
-                            .onSubmit {
-                                addCustomDelimiter()
-                            }
-                        if !customDelimiterText.isEmpty {
-                            Button("Add") {
-                                addCustomDelimiter()
-                            }
-                            .font(.system(size: 9.5, weight: .bold))
-                            .controlSize(.mini)
-                        }
-                    }
-
-                    Spacer()
-                }
-
-                Divider()
-
-                // Interactive Token Chips
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Active Sample Segments (Click to map scientific role):")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-
+                    // Interactive Segments with Pointer Arrows (↓)
                     if model.tokens.isEmpty {
-                        Text("No tokens detected with current delimiters.")
+                        Text("No delimiter split. Using entire filename as 1 segment.")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(Array(model.tokens.enumerated()), id: \.offset) { idx, tok in
-                                    let assigned = model.semanticElements.first(where: { $0.token == tok || $0.index == idx })
-                                    Menu {
-                                        Button("Map as Category / Study") {
-                                            model.addElement(token: tok, role: "Study", tagName: "Category")
-                                        }
-                                        Button("Map as Device / Legend") {
-                                            model.addElement(token: tok, role: "Device ID", tagName: "Device")
-                                        }
-                                        Button("Map as Date & Time") {
-                                            model.addElement(token: tok, role: "Date & Time", tagName: "Timestamp")
-                                        }
-                                        Button("Map as Measurement Mode") {
-                                            model.addElement(token: tok, role: "Mode", tagName: "Mode")
-                                        }
-                                        Button("Map as Metadata Field") {
-                                            model.addElement(token: tok, role: "Remarks", tagName: "Remark")
-                                        }
-                                        Divider()
-                                        Button("Use as Profile ID") {
-                                            model.editor.instrumentID = tok
-                                        }
-                                        Button("Use as Display Name") {
-                                            model.editor.instrumentName = tok
-                                        }
-                                    } label: {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            HStack(spacing: 4) {
-                                                Text("Col \(idx + 1)")
-                                                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                                    .foregroundStyle(.secondary)
-                                                if let assigned = assigned {
-                                                    Circle()
-                                                        .fill(roleColor(assigned.role))
-                                                        .frame(width: 6, height: 6)
-                                                }
-                                            }
-                                            Text(tok)
-                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                            if let assigned = assigned {
-                                                Text(assigned.role)
-                                                    .font(.system(size: 8.5, weight: .bold))
-                                                    .foregroundStyle(roleColor(assigned.role))
-                                            }
-                                        }
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 6)
-                                        .background(assigned != nil ? roleColor(assigned!.role).opacity(0.12) : Color(NSColor.controlBackgroundColor))
-                                        .cornerRadius(6)
-                                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(assigned != nil ? roleColor(assigned!.role).opacity(0.4) : Color.secondary.opacity(0.2), lineWidth: 1))
+                        VStack(spacing: 6) {
+                            Text("Interactive Segments (Click arrow or word to map scientific category):")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 12) {
+                                    ForEach(Array(model.tokens.enumerated()), id: \.offset) { idx, tok in
+                                        let assigned = model.semanticElements.first(where: { $0.token == tok || $0.index == idx })
+                                        segmentColumnCard(index: idx, token: tok, assigned: assigned)
                                     }
-                                    .menuStyle(.borderlessButton)
                                 }
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 8)
                             }
                         }
                     }
                 }
+            } else {
+                Text("No sample file selected. Choose a target file from the left sidebar.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(20)
             }
-            .padding(8)
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(NSColor.windowBackgroundColor))
+                .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 
-    // MARK: - Section 2: Cohort Token Matrix Card
-    private var cohortTokensMatrixCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label("Cohort Token Matrix (Project Samples)", systemImage: "tablecells")
-                        .font(.system(size: 12, weight: .bold))
-                    Spacer()
-                    Text("Live token alignment across project files")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+    // MARK: - Segment Column with Pointer Arrow (↓) & Synchronized Color
+    @ViewBuilder
+    private func segmentColumnCard(index: Int, token: String, assigned: SemanticTokenElement?) -> some View {
+        let color = assigned != nil ? roleColor(assigned!.role) : Color.secondary
+
+        VStack(spacing: 5) {
+            // Token Word Text Chip (Big, clear, 13pt bold monospaced)
+            Menu {
+                roleAssignmentMenu(token: token)
+            } label: {
+                HStack(spacing: 5) {
+                    Text(token)
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .foregroundStyle(assigned != nil ? color : Color.primary)
                 }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(assigned != nil ? color.opacity(0.12) : Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(assigned != nil ? color.opacity(0.5) : Color.primary.opacity(0.18), lineWidth: assigned != nil ? 1.5 : 1)
+                )
+            }
+            .menuStyle(.borderlessButton)
 
-                let cohortSamples = Array(model.sources.prefix(12))
-                if cohortSamples.isEmpty {
-                    Text("No files in project to preview.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        // Header
-                        HStack(spacing: 8) {
-                            Text("Filename")
-                                .font(.system(size: 10, weight: .bold))
-                                .frame(width: 220, alignment: .leading)
-                            Text("Category")
-                                .font(.system(size: 10, weight: .bold))
-                                .frame(width: 140, alignment: .leading)
-                            Text("Device ID")
-                                .font(.system(size: 10, weight: .bold))
-                                .frame(width: 140, alignment: .leading)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.primary.opacity(0.04))
-                        .cornerRadius(4)
+            // Visual Pointer Arrow (↓)
+            Image(systemName: "arrow.down")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(assigned != nil ? color : Color.secondary.opacity(0.4))
 
-                        // Rows
-                        ForEach(cohortSamples) { src in
-                            let catIndex = model.semanticElements.first(where: { $0.role == "category" || $0.role == "Study" })?.index
-                            let devIndex = model.semanticElements.first(where: { $0.role == "legend" || $0.role == "Device ID" })?.index
-                            let rule = CategoryRule(
-                                delimiters: model.editor.tokenDelimiters,
-                                categoryIndex: catIndex,
-                                deviceIndex: devIndex,
-                                elements: model.semanticElements
-                            )
-                            let facts = CategoryRuleEngine.extract(from: src.url.lastPathComponent, rules: rule)
-
-                            HStack(spacing: 8) {
-                                Text(src.url.lastPathComponent)
-                                    .font(.system(size: 10.5, design: .monospaced))
-                                    .lineLimit(1)
-                                    .frame(width: 220, alignment: .leading)
-
-                                Text(facts.category ?? "—")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color.purple)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
-                                    .background(Color.purple.opacity(0.1))
-                                    .cornerRadius(3)
-                                    .frame(width: 140, alignment: .leading)
-
-                                Text(facts.deviceID ?? "—")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color.blue)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
-                                    .background(Color.blue.opacity(0.1))
-                                    .cornerRadius(3)
-                                    .frame(width: 140, alignment: .leading)
-
-                                Spacer()
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(src.url == model.selectedSource?.url ? Color.accentColor.opacity(0.08) : Color.clear)
-                            .cornerRadius(4)
-                        }
+            // Assigned Role Capsule Badge
+            Menu {
+                roleAssignmentMenu(token: token)
+            } label: {
+                HStack(spacing: 4) {
+                    if let assigned = assigned {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 6, height: 6)
+                        Text(assigned.role)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(color)
+                    } else {
+                        Text("Unmapped")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3.5)
+                .background(assigned != nil ? color.opacity(0.1) : Color.primary.opacity(0.04))
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(assigned != nil ? color.opacity(0.3) : Color.secondary.opacity(0.15), lineWidth: 0.8)
+                )
             }
-            .padding(8)
+            .menuStyle(.borderlessButton)
+
+            // Index Position label
+            Text("Col \(excelColumnLetter(index)) (#\(index + 1))")
+                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(minWidth: 80)
+    }
+
+    // MARK: - Role Assignment Menu
+    @ViewBuilder
+    private func roleAssignmentMenu(token: String) -> some View {
+        Button {
+            model.addElement(token: token, role: "Study", tagName: "Category")
+        } label: {
+            Label("Map as Category / Study (Purple)", systemImage: "tag.fill")
+        }
+
+        Button {
+            model.addElement(token: token, role: "Device ID", tagName: "Device")
+        } label: {
+            Label("Map as Device / Legend (Blue)", systemImage: "cpu")
+        }
+
+        Button {
+            model.addElement(token: token, role: "Date & Time", tagName: "Timestamp")
+        } label: {
+            Label("Map as Date & Time (Green)", systemImage: "calendar")
+        }
+
+        Button {
+            model.addElement(token: token, role: "Mode", tagName: "Mode")
+        } label: {
+            Label("Map as Measurement Mode (Pink)", systemImage: "waveform.path")
+        }
+
+        Button {
+            model.addElement(token: token, role: "Remarks", tagName: "Remark")
+        } label: {
+            Label("Map as Metadata Field (Orange)", systemImage: "note.text")
+        }
+
+        Divider()
+
+        Button("Use as Profile ID") {
+            model.editor.instrumentID = token
+        }
+
+        Button("Use as Display Name") {
+            model.editor.instrumentName = token
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            if let el = model.semanticElements.first(where: { $0.token == token }) {
+                model.removeElement(id: el.id)
+            }
+        } label: {
+            Label("Clear Role Mapping", systemImage: "xmark.circle")
         }
     }
 
-    // MARK: - Section 3: Mapped Rules Card
-    private var mappedRulesCard: some View {
+    // MARK: - 2. Delimiter Bar (Single Dropdown Picker with None option)
+    private var delimiterBar: some View {
+        HStack(spacing: 12) {
+            Label("Token Delimiter:", systemImage: "scissors")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Menu {
+                Button("Underscore (_)") {
+                    setSingleDelimiter("_")
+                }
+                Button("Hyphen (-)") {
+                    setSingleDelimiter("-")
+                }
+                Button("Dot (.)") {
+                    setSingleDelimiter(".")
+                }
+                Button("Space ( )") {
+                    setSingleDelimiter(" ")
+                }
+                Divider()
+                Button("None (No delimiter - whole filename)") {
+                    setNoDelimiter()
+                }
+                Divider()
+                Button("Custom Delimiter…") {
+                    isShowingCustomInput = true
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(currentDelimiterLabel)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(5)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.15), lineWidth: 1))
+            }
+            .menuStyle(.borderlessButton)
+
+            if isShowingCustomInput {
+                HStack(spacing: 4) {
+                    TextField("Enter symbol…", text: $customDelimiterText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .frame(width: 90)
+                        .onSubmit {
+                            commitCustomDelimiter()
+                        }
+
+                    Button("Apply") {
+                        commitCustomDelimiter()
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .controlSize(.small)
+
+                    Button {
+                        isShowingCustomInput = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .cornerRadius(7)
+    }
+
+    private var currentDelimiterLabel: String {
+        let delims = model.editor.tokenDelimiters
+        if delims.isEmpty {
+            return "None (Single string)"
+        } else if delims.count == 1 {
+            switch delims[0] {
+            case "_": return "Underscore (_)"
+            case "-": return "Hyphen (-)"
+            case ".": return "Dot (.)"
+            case " ": return "Space ( )"
+            default: return "Custom '\(delims[0])'"
+            }
+        } else {
+            return "\(delims.joined(separator: ", "))"
+        }
+    }
+
+    private func setSingleDelimiter(_ delim: String) {
+        model.editor.tokenDelimiters = [delim]
+        isShowingCustomInput = false
+        refreshSampleTokens()
+    }
+
+    private func setNoDelimiter() {
+        model.editor.tokenDelimiters = []
+        isShowingCustomInput = false
+        refreshSampleTokens()
+    }
+
+    private func commitCustomDelimiter() {
+        let trimmed = customDelimiterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        model.editor.tokenDelimiters = [trimmed]
+        isShowingCustomInput = false
+        customDelimiterText = ""
+        refreshSampleTokens()
+    }
+
+    private func refreshSampleTokens() {
+        if let src = model.selectedSource {
+            model.selectSource(src, preserveProfile: true)
+        }
+    }
+
+    // MARK: - 3. Configured Token Elements Table
+    private var configuredElementsCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Label("Configured Token Elements", systemImage: "list.bullet.rectangle")
+                    Label("Configured Token Elements & Semantic Roles", systemImage: "list.bullet.rectangle")
                         .font(.system(size: 12, weight: .bold))
                     Spacer()
                     Button {
@@ -288,7 +420,7 @@ struct FilenameTokensStudioView: View {
                 }
 
                 if model.semanticElements.isEmpty {
-                    Text("No elements mapped yet. Click any segment above to define category or device rules.")
+                    Text("No elements mapped yet. Click any segment above or use pointer arrow (↓) to define category or device rules.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .padding(6)
@@ -344,47 +476,105 @@ struct FilenameTokensStudioView: View {
         }
     }
 
-    @ViewBuilder
-    private func delimiterToggleChip(_ delim: String, label: String) -> some View {
-        let isSelected = model.editor.tokenDelimiters.contains(delim)
-        Button {
-            if isSelected {
-                if model.editor.tokenDelimiters.count > 1 {
-                    model.editor.tokenDelimiters.removeAll(where: { $0 == delim })
+    // MARK: - 4. Cohort Token Matrix (Reordered to the Bottom)
+    private var cohortTokensMatrixCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("Cohort Token Matrix (Project Samples Validation)", systemImage: "tablecells")
+                        .font(.system(size: 12, weight: .bold))
+                    Spacer()
+                    Text("Cross-file category and device extraction preview")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
                 }
-            } else {
-                model.editor.tokenDelimiters.append(delim)
+
+                let cohortSamples = Array(model.sources.prefix(12))
+                if cohortSamples.isEmpty {
+                    Text("No files in project to preview.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        // Header
+                        HStack(spacing: 8) {
+                            Text("Sample Filename")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 260, alignment: .leading)
+                            Text("Matched Category")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 150, alignment: .leading)
+                            Text("Matched Device ID")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 150, alignment: .leading)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.primary.opacity(0.04))
+                        .cornerRadius(4)
+
+                        // Rows
+                        ForEach(cohortSamples) { src in
+                            let catIndex = model.semanticElements.first(where: { $0.role == "category" || $0.role == "Study" })?.index
+                            let devIndex = model.semanticElements.first(where: { $0.role == "legend" || $0.role == "Device ID" })?.index
+                            let rule = CategoryRule(
+                                delimiters: model.editor.tokenDelimiters,
+                                categoryIndex: catIndex,
+                                deviceIndex: devIndex,
+                                elements: model.semanticElements
+                            )
+                            let facts = CategoryRuleEngine.extract(from: src.url.lastPathComponent, rules: rule)
+
+                            HStack(spacing: 8) {
+                                Text(src.url.lastPathComponent)
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .lineLimit(1)
+                                    .help(src.url.lastPathComponent)
+                                    .frame(width: 260, alignment: .leading)
+
+                                Text(facts.category ?? "—")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.purple)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.purple.opacity(0.1))
+                                    .cornerRadius(3)
+                                    .frame(width: 150, alignment: .leading)
+
+                                Text(facts.deviceID ?? "—")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.blue)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.1))
+                                    .cornerRadius(3)
+                                    .frame(width: 150, alignment: .leading)
+
+                                Spacer()
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(src.url == model.selectedSource?.url ? Color.accentColor.opacity(0.08) : Color.clear)
+                            .cornerRadius(4)
+                        }
+                    }
+                }
             }
-            if let src = model.selectedSource {
-                model.selectSource(src, preserveProfile: true)
-            }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 9))
-                Text(label)
-                    .font(.system(size: 10, weight: isSelected ? .bold : .regular))
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(isSelected ? Color.blue.opacity(0.15) : Color(NSColor.controlBackgroundColor))
-            .foregroundStyle(isSelected ? Color.blue : Color.primary)
-            .cornerRadius(4)
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(isSelected ? Color.blue : Color.secondary.opacity(0.2), lineWidth: 0.8))
+            .padding(8)
         }
-        .buttonStyle(.plain)
     }
 
-    private func addCustomDelimiter() {
-        let trimmed = customDelimiterText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if !model.editor.tokenDelimiters.contains(trimmed) {
-            model.editor.tokenDelimiters.append(trimmed)
-            if let src = model.selectedSource {
-                model.selectSource(src, preserveProfile: true)
-            }
+    // MARK: - Helpers
+    private func excelColumnLetter(_ index: Int) -> String {
+        var n = index
+        var result = ""
+        while n >= 0 {
+            let rem = n % 26
+            result = String(UnicodeScalar(65 + rem)!) + result
+            n = (n / 26) - 1
         }
-        customDelimiterText = ""
+        return result
     }
 
     private func roleColor(_ role: String) -> Color {
@@ -393,7 +583,7 @@ struct FilenameTokensStudioView: View {
         case "Device ID", "Library", "legend": return .blue
         case "Date & Time": return .green
         case "Remarks", "metadata": return .orange
-        default: return .secondary
+        default: return .pink
         }
     }
 }
