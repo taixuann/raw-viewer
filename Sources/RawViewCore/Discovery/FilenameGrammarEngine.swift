@@ -1,9 +1,25 @@
 import Foundation
 
+public enum GrammarFieldType: String, Sendable, Equatable, CaseIterable, Identifiable {
+    case string = "string"
+    case number = "number"
+    case datetime = "datetime"
+
+    public var id: String { rawValue }
+    public var displayName: String {
+        switch self {
+        case .string: return "String"
+        case .number: return "Number"
+        case .datetime: return "Date/Time"
+        }
+    }
+}
+
 public struct GrammarField: Sendable, Equatable, Identifiable {
     public var id: String { name }
     public var name: String
     public var role: String
+    public var type: GrammarFieldType
     public var formatHint: String
     public var stripBrackets: Bool
     public var isOptional: Bool
@@ -12,6 +28,7 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
     public init(
         name: String,
         role: String = "Remarks",
+        type: GrammarFieldType = .string,
         formatHint: String = "",
         stripBrackets: Bool = false,
         isOptional: Bool = false,
@@ -19,6 +36,7 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
     ) {
         self.name = name
         self.role = role
+        self.type = type
         self.formatHint = formatHint
         self.stripBrackets = stripBrackets
         self.isOptional = isOptional
@@ -74,12 +92,12 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
             template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]",
             description: "Default pattern for electrochemistry measurement series",
             fields: [
-                GrammarField(name: "date", role: "Date & Time", formatHint: "DDMMYY-HHmmSS"),
-                GrammarField(name: "instrument", role: "Instrument"),
-                GrammarField(name: "mode", role: "Mode"),
-                GrammarField(name: "device-id", role: "Device ID", stripBrackets: true),
-                GrammarField(name: "study", role: "Study"),
-                GrammarField(name: "remarks", role: "Remarks", stripBrackets: true)
+                GrammarField(name: "date", role: "Date & Time", type: .datetime, formatHint: "DDMMYY-HHmmSS"),
+                GrammarField(name: "instrument", role: "Instrument", type: .string),
+                GrammarField(name: "mode", role: "Mode", type: .string),
+                GrammarField(name: "device-id", role: "Device ID", type: .string, stripBrackets: true),
+                GrammarField(name: "study", role: "Study", type: .string),
+                GrammarField(name: "remarks", role: "Remarks", type: .string, stripBrackets: true)
             ],
             isDefault: true
         ),
@@ -89,10 +107,10 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
             template: "{date}_{study}_{device-id}_{remarks}",
             description: "Underscore-separated naming convention",
             fields: [
-                GrammarField(name: "date", role: "Date & Time", formatHint: "YYYYMMDD"),
-                GrammarField(name: "study", role: "Study"),
-                GrammarField(name: "device-id", role: "Device ID"),
-                GrammarField(name: "remarks", role: "Remarks")
+                GrammarField(name: "date", role: "Date & Time", type: .datetime, formatHint: "YYYYMMDD"),
+                GrammarField(name: "study", role: "Study", type: .string),
+                GrammarField(name: "device-id", role: "Device ID", type: .string),
+                GrammarField(name: "remarks", role: "Remarks", type: .string)
             ],
             isDefault: false
         )
@@ -153,6 +171,44 @@ public enum GrammarCompileError: Error, LocalizedError {
 public enum FilenameGrammarEngine {
     public static let relativePath = ".rawviewer/view/grammar.yaml"
 
+    private static func patternForField(_ field: GrammarField?, hasTrailing: Bool) -> String {
+        guard let field = field else {
+            return hasTrailing ? "(.+?)" : "(.+)"
+        }
+        switch field.type {
+        case .number:
+            let fmt = field.formatHint.trimmingCharacters(in: .whitespaces)
+            if fmt == "01" || fmt.lowercased().contains("2-digit") {
+                return "(\\d{2})"
+            } else if fmt == "001" || fmt.lowercased().contains("3-digit") {
+                return "(\\d{3})"
+            } else if fmt == "0.0" || fmt.lowercased() == "decimal" {
+                return "(\\d+(?:\\.\\d+)?)"
+            } else {
+                return "(\\d+)"
+            }
+        case .datetime:
+            let fmt = field.formatHint.trimmingCharacters(in: .whitespaces)
+            if fmt == "yyyyMMdd" {
+                return "(\\d{8})"
+            } else if fmt == "yyMMdd" {
+                return "(\\d{6})"
+            } else if fmt == "yyyy-MM-dd" {
+                return "(\\d{4}-\\d{2}-\\d{2})"
+            } else if fmt == "HHmmss" {
+                return "(\\d{6})"
+            } else if fmt == "HHmm" {
+                return "(\\d{4})"
+            } else if fmt == "DDMMYY-HHmmSS" || fmt == "yyMMdd-HHmmss" {
+                return "(\\d{6}-\\d{6})"
+            } else {
+                return hasTrailing ? "(.+?)" : "(.+)"
+            }
+        case .string:
+            return hasTrailing ? "(.+?)" : "(.+)"
+        }
+    }
+
     /// Compiles a human-readable template like `{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]`
     /// into a regular expression and an ordered list of variable names.
     public static func compile(template: String, fields: [GrammarField] = []) throws -> (regex: NSRegularExpression, fieldNames: [String]) {
@@ -188,19 +244,20 @@ public enum FilenameGrammarEngine {
                 }
 
                 let hasTrailing = (nextIndex < trimmed.endIndex)
+                let captureGroup = patternForField(fieldConfig, hasTrailing: hasTrailing || !trailingEnclosure.isEmpty)
 
                 if isOptional {
                     let escapedLeading = leadingLiteral.isEmpty ? "" : NSRegularExpression.escapedPattern(for: leadingLiteral)
                     let escapedTrailing = trailingEnclosure.isEmpty ? "" : NSRegularExpression.escapedPattern(for: trailingEnclosure)
-                    pattern += "(?:\(escapedLeading)(.+?)\(escapedTrailing))?"
+                    pattern += "(?:\(escapedLeading)\(captureGroup)\(escapedTrailing))?"
                 } else {
                     if !leadingLiteral.isEmpty {
                         pattern += NSRegularExpression.escapedPattern(for: leadingLiteral)
                     }
                     if !trailingEnclosure.isEmpty {
-                        pattern += "(.+?)" + NSRegularExpression.escapedPattern(for: trailingEnclosure)
+                        pattern += captureGroup + NSRegularExpression.escapedPattern(for: trailingEnclosure)
                     } else {
-                        pattern += hasTrailing ? "(.+?)" : "(.+)"
+                        pattern += captureGroup
                     }
                 }
 
@@ -323,6 +380,7 @@ public enum FilenameGrammarEngine {
                 for f in g.fields {
                     lines.append("      - name: \"\(yamlEscape(f.name))\"")
                     lines.append("        role: \"\(yamlEscape(f.role))\"")
+                    lines.append("        type: \"\(yamlEscape(f.type.rawValue))\"")
                     lines.append("        format_hint: \"\(yamlEscape(f.formatHint))\"")
                     lines.append("        strip_brackets: \(f.stripBrackets)")
                     lines.append("        is_optional: \(f.isOptional)")
@@ -366,6 +424,8 @@ public enum FilenameGrammarEngine {
                     for fNode in fieldList {
                         guard let fName = fNode.value(for: "name")?.scalarValue else { continue }
                         let fRole = fNode.value(for: "role")?.scalarValue ?? "Remarks"
+                        let fTypeRaw = fNode.value(for: "type")?.scalarValue ?? ""
+                        let fType = GrammarFieldType(rawValue: fTypeRaw) ?? .string
                         let fHint = fNode.value(for: "format_hint")?.scalarValue ?? ""
                         let fStrip = (fNode.value(for: "strip_brackets")?.scalarValue?.lowercased() == "true")
                         let fOpt = (fNode.value(for: "is_optional")?.scalarValue?.lowercased() == "true")
@@ -373,6 +433,7 @@ public enum FilenameGrammarEngine {
                         fields.append(GrammarField(
                             name: fName,
                             role: fRole,
+                            type: fType,
                             formatHint: fHint,
                             stripBrackets: fStrip,
                             isOptional: fOpt,

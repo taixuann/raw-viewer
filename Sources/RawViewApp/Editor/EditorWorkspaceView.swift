@@ -396,9 +396,16 @@ final class EditorWorkspaceViewModel: ObservableObject {
         objectWillChange.send()
     }
 
+    func renameActiveGrammar(to newName: String) {
+        guard let idx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) else { return }
+        grammarCatalog.grammars[idx].name = newName
+        objectWillChange.send()
+    }
+
     func updateGrammarField(
         name: String,
         role: String,
+        type: GrammarFieldType = .string,
         formatHint: String = "",
         stripBrackets: Bool = false,
         isOptional: Bool = false,
@@ -407,6 +414,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
         guard let gIdx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) else { return }
         if let fIdx = grammarCatalog.grammars[gIdx].fields.firstIndex(where: { $0.name == name }) {
             grammarCatalog.grammars[gIdx].fields[fIdx].role = role
+            grammarCatalog.grammars[gIdx].fields[fIdx].type = type
             grammarCatalog.grammars[gIdx].fields[fIdx].formatHint = formatHint
             grammarCatalog.grammars[gIdx].fields[fIdx].stripBrackets = stripBrackets
             grammarCatalog.grammars[gIdx].fields[fIdx].isOptional = isOptional
@@ -415,6 +423,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
             grammarCatalog.grammars[gIdx].fields.append(GrammarField(
                 name: name,
                 role: role,
+                type: type,
                 formatHint: formatHint,
                 stripBrackets: stripBrackets,
                 isOptional: isOptional,
@@ -423,6 +432,25 @@ final class EditorWorkspaceViewModel: ObservableObject {
         }
         recalculateGrammarExtraction()
         objectWillChange.send()
+    }
+
+    /// Ordered list of all variable names declared in activeTemplate
+    var templateVariableNames: [String] {
+        var names: [String] = []
+        var scan = activeTemplate.startIndex
+        while scan < activeTemplate.endIndex {
+            if let open = activeTemplate[scan...].firstIndex(of: "{"),
+               let close = activeTemplate[open...].firstIndex(of: "}") {
+                let name = String(activeTemplate[activeTemplate.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty && !names.contains(name) {
+                    names.append(name)
+                }
+                scan = activeTemplate.index(after: close)
+            } else {
+                break
+            }
+        }
+        return names
     }
 
     func recalculateGrammarExtraction() {
@@ -442,21 +470,52 @@ final class EditorWorkspaceViewModel: ObservableObject {
         var effective = activeGrammar
         effective.template = activeTemplate
 
-        do {
-            let (_, names) = try FilenameGrammarEngine.compile(template: activeTemplate, fields: effective.fields)
-            for name in names {
-                if !effective.fields.contains(where: { $0.name == name }) {
-                    let role = name.lowercased().contains("date") ? "Date & Time" :
-                               name.lowercased().contains("device") ? "Device ID" :
-                               name.lowercased().contains("instrument") ? "Instrument" :
-                               name.lowercased().contains("mode") ? "Mode" :
-                               name.lowercased().contains("study") ? "Study" : "Remarks"
-                    effective.fields.append(GrammarField(name: name, role: role))
+        // Ensure fields exist for all variables currently typed in activeTemplate
+        for name in templateVariableNames {
+            if !effective.fields.contains(where: { $0.name == name }) {
+                let lowerName = name.lowercased()
+                let role: String
+                let type: GrammarFieldType
+                let format: String
+
+                if lowerName.contains("date") || lowerName.contains("time") {
+                    role = "Date & Time"
+                    type = .datetime
+                    format = "yyMMdd"
+                } else if lowerName.contains("batch") || lowerName.contains("scan") || lowerName.contains("cycle") || lowerName.contains("num") || lowerName.contains("index") {
+                    role = "Remarks"
+                    type = .number
+                    format = "01"
+                } else if lowerName.contains("device") {
+                    role = "Device ID"
+                    type = .string
+                    format = ""
+                } else if lowerName.contains("instrument") {
+                    role = "Instrument"
+                    type = .string
+                    format = ""
+                } else if lowerName.contains("mode") {
+                    role = "Mode"
+                    type = .string
+                    format = ""
+                } else if lowerName.contains("study") {
+                    role = "Study"
+                    type = .string
+                    format = ""
+                } else {
+                    role = "Remarks"
+                    type = .string
+                    format = ""
                 }
+                effective.fields.append(GrammarField(name: name, role: role, type: type, formatHint: format))
             }
-            if let idx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) {
-                grammarCatalog.grammars[idx].fields = effective.fields
-            }
+        }
+        if let idx = grammarCatalog.grammars.firstIndex(where: { $0.id == activeGrammarID }) {
+            grammarCatalog.grammars[idx].fields = effective.fields
+        }
+
+        do {
+            _ = try FilenameGrammarEngine.compile(template: activeTemplate, fields: effective.fields)
             grammarMatchError = nil
         } catch {
             grammarMatchError = error.localizedDescription

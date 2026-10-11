@@ -129,4 +129,32 @@ struct FilenameGrammarEngineTests {
         #expect(res2.extractedFields["study"] == "deposition")
         #expect(res2.extractedFields["remarks"] == nil)
     }
+
+    @Test func numberAndDatetimeFormatMatching() throws {
+        let template = "{date}_batch_{batch}_scan_{scan}_{conc}mM"
+        let grammar = FilenameGrammar(
+            id: "num-test",
+            name: "Number & Date Formatting Test",
+            template: template,
+            fields: [
+                GrammarField(name: "date", role: "Date & Time", type: .datetime, formatHint: "yyyyMMdd"),
+                GrammarField(name: "batch", role: "Remarks", type: .number, formatHint: "01"),
+                GrammarField(name: "scan", role: "Remarks", type: .number, formatHint: "001"),
+                GrammarField(name: "conc", role: "Remarks", type: .number, formatHint: "0.0")
+            ]
+        )
+
+        let matchingFilename = "20261012_batch_05_scan_003_12.5mM.csv"
+        let res1 = FilenameGrammarEngine.extract(from: matchingFilename, grammar: grammar)
+        #expect(res1.isMatched == true)
+        #expect(res1.extractedFields["date"] == "20261012")
+        #expect(res1.extractedFields["batch"] == "05")
+        #expect(res1.extractedFields["scan"] == "003")
+        #expect(res1.extractedFields["conc"] == "12.5")
+
+        // Batch with single digit should NOT match 2-digit "01" pattern:
+        let nonMatchingBatch = "20261012_batch_5_scan_003_12.5mM.csv"
+        let res2 = FilenameGrammarEngine.extract(from: nonMatchingBatch, grammar: grammar)
+        #expect(res2.isMatched == false)
+    }
 }

@@ -69,11 +69,12 @@ struct FilenameTokensStudioView: View {
     // MARK: - BLOCK 1: Unified Grammar Definition & Pattern Studio Card
     private var unifiedGrammarCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 1.1 Card Header: Active Grammar, Renaming, and Save Action
-            HStack(spacing: 10) {
-                Label("Grammar Profile:", systemImage: "character.textbox")
+            // 1.1 Card Header: Active Grammar, Inline Renaming, and Save Action
+            HStack(spacing: 8) {
+                Label("Profile:", systemImage: "character.textbox")
                     .font(.system(size: 12, weight: .bold))
 
+                // Profile Selector Menu
                 Picker("", selection: Binding(
                     get: { model.activeGrammarID },
                     set: { model.selectGrammar(id: $0) }
@@ -83,7 +84,28 @@ struct FilenameTokensStudioView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(width: 220)
+                .frame(width: 170)
+
+                // Inline Profile Name Editor
+                HStack(spacing: 4) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    TextField("Profile Name", text: Binding(
+                        get: { model.grammarCatalog.grammars.first(where: { $0.id == model.activeGrammarID })?.name ?? "" },
+                        set: { newName in
+                            model.renameActiveGrammar(to: newName)
+                        }
+                    ))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5, weight: .medium))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(5)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                .frame(minWidth: 160, maxWidth: 260)
 
                 Button {
                     newGrammarName = "New Scientific Convention"
@@ -171,38 +193,39 @@ struct FilenameTokensStudioView: View {
                     )
 
                     // Aligned Segment Inspection Chips with Down Arrows (↓)
-                    if !model.sampleExtractedFacts.extractedFields.isEmpty {
+                    if !model.templateVariableNames.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 10) {
                                 let activeGrammar = model.grammarCatalog.grammars.first(where: { $0.id == model.activeGrammarID })
-                                ForEach(Array(model.sampleExtractedFacts.extractedFields.keys.sorted()), id: \.self) { varName in
-                                    let val = model.sampleExtractedFacts.extractedFields[varName] ?? ""
+                                ForEach(model.templateVariableNames, id: \.self) { varName in
+                                    let val = model.sampleExtractedFacts.extractedFields[varName]
                                     let field = activeGrammar?.fields.first(where: { $0.name == varName })
                                     let role = field?.role ?? "Remarks"
                                     let isOpt = field?.isOptional ?? false
 
                                     VStack(spacing: 4) {
                                         // Extracted Value Chip
-                                        Text(val)
+                                        Text(val ?? "—")
                                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                            .foregroundStyle(val != nil ? Color.primary : Color.secondary)
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 4)
                                             .background(Color(NSColor.controlBackgroundColor))
                                             .cornerRadius(4)
-                                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.15), lineWidth: 1))
+                                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(val != nil ? Color.primary.opacity(0.18) : Color.orange.opacity(0.4), lineWidth: 1))
 
                                         // Down Pointer Arrow
                                         Image(systemName: "arrow.down")
                                             .font(.system(size: 10, weight: .bold))
-                                            .foregroundStyle(Color.secondary.opacity(0.7))
+                                            .foregroundStyle(val != nil ? Color.secondary.opacity(0.7) : Color.orange.opacity(0.6))
 
                                         // Pattern Variable Label
                                         HStack(spacing: 3) {
                                             Text("{\(varName)}")
                                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                                             if isOpt {
-                                                Text("?")
-                                                    .font(.system(size: 9, weight: .bold))
+                                                Text("opt")
+                                                    .font(.system(size: 8.5, weight: .semibold))
                                                     .foregroundStyle(.secondary)
                                             }
                                         }
@@ -230,7 +253,7 @@ struct FilenameTokensStudioView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("Literal delimiters (_, ., -, []) are matched exactly.")
+                    Text("Any text in {name} creates a dynamic variable. Brackets [ ] or delimiters . _ - are preserved.")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
@@ -263,7 +286,7 @@ struct FilenameTokensStudioView: View {
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 1))
 
-                // Restrained Variable Insertion Chips
+                // Variable Insertion Chips
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         Text("Add Token:")
@@ -284,14 +307,14 @@ struct FilenameTokensStudioView: View {
 
             Divider()
 
-            // 1.4 Variables Configuration Table (Role, Optional/Required, and Search Filter)
+            // 1.4 Variables Configuration Table (Role, Data Type, Format, Optional/Required, and Search Filter)
             VStack(alignment: .leading, spacing: 8) {
                 Text("Variable Role & Explorer Filter Configuration:")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
 
-                if model.sampleExtractedFacts.extractedFields.isEmpty {
-                    Text("No variables active. Edit the pattern template above to define filename variables.")
+                if model.templateVariableNames.isEmpty {
+                    Text("No variables declared. Type {variable_name} in the pattern template above.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 6)
@@ -301,19 +324,25 @@ struct FilenameTokensStudioView: View {
                         HStack(spacing: 8) {
                             Text("Variable")
                                 .font(.system(size: 10, weight: .bold))
-                                .frame(width: 130, alignment: .leading)
+                                .frame(width: 115, alignment: .leading)
                             Text("Sample Value")
                                 .font(.system(size: 10, weight: .bold))
-                                .frame(width: 190, alignment: .leading)
+                                .frame(width: 135, alignment: .leading)
                             Text("Scientific Role")
                                 .font(.system(size: 10, weight: .bold))
-                                .frame(width: 140, alignment: .leading)
-                            Text("Rule")
+                                .frame(width: 120, alignment: .leading)
+                            Text("Data Type")
                                 .font(.system(size: 10, weight: .bold))
                                 .frame(width: 100, alignment: .leading)
+                            Text("Format / Pattern")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 125, alignment: .leading)
+                            Text("Rule")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 90, alignment: .leading)
                             Text("Filter in Explorer")
                                 .font(.system(size: 10, weight: .bold))
-                                .frame(width: 120, alignment: .leading)
+                                .frame(width: 110, alignment: .leading)
                             Spacer()
                         }
                         .padding(.horizontal, 8)
@@ -323,10 +352,11 @@ struct FilenameTokensStudioView: View {
 
                         // Rows
                         let activeGrammar = model.grammarCatalog.grammars.first(where: { $0.id == model.activeGrammarID })
-                        ForEach(Array(model.sampleExtractedFacts.extractedFields.keys.sorted()), id: \.self) { varName in
-                            let val = model.sampleExtractedFacts.extractedFields[varName] ?? ""
+                        ForEach(model.templateVariableNames, id: \.self) { varName in
+                            let val = model.sampleExtractedFacts.extractedFields[varName]
                             let field = activeGrammar?.fields.first(where: { $0.name == varName })
                             let currentRole = field?.role ?? "Remarks"
+                            let currentType = field?.type ?? .string
                             let currentFormat = field?.formatHint ?? ""
                             let currentStrip = field?.stripBrackets ?? false
                             let currentOpt = field?.isOptional ?? false
@@ -336,14 +366,14 @@ struct FilenameTokensStudioView: View {
                                 // Variable Token
                                 Text("{\(varName)}")
                                     .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                    .frame(width: 130, alignment: .leading)
+                                    .frame(width: 115, alignment: .leading)
 
                                 // Sample Value
-                                Text(val.isEmpty ? "(not present)" : val)
+                                Text(val ?? "(not in sample)")
                                     .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(val.isEmpty ? .secondary : .primary)
+                                    .foregroundStyle(val != nil ? Color.primary : Color.secondary)
                                     .lineLimit(1)
-                                    .frame(width: 190, alignment: .leading)
+                                    .frame(width: 135, alignment: .leading)
 
                                 // Role Picker
                                 Picker("", selection: Binding(
@@ -352,6 +382,7 @@ struct FilenameTokensStudioView: View {
                                         model.updateGrammarField(
                                             name: varName,
                                             role: newRole,
+                                            type: currentType,
                                             formatHint: currentFormat,
                                             stripBrackets: currentStrip,
                                             isOptional: currentOpt,
@@ -365,7 +396,132 @@ struct FilenameTokensStudioView: View {
                                 }
                                 .pickerStyle(.menu)
                                 .font(.system(size: 10))
-                                .frame(width: 140)
+                                .frame(width: 120)
+
+                                // Data Type Picker
+                                Picker("", selection: Binding(
+                                    get: { currentType },
+                                    set: { newType in
+                                        let defaultFmt = newType == .number ? (currentFormat.isEmpty ? "01" : currentFormat) :
+                                                         newType == .datetime ? (currentFormat.isEmpty ? "yyMMdd" : currentFormat) : ""
+                                        model.updateGrammarField(
+                                            name: varName,
+                                            role: currentRole,
+                                            type: newType,
+                                            formatHint: defaultFmt,
+                                            stripBrackets: currentStrip,
+                                            isOptional: currentOpt,
+                                            isFacet: currentFacet
+                                        )
+                                    }
+                                )) {
+                                    ForEach(GrammarFieldType.allCases) { t in
+                                        Text(t.displayName).tag(t)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .font(.system(size: 10))
+                                .frame(width: 100)
+
+                                // Format / Pattern Cell
+                                Group {
+                                    if currentType == .number {
+                                        HStack(spacing: 2) {
+                                            TextField("#", text: Binding(
+                                                get: { currentFormat.isEmpty ? "#" : currentFormat },
+                                                set: { newFmt in
+                                                    model.updateGrammarField(
+                                                        name: varName,
+                                                        role: currentRole,
+                                                        type: currentType,
+                                                        formatHint: newFmt,
+                                                        stripBrackets: currentStrip,
+                                                        isOptional: currentOpt,
+                                                        isFacet: currentFacet
+                                                    )
+                                                }
+                                            ))
+                                            .textFieldStyle(.plain)
+                                            .font(.system(size: 10.5, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2.5)
+                                            .background(Color(NSColor.controlBackgroundColor))
+                                            .cornerRadius(3)
+                                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+
+                                            Menu {
+                                                Button("Any Integer (#)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "#", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                                Button("2-Digit (01, 02)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "01", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                                Button("3-Digit (001, 002)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "001", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                                Button("Decimal (0.0)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "0.0", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                            } label: {
+                                                Image(systemName: "chevron.up.chevron.down")
+                                                    .font(.system(size: 8))
+                                            }
+                                            .menuStyle(.borderlessButton)
+                                            .frame(width: 14)
+                                        }
+                                        .frame(width: 125)
+                                    } else if currentType == .datetime {
+                                        HStack(spacing: 2) {
+                                            TextField("yyMMdd", text: Binding(
+                                                get: { currentFormat.isEmpty ? "yyMMdd" : currentFormat },
+                                                set: { newFmt in
+                                                    model.updateGrammarField(
+                                                        name: varName,
+                                                        role: currentRole,
+                                                        type: currentType,
+                                                        formatHint: newFmt,
+                                                        stripBrackets: currentStrip,
+                                                        isOptional: currentOpt,
+                                                        isFacet: currentFacet
+                                                    )
+                                                }
+                                            ))
+                                            .textFieldStyle(.plain)
+                                            .font(.system(size: 10.5, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2.5)
+                                            .background(Color(NSColor.controlBackgroundColor))
+                                            .cornerRadius(3)
+                                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+
+                                            Menu {
+                                                Button("yyMMdd (261012)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "yyMMdd", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                                Button("yyyyMMdd (20261012)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "yyyyMMdd", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                                Button("yyyy-MM-dd (2026-10-12)") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "yyyy-MM-dd", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                                Button("DDMMYY-HHmmSS") {
+                                                    model.updateGrammarField(name: varName, role: currentRole, type: currentType, formatHint: "DDMMYY-HHmmSS", stripBrackets: currentStrip, isOptional: currentOpt, isFacet: currentFacet)
+                                                }
+                                            } label: {
+                                                Image(systemName: "chevron.up.chevron.down")
+                                                    .font(.system(size: 8))
+                                            }
+                                            .menuStyle(.borderlessButton)
+                                            .frame(width: 14)
+                                        }
+                                        .frame(width: 125)
+                                    } else {
+                                        Text("—")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 125, alignment: .center)
+                                    }
+                                }
 
                                 // Required vs Optional Picker
                                 Picker("", selection: Binding(
@@ -374,6 +530,7 @@ struct FilenameTokensStudioView: View {
                                         model.updateGrammarField(
                                             name: varName,
                                             role: currentRole,
+                                            type: currentType,
                                             formatHint: currentFormat,
                                             stripBrackets: currentStrip,
                                             isOptional: newOpt,
@@ -386,7 +543,7 @@ struct FilenameTokensStudioView: View {
                                 }
                                 .pickerStyle(.menu)
                                 .font(.system(size: 10))
-                                .frame(width: 100)
+                                .frame(width: 90)
 
                                 // Search Filter Checkbox
                                 Toggle("Facet Filter", isOn: Binding(
@@ -395,6 +552,7 @@ struct FilenameTokensStudioView: View {
                                         model.updateGrammarField(
                                             name: varName,
                                             role: currentRole,
+                                            type: currentType,
                                             formatHint: currentFormat,
                                             stripBrackets: currentStrip,
                                             isOptional: currentOpt,
@@ -404,7 +562,7 @@ struct FilenameTokensStudioView: View {
                                 ))
                                 .toggleStyle(.checkbox)
                                 .font(.system(size: 10))
-                                .frame(width: 120, alignment: .leading)
+                                .frame(width: 110, alignment: .leading)
 
                                 Spacer()
                             }
