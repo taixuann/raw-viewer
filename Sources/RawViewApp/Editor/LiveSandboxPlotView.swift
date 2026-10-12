@@ -153,20 +153,60 @@ struct LiveSandboxPlotView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Label("Live Sandbox Studio", systemImage: "waveform.path.ecg")
-                    .font(.system(size: 11, weight: .bold))
+                // 1. X & Y Axis Pickers
+                let plottableCols = columns.filter { !$0.isSkipped && $0.role != .progression && $0.progressionType == nil }
+                if !plottableCols.isEmpty {
+                    let activeXCount = plottableCols.filter { $0.isXAxis || $0.role == .x }.count
+                    let activeYCount = plottableCols.filter { $0.isYAxis || $0.role == .y }.count
 
-                Spacer()
+                    // X: Axis Picker (blue accent)
+                    HStack(spacing: 4) {
+                        Text("X:")
+                            .font(AppTypography.toolbarLabel(uiFontSize: uiFontSize))
+                            .foregroundStyle(.blue)
+                        Picker("", selection: Binding(
+                            get: { selectedXCol ?? (columns.indices.contains(activeXIndex) ? columns[activeXIndex].name : "") },
+                            set: { selectedXCol = $0 }
+                        )) {
+                            ForEach(plottableCols) { col in
+                                let isDef = col.isDefaultX || (activeXCount == 1 && (col.isXAxis || col.role == .x))
+                                Text("\(col.unit.isEmpty ? col.label : "\(col.label) (\(col.unit))")\(isDef ? " ★" : "")").tag(col.name)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .font(AppTypography.toolbarLabel(uiFontSize: uiFontSize))
+                        .frame(height: 24)
+                        .frame(maxWidth: 140)
+                    }
 
-                // 1. Progression Dimension Selector & Filtering Controls
+                    // Y: Axis Picker (green accent)
+                    HStack(spacing: 4) {
+                        Text("Y:")
+                            .font(AppTypography.toolbarLabel(uiFontSize: uiFontSize))
+                            .foregroundStyle(.green)
+                        Picker("", selection: Binding(
+                            get: { selectedYCol ?? (columns.indices.contains(activeYIndex) ? columns[activeYIndex].name : "") },
+                            set: { selectedYCol = $0 }
+                        )) {
+                            ForEach(plottableCols) { col in
+                                let isDef = col.isDefaultY || (activeYCount == 1 && (col.isYAxis || col.role == .y))
+                                Text("\(col.unit.isEmpty ? col.label : "\(col.label) (\(col.unit))")\(isDef ? " ★" : "")").tag(col.name)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .font(AppTypography.toolbarLabel(uiFontSize: uiFontSize))
+                        .frame(height: 24)
+                        .frame(maxWidth: 140)
+                    }
+                }
+
+                // 2. Progression Controls (purple accent)
                 let progColumns = columns.enumerated().filter { !$0.element.isSkipped && ($0.element.role == .progression || $0.element.name.lowercased().contains("scan") || $0.element.name.lowercased().contains("cycle") || $0.element.name.lowercased().contains("time") || $0.element.label.lowercased().contains("scan") || $0.element.label.lowercased().contains("cycle") || $0.element.label.lowercased().contains("time")) }
                 if !progColumns.isEmpty {
-                    HStack(spacing: 5) {
-                        Image(systemName: isContinuousMode ? "timer" : "clock.arrow.circlepath")
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(Color.purple)
-
-                        // Dimension Picker: [None | Scan | Time ...]
+                    HStack(spacing: 6) {
+                        // Dimension Menu: [ ⏱️ #5 Scan ▾ ]
                         Menu {
                             Button {
                                 customProgressionColIndex = -1
@@ -202,16 +242,18 @@ struct LiveSandboxPlotView: View {
                                 }
                             }
                         } label: {
-                            HStack(spacing: 3) {
+                            HStack(spacing: 4) {
+                                Image(systemName: isContinuousMode ? "timer" : "clock.arrow.circlepath")
+                                    .font(AppTypography.caption(uiFontSize: uiFontSize))
                                 Text(progressionButtonLabel)
-                                    .font(.system(size: 9.5, weight: .bold))
-                                    .foregroundStyle(Color.purple)
+                                    .font(AppTypography.captionBold(uiFontSize: uiFontSize))
                                 Image(systemName: "chevron.down")
-                                    .font(.system(size: 6.5))
+                                    .font(AppTypography.chevron(uiFontSize: uiFontSize))
                                     .foregroundStyle(Color.purple.opacity(0.8))
                             }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2.5)
+                            .foregroundStyle(Color.purple)
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
                             .background(Capsule().fill(Color.purple.opacity(0.10)))
                             .overlay(Capsule().stroke(Color.purple.opacity(0.35), lineWidth: 0.8))
                         }
@@ -219,7 +261,7 @@ struct LiveSandboxPlotView: View {
 
                         // 2. Behavior Switcher & Dual Filtering Controls
                         if activeProgressionColumn != nil {
-                            // Behavior Switcher (Continuous vs Discrete)
+                            // Behavior Switcher: [ Continuous | Discrete ]
                             Picker("", selection: Binding(
                                 get: { isContinuousMode },
                                 set: { newContinuous in
@@ -231,36 +273,35 @@ struct LiveSandboxPlotView: View {
                                 Text("Discrete").tag(false)
                             }
                             .pickerStyle(.segmented)
-                            .controlSize(.mini)
-                            .frame(width: 140)
+                            .controlSize(.small)
+                            .frame(height: 24)
+                            .frame(width: 155)
 
                             if isContinuousMode {
                                 // CONTINUOUS TIME RANGE MODE: Start & Stop Inputs + Presets
-                                HStack(spacing: 3) {
+                                HStack(spacing: 4) {
                                     Text("From:")
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(AppTypography.caption(uiFontSize: uiFontSize))
                                         .foregroundStyle(.secondary)
                                     TextField("0", text: $timeStartText)
-                                        .font(.system(size: 9.5, design: .monospaced))
+                                        .font(AppTypography.mono(size: 10, uiFontSize: uiFontSize))
                                         .textFieldStyle(.plain)
-                                        .frame(width: 36)
-                                        .padding(.horizontal, 3)
-                                        .padding(.vertical, 1.5)
-                                        .background(RoundedRectangle(cornerRadius: 3).fill(Color(NSColor.textBackgroundColor)))
-                                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.purple.opacity(0.3), lineWidth: 0.8))
+                                        .frame(width: 40, height: 24)
+                                        .padding(.horizontal, 4)
+                                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(NSColor.textBackgroundColor)))
+                                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.purple.opacity(0.3), lineWidth: 0.8))
                                         .onSubmit { recomputePlotPoints() }
 
                                     Text("to:")
-                                        .font(.system(size: 9, weight: .semibold))
+                                        .font(AppTypography.caption(uiFontSize: uiFontSize))
                                         .foregroundStyle(.secondary)
                                     TextField("End", text: $timeStopText)
-                                        .font(.system(size: 9.5, design: .monospaced))
+                                        .font(AppTypography.mono(size: 10, uiFontSize: uiFontSize))
                                         .textFieldStyle(.plain)
-                                        .frame(width: 36)
-                                        .padding(.horizontal, 3)
-                                        .padding(.vertical, 1.5)
-                                        .background(RoundedRectangle(cornerRadius: 3).fill(Color(NSColor.textBackgroundColor)))
-                                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.purple.opacity(0.3), lineWidth: 0.8))
+                                        .frame(width: 40, height: 24)
+                                        .padding(.horizontal, 4)
+                                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(NSColor.textBackgroundColor)))
+                                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.purple.opacity(0.3), lineWidth: 0.8))
                                         .onSubmit { recomputePlotPoints() }
 
                                     Menu {
@@ -286,11 +327,13 @@ struct LiveSandboxPlotView: View {
                                         }
                                     } label: {
                                         Image(systemName: "slider.horizontal.2.square")
-                                            .font(.system(size: 8))
+                                            .font(AppTypography.caption(uiFontSize: uiFontSize))
                                             .foregroundStyle(Color.purple)
+                                            .frame(height: 24)
                                     }
                                     .menuStyle(.borderlessButton)
                                 }
+                                .frame(height: 24)
                             } else {
                                 // DISCRETE CYCLE / SCAN MODE: Multi-Select Pill Menu + Palette/Sweep Toggle
                                 if !availableProgressionValues.isEmpty {
@@ -376,78 +419,41 @@ struct LiveSandboxPlotView: View {
                                             }
                                         }
                                     } label: {
-                                        HStack(spacing: 3) {
+                                        HStack(spacing: 4) {
                                             Text(progressionFilterSummary)
-                                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                                .font(AppTypography.mono(size: 10, weight: .semibold, uiFontSize: uiFontSize))
                                             Image(systemName: "chevron.down")
-                                                .font(.system(size: 6.5))
+                                                .font(AppTypography.chevron(uiFontSize: uiFontSize))
                                         }
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
+                                        .padding(.horizontal, 8)
+                                        .frame(height: 24)
                                         .background(Capsule().fill(Color.purple.opacity(0.12)))
                                         .overlay(Capsule().stroke(Color.purple.opacity(0.35), lineWidth: 0.8))
                                     }
                                     .menuStyle(.borderlessButton)
                                 }
 
-                                // Discrete Color Palette vs Sweep Toggle
+                                // Color Style: [ Palette | Sweep ]
                                 Picker("", selection: $discreteColorMode) {
                                     Label("Palette", systemImage: "paintpalette").tag(ProgressionColorMode.multiColor)
                                     Label("Sweep", systemImage: "swatchpalette").tag(ProgressionColorMode.sweep)
                                 }
                                 .pickerStyle(.segmented)
-                                .controlSize(.mini)
-                                .frame(width: 130)
+                                .controlSize(.small)
+                                .frame(height: 24)
+                                .frame(width: 150)
                             }
                         }
                     }
                 }
 
-                let plottableCols = columns.filter { !$0.isSkipped && $0.role != .progression && $0.progressionType == nil }
-                if !plottableCols.isEmpty {
-                    let activeXCount = plottableCols.filter { $0.isXAxis || $0.role == .x }.count
-                    let activeYCount = plottableCols.filter { $0.isYAxis || $0.role == .y }.count
-
-                    HStack(spacing: 6) {
-                        Text("X:")
-                            .font(StudioTokens.toolbarLabel(uiFontSize: uiFontSize))
-                            .foregroundStyle(.blue)
-                        Picker("", selection: Binding(
-                            get: { selectedXCol ?? (columns.indices.contains(activeXIndex) ? columns[activeXIndex].name : "") },
-                            set: { selectedXCol = $0 }
-                        )) {
-                            ForEach(plottableCols) { col in
-                                let isDef = col.isDefaultX || (activeXCount == 1 && (col.isXAxis || col.role == .x))
-                                Text("\(col.unit.isEmpty ? col.label : "\(col.label) (\(col.unit))")\(isDef ? " ★" : "")").tag(col.name)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .controlSize(.mini)
-                        .frame(maxWidth: 140)
-
-                        Text("Y:")
-                            .font(StudioTokens.toolbarLabel(uiFontSize: uiFontSize))
-                            .foregroundStyle(.green)
-                        Picker("", selection: Binding(
-                            get: { selectedYCol ?? (columns.indices.contains(activeYIndex) ? columns[activeYIndex].name : "") },
-                            set: { selectedYCol = $0 }
-                        )) {
-                            ForEach(plottableCols) { col in
-                                let isDef = col.isDefaultY || (activeYCount == 1 && (col.isYAxis || col.role == .y))
-                                Text("\(col.unit.isEmpty ? col.label : "\(col.label) (\(col.unit))")\(isDef ? " ★" : "")").tag(col.name)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .controlSize(.mini)
-                        .frame(maxWidth: 140)
-                    }
-                }
+                Spacer()
 
                 Text("\(totalPointCount) pts")
-                    .font(StudioTokens.mono(size: 9.5, uiFontSize: uiFontSize))
+                    .font(AppTypography.caption(uiFontSize: uiFontSize))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .frame(height: 24)
                     .background(Capsule().fill(.quaternary))
             }
             .padding(.horizontal, 10)
