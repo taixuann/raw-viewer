@@ -11,7 +11,6 @@ struct EditorCenterCanvasView: View {
     @Binding var selectedStudioTab: EditorWorkspaceView.StudioTab
 
     @State private var showingNewProfilePopover = false
-    @State private var showingProfileInfoPopover = false
     @State private var newProfileID = ""
     @State private var newProfileName = ""
 
@@ -123,7 +122,7 @@ struct EditorCenterCanvasView: View {
 
     // MARK: - Top-Right Profile Management Bar
     private var profileManagementBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Text("Profile:")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -148,13 +147,15 @@ struct EditorCenterCanvasView: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Text("🎛️")
                     let activeName = !model.editor.instrumentName.isEmpty
                         ? model.editor.instrumentName
                         : (!model.editor.instrumentID.isEmpty ? model.editor.instrumentID : "Untitled")
                     Text(activeName)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
             .menuStyle(.borderedButton)
@@ -177,19 +178,6 @@ struct EditorCenterCanvasView: View {
             .help("Create a new profile by duplicating current setup (non-destructive)")
             .popover(isPresented: $showingNewProfilePopover) {
                 newProfilePopoverView
-            }
-
-            Button {
-                showingProfileInfoPopover.toggle()
-            } label: {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Edit Profile ID and Display Name")
-            .popover(isPresented: $showingProfileInfoPopover) {
-                profileInfoPopoverView
             }
         }
     }
@@ -248,62 +236,4 @@ struct EditorCenterCanvasView: View {
         .frame(width: 280)
     }
 
-    // MARK: - Profile Info Popover
-    private var profileInfoPopoverView: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Profile Identity")
-                .font(.system(size: 12, weight: .bold))
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("Profile ID")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if !model.tokens.isEmpty {
-                        Menu {
-                            ForEach(model.tokens, id: \.self) { tok in
-                                Button(tok) {
-                                    model.editor.instrumentID = tok
-                                    if model.editor.instrumentName.isEmpty {
-                                        model.editor.instrumentName = tok
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: "wand.and.stars")
-                                Text("From Token…")
-                            }
-                            .font(.system(size: 9))
-                        }
-                        .menuStyle(.borderlessButton)
-                    }
-                }
-                TextField("e.g. autolab-pgstat", text: $model.editor.instrumentID)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11, design: .monospaced))
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Display Name")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                TextField("e.g. Autolab PGSTAT302N", text: $model.editor.instrumentName)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-            }
-
-            HStack {
-                Spacer()
-                Button("Done") {
-                    showingProfileInfoPopover = false
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            }
-        }
-        .padding(14)
-        .frame(width: 280)
-    }
 }

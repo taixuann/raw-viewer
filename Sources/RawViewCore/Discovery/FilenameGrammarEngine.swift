@@ -271,10 +271,10 @@ public enum FilenameGrammarEngine {
                 let hasTrailing = (nextIndex < trimmed.endIndex)
                 var captureGroup = patternForField(fieldConfig, hasTrailing: hasTrailing || !trailingEnclosure.isEmpty)
 
-                // If next character in template is an explicit delimiter (e.g. "_" or "."), ensure string fields do not swallow that delimiter
-                if fieldConfig?.type == .string && nextIndex < trimmed.endIndex {
+                // If next character in template is an explicit delimiter, ensure string fields do not swallow that delimiter
+                if (fieldConfig == nil || fieldConfig?.type == .string) && nextIndex < trimmed.endIndex {
                     let nextChar = trimmed[nextIndex]
-                    if nextChar == "_" || nextChar == "." || nextChar == "-" || nextChar == "[" {
+                    if nextChar != "{" {
                         captureGroup = "([^" + NSRegularExpression.escapedPattern(for: String(nextChar)) + "]+?)"
                     }
                 }
@@ -331,7 +331,7 @@ public enum FilenameGrammarEngine {
 
         // If full string regex match fails, perform progressive prefix matching from N-1 down to 1 token
         if match == nil && fieldNames.count > 1 {
-            for count in stride(from: fieldNames.count - 1, through: max(2, (fieldNames.count + 1) / 2), by: -1) {
+            for count in stride(from: fieldNames.count - 1, through: 2, by: -1) {
                 // Build a prefix template up through the close brace of the count-th token plus the following literal/delimiter
                 var matchedClose = trimmed.startIndex
                 var foundCount = 0
