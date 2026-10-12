@@ -180,6 +180,10 @@ struct StreamHeaderCardView: View {
         selectedColumns.contains(colIdx)
     }
 
+    @State private var showingCustomProgressionPopover = false
+    @State private var customProgressionInput = ""
+    @State private var customProgressionBehavior: ProgressionBehavior = .discrete
+
     private func excelColumnLetter(_ index: Int) -> String {
         var n = index
         var result = ""
@@ -304,23 +308,17 @@ struct StreamHeaderCardView: View {
                         }
 
                         Menu("Custom Progression…") {
-                            Button("Discrete (Cycle / Stage)") {
-                                onSetColumnProgression(colIdx, .custom, .discrete)
+                            Button("Discrete (e.g. Cycle, pH, Stage)…") {
+                                customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                                customProgressionBehavior = .discrete
+                                showingCustomProgressionPopover = true
                             }
-                            Button("Continuous (Range)") {
-                                onSetColumnProgression(colIdx, .custom, .continuous)
+                            Button("Continuous (e.g. Concentration, Temp)…") {
+                                customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                                customProgressionBehavior = .continuous
+                                showingCustomProgressionPopover = true
                             }
                         }
-                    }
-
-                    Button("Set as Data Channel (Aux)") {
-                        var updated = col
-                        updated.isXAxis = false
-                        updated.isYAxis = false
-                        updated.isSkipped = false
-                        updated.role = .channel
-                        updated.progressionType = nil
-                        onUpdateColumn?(colIdx, updated)
                     }
                     Divider()
                     if col.isSkipped || col.role == .skip {
@@ -424,6 +422,55 @@ struct StreamHeaderCardView: View {
         .contextMenu {
             columnContextMenu
         }
+        .popover(isPresented: $showingCustomProgressionPopover) {
+            customProgressionPopoverView
+        }
+    }
+
+    private var customProgressionPopoverView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Custom Progression Dimension")
+                .font(.system(size: 11, weight: .bold))
+
+            Text("Enter dimension name (e.g. pH, Concentration, Cycle, Temperature):")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+
+            TextField("Dimension Name", text: $customProgressionInput)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+                .frame(width: 180)
+
+            HStack {
+                Button("Cancel") {
+                    showingCustomProgressionPopover = false
+                }
+                .controlSize(.small)
+
+                Spacer()
+
+                Button("Set Progression") {
+                    let clean = customProgressionInput.trimmingCharacters(in: .whitespaces)
+                    var updated = col
+                    updated.isXAxis = false
+                    updated.isYAxis = false
+                    updated.isDefaultX = false
+                    updated.isDefaultY = false
+                    updated.role = .progression
+                    updated.progressionType = .custom
+                    updated.progressionBehavior = customProgressionBehavior
+                    updated.customProgressionName = clean.isEmpty ? (col.label.isEmpty ? col.name : col.label) : clean
+                    updated.isSkipped = false
+                    columns[colIdx] = updated
+                    onUpdateColumn?(colIdx, updated)
+                    showingCustomProgressionPopover = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .frame(width: 220)
     }
 
     // MARK: - Helpers
@@ -579,16 +626,17 @@ struct StreamHeaderCardView: View {
                     }
                 }
                 Menu("Custom Progression…") {
-                    Button("Discrete (Cycle / Stage)") {
-                        onSetColumnProgression(colIdx, .custom, .discrete)
+                    Button("Discrete (e.g. Cycle, pH, Stage)…") {
+                        customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                        customProgressionBehavior = .discrete
+                        showingCustomProgressionPopover = true
                     }
-                    Button("Continuous (Range)") {
-                        onSetColumnProgression(colIdx, .custom, .continuous)
+                    Button("Continuous (e.g. Concentration, Temp)…") {
+                        customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                        customProgressionBehavior = .continuous
+                        showingCustomProgressionPopover = true
                     }
                 }
-            }
-            Button("Set as Data Channel (Aux)") {
-                onSetColumnRole(colIdx, false, false)
             }
             Divider()
             if col.isSkipped {

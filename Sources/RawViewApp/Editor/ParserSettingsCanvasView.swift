@@ -496,10 +496,13 @@ struct ParserSettingsCanvasView: View {
     private func rolePillText(col: ColumnDefinition) -> String {
         if col.isSkipped || col.role == .skip { return "⊘ Skip" }
         if col.role == .progression {
+            let behaviorTag = (col.progressionBehavior == .continuous) ? "Cont" : "Disc"
             switch col.progressionType {
-            case .time: return "Time"
-            case .index: return "Scan"
-            case .custom: return col.customProgressionName?.isEmpty == false ? col.customProgressionName! : "Custom"
+            case .time: return "⏱️ Time • \(behaviorTag)"
+            case .index: return "⏱️ Scan • \(behaviorTag)"
+            case .custom:
+                let name = col.customProgressionName?.isEmpty == false ? col.customProgressionName! : "Custom"
+                return "⏱️ \(name) • \(behaviorTag)"
             case .none: return "Prog"
             }
         }
