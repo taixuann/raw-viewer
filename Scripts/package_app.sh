@@ -7,7 +7,7 @@ if [ -z "${RAWVIEW_BUILD_DIR:-}" ] || [ -z "${RAWVIEW_APP_PATH:-}" ] || [ -z "${
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/RawView-XXXXXX")
 fi
 build="${RAWVIEW_BUILD_DIR:-$scratch/build}"
-app="${RAWVIEW_APP_PATH:-$scratch/RawView.app}"
+app="${RAWVIEW_APP_PATH:-/tmp/RawView.app}"
 bundle_id="${RAWVIEW_BUNDLE_ID:-org.taixuann.rawview}"
 cache="${CLANG_MODULE_CACHE_PATH:-$scratch/module-cache}"
 mkdir -p "$cache"

@@ -11,6 +11,10 @@ struct ParserSettingsCanvasView: View {
     var metadataCellTags: [String: MetadataCellTag] = [:]
     @Binding var activeGrammarID: String
     var availableGrammars: [FilenameGrammar] = []
+    var currentProfileName: String = ""
+    var savedProfiles: [URL] = []
+    var onLoadProfile: ((URL) -> Void)? = nil
+    var onDuplicateProfile: ((String, String) -> Void)? = nil
     var onCreateNewGrammar: (() -> Void)? = nil
     var onSaveProfile: (() -> Void)? = nil
     var onTagMetadataCell: ((MetadataCellTag) -> Void)? = nil
@@ -235,6 +239,14 @@ struct ParserSettingsCanvasView: View {
                 dataStartLineText: $dataStartLineText,
                 activeGrammarID: $activeGrammarID,
                 availableGrammars: availableGrammars,
+                currentProfileName: currentProfileName,
+                savedProfiles: savedProfiles,
+                onLoadProfile: { url in
+                    onLoadProfile?(url)
+                },
+                onDuplicateProfile: { id, name in
+                    onDuplicateProfile?(id, name)
+                },
                 showMetadataPopover: $showMetadataPopover,
                 activeMetadataCount: activeMetadataCount,
                 metadataEntriesCount: metadataEntries.count,

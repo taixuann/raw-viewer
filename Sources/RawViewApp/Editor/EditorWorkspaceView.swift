@@ -77,8 +77,8 @@ final class EditorWorkspaceViewModel: ObservableObject {
     @Published var saveStatusMessage: String?
 
     // MARK: - Grammar Engine State
-    @Published var grammarCatalog: FilenameGrammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "autolab-scientific")
-    @Published var activeGrammarID: String = "autolab-scientific" {
+    @Published var grammarCatalog: FilenameGrammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "standard-scientific")
+    @Published var activeGrammarID: String = "standard-scientific" {
         didSet {
             guard activeGrammarID != oldValue else { return }
             selectGrammar(id: activeGrammarID)
@@ -305,7 +305,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
                 self.activeTemplate = first.template
             }
         } else {
-            self.grammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "autolab-scientific")
+            self.grammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "standard-scientific")
             if let first = grammarCatalog.grammars.first {
                 self.activeGrammarID = first.id
                 self.activeTemplate = first.template

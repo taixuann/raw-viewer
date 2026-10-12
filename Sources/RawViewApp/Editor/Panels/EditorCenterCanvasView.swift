@@ -39,6 +39,14 @@ struct EditorCenterCanvasView: View {
                     metadataCellTags: model.editor.metadataCellTags,
                     activeGrammarID: $model.activeGrammarID,
                     availableGrammars: model.grammarCatalog.grammars,
+                    currentProfileName: model.editor.instrumentName.isEmpty ? model.editor.instrumentID : model.editor.instrumentName,
+                    savedProfiles: model.savedProfiles,
+                    onLoadProfile: { url in
+                        model.loadSavedProfile(url: url)
+                    },
+                    onDuplicateProfile: { id, name in
+                        model.duplicateProfileFromCurrent(newID: id, newName: name)
+                    },
                     onCreateNewGrammar: {
                         selectedStudioTab = .tokens
                     },
@@ -112,8 +120,6 @@ struct EditorCenterCanvasView: View {
                 .background(Color.green.opacity(0.08))
                 .clipShape(Capsule())
             }
-
-            profileManagementBar
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

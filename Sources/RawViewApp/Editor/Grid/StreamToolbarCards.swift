@@ -20,6 +20,10 @@ struct StreamToolbarCards: View {
     @Binding var dataStartLineText: String
     @Binding var activeGrammarID: String
     let availableGrammars: [FilenameGrammar]
+    let currentProfileName: String
+    let savedProfiles: [URL]
+    let onLoadProfile: (URL) -> Void
+    let onDuplicateProfile: (String, String) -> Void
     @Binding var showMetadataPopover: Bool
     let activeMetadataCount: Int
     let metadataEntriesCount: Int
@@ -49,6 +53,10 @@ struct StreamToolbarCards: View {
     let onCreateNewGrammar: () -> Void
     let onSaveProfile: () -> Void
 
+    @State private var showingNewProfilePopover = false
+    @State private var newProfileID = ""
+    @State private var newProfileName = ""
+
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             // SECTION 1: Structure (Delimiter, Decimal, Header L#, Data Starts)
@@ -57,14 +65,14 @@ struct StreamToolbarCards: View {
             Divider()
                 .frame(height: 22)
 
-            // SECTION 2: Linked Grammar
-            section2LinkedGrammar
+            // SECTION 2: Profile & Linked Grammar (2 rows)
+            section3ProfileAndGrammar
 
             Divider()
                 .frame(height: 22)
 
             // SECTION 3: View & Metadata Controls
-            section3ViewAndMetadata
+            section2ViewAndMetadata
 
             Divider()
                 .frame(height: 22)
@@ -210,98 +218,8 @@ struct StreamToolbarCards: View {
         }
     }
 
-    // MARK: - Section 2: Linked Grammar
-    private var section2LinkedGrammar: some View {
-        HStack(spacing: 5) {
-            Text("Grammar:")
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(.secondary)
-
-            Menu {
-                let projectGrammars = availableGrammars.filter { $0.scope == .project }
-                let globalGrammars = availableGrammars.filter { $0.scope == .global || ($0.scope == nil && $0.isDefault) }
-                let otherGrammars = availableGrammars.filter { $0.scope != .project && !globalGrammars.contains($0) }
-
-                if !projectGrammars.isEmpty {
-                    Section("Project Grammars") {
-                        ForEach(projectGrammars) { g in
-                            Button {
-                                activeGrammarID = g.id
-                            } label: {
-                                if g.id == activeGrammarID {
-                                    Label("📁 \(g.name) (Project)", systemImage: "checkmark")
-                                } else {
-                                    Text("📁 \(g.name) (Project)")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !globalGrammars.isEmpty {
-                    Section("Global Grammars") {
-                        ForEach(globalGrammars) { g in
-                            Button {
-                                activeGrammarID = g.id
-                            } label: {
-                                if g.id == activeGrammarID {
-                                    Label("🌐 \(g.name) (Global)", systemImage: "checkmark")
-                                } else {
-                                    Text("🌐 \(g.name) (Global)")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !otherGrammars.isEmpty {
-                    Section("Other Grammars") {
-                        ForEach(otherGrammars) { g in
-                            Button {
-                                activeGrammarID = g.id
-                            } label: {
-                                if g.id == activeGrammarID {
-                                    Label(g.name, systemImage: "checkmark")
-                                } else {
-                                    Text(g.name)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                Button {
-                    onCreateNewGrammar()
-                } label: {
-                    Label("+ Create New Grammar…", systemImage: "plus")
-                }
-            } label: {
-                let active = availableGrammars.first(where: { $0.id == activeGrammarID })
-                let icon = (active?.scope == .project) ? "📁" : "🌐"
-                let scopeLabel = (active?.scope == .project) ? " (Project)" : " (Global)"
-                let name = active?.name ?? "Standard Filename Pattern"
-                let displayText = "\(icon) \(name)\(active?.scope != nil ? scopeLabel : "")"
-
-                HStack(spacing: 4) {
-                    Text(displayText)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(height: 24)
-            }
-            .menuStyle(.borderedButton)
-            .controlSize(.small)
-            .fixedSize()
-        }
-    }
-
-    // MARK: - Section 3: View & Metadata Controls
-    private var section3ViewAndMetadata: some View {
+    // MARK: - Section 2: View & Metadata Controls
+    private var section2ViewAndMetadata: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Row 1: Header View segmented switch & Preview rows selector
             HStack(spacing: 8) {
@@ -396,6 +314,197 @@ struct StreamToolbarCards: View {
                     .frame(height: 24)
                     .help("Automatically marks completely empty data columns as skipped")
                 }
+            }
+        }
+    }
+
+    // MARK: - Section 3: Profile & Linked Grammar (2 Rows)
+    private var section3ProfileAndGrammar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Row 1: Profile Selector & New Button
+            HStack(spacing: 5) {
+                Text("Profile:")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 58, alignment: .leading)
+
+                Menu {
+                    if savedProfiles.isEmpty {
+                        Text("No saved profiles")
+                    } else {
+                        ForEach(savedProfiles, id: \.self) { profileURL in
+                            let profileBaseName = profileURL.deletingPathExtension().lastPathComponent
+                            let isCurrent = (currentProfileName == profileBaseName)
+                            Button {
+                                onLoadProfile(profileURL)
+                            } label: {
+                                if isCurrent {
+                                    Label(profileBaseName, systemImage: "checkmark")
+                                } else {
+                                    Text(profileBaseName)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(currentProfileName.isEmpty ? "Untitled" : currentProfileName)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderedButton)
+                .controlSize(.small)
+                .frame(maxWidth: 160)
+                .help("Switch active instrument profile")
+
+                Button {
+                    newProfileID = currentProfileName.isEmpty ? "new-profile" : "\(currentProfileName)-copy"
+                    newProfileName = currentProfileName.isEmpty ? "New Profile" : "\(currentProfileName) (Copy)"
+                    showingNewProfilePopover = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "plus")
+                        Text("New")
+                    }
+                    .font(.system(size: 10.5, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Create a new profile by duplicating current setup (non-destructive)")
+                .popover(isPresented: $showingNewProfilePopover) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Duplicate Profile")
+                            .font(.system(size: 12, weight: .bold))
+
+                        Text("Creates a new profile preserving current column mappings, delimiter, and line tags.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Profile ID")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            TextField("e.g. autolab-pgstat", text: $newProfileID)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11, design: .monospaced))
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Display Name")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            TextField("e.g. Autolab PGSTAT302N", text: $newProfileName)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11))
+                        }
+
+                        HStack {
+                            Button("Cancel") {
+                                showingNewProfilePopover = false
+                            }
+                            .controlSize(.small)
+
+                            Spacer()
+
+                            Button("Create Profile") {
+                                let cleanID = newProfileID.trimmingCharacters(in: .whitespaces)
+                                let cleanName = newProfileName.trimmingCharacters(in: .whitespaces)
+                                if !cleanID.isEmpty {
+                                    onDuplicateProfile(cleanID, cleanName)
+                                    showingNewProfilePopover = false
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(newProfileID.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .padding(14)
+                    .frame(width: 280)
+                }
+            }
+
+            // Row 2: Grammar Selector
+            HStack(spacing: 5) {
+                Text("Grammar:")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 58, alignment: .leading)
+
+                Menu {
+                    let projectGrammars = availableGrammars.filter { $0.scope == .project }
+                    let globalGrammars = availableGrammars.filter { $0.scope == .global || ($0.scope == nil && $0.isDefault) }
+                    let otherGrammars = availableGrammars.filter { $0.scope != .project && !globalGrammars.contains($0) }
+
+                    if !projectGrammars.isEmpty {
+                        Section("Project Grammars") {
+                            ForEach(projectGrammars) { g in
+                                Button {
+                                    activeGrammarID = g.id
+                                } label: {
+                                    if g.id == activeGrammarID {
+                                        Label("📁 \(g.name) (Project)", systemImage: "checkmark")
+                                    } else {
+                                        Text("📁 \(g.name) (Project)")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !globalGrammars.isEmpty {
+                        Section("Global Grammars") {
+                            ForEach(globalGrammars) { g in
+                                Button {
+                                    activeGrammarID = g.id
+                                } label: {
+                                    if g.id == activeGrammarID {
+                                        Label("🌐 \(g.name) (Global)", systemImage: "checkmark")
+                                    } else {
+                                        Text("🌐 \(g.name) (Global)")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !otherGrammars.isEmpty {
+                        Section("Other Grammars") {
+                            ForEach(otherGrammars) { g in
+                                Button {
+                                    activeGrammarID = g.id
+                                } label: {
+                                    if g.id == activeGrammarID {
+                                        Label(g.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(g.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button {
+                        onCreateNewGrammar()
+                    } label: {
+                        Label("+ Create New Grammar…", systemImage: "plus")
+                    }
+                } label: {
+                    let active = availableGrammars.first(where: { $0.id == activeGrammarID })
+                    let icon = (active?.scope == .project) ? "📁" : "🌐"
+                    let scopeLabel = (active?.scope == .project) ? " (Project)" : " (Global)"
+                    let name = active?.name ?? "Standard Filename Pattern"
+                    let displayText = "\(icon) \(name)\(active?.scope != nil ? scopeLabel : "")"
+
+                    Text(displayText)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderedButton)
+                .controlSize(.small)
+                .frame(maxWidth: 220)
             }
         }
     }

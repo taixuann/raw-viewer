@@ -537,15 +537,24 @@ public enum FilenameGrammarEngine {
     }
 
     static func parse(node: YAMLNode) -> FilenameGrammarCatalog? {
-        let activeID = node.value(for: "active_grammar_id")?.scalarValue
+        var activeID = node.value(for: "active_grammar_id")?.scalarValue
+        if activeID == "autolab-scientific" {
+            activeID = "standard-scientific"
+        }
 
         var grammars: [FilenameGrammar] = []
         if let list = node.value(for: "grammars")?.listItems {
             for item in list {
-                guard let id = item.value(for: "id")?.scalarValue,
-                      let name = item.value(for: "name")?.scalarValue,
+                guard var id = item.value(for: "id")?.scalarValue,
+                      var name = item.value(for: "name")?.scalarValue,
                       let template = item.value(for: "template")?.scalarValue else {
                     continue
+                }
+                if id == "autolab-scientific" {
+                    id = "standard-scientific"
+                }
+                if name.contains("Autolab USTH") {
+                    name = "Standard Filename Pattern"
                 }
                 let desc = item.value(for: "description")?.scalarValue ?? ""
                 let isDef = (item.value(for: "is_default")?.scalarValue?.lowercased() == "true")
