@@ -94,7 +94,7 @@ struct EditorLeftSidebarView: View {
                     .cornerRadius(5)
                 }
 
-                // Action Bar: Switch Sample & Pin Example
+                // Action Bar: Switch Sample
                 HStack(spacing: 6) {
                     Menu {
                         ForEach(sources.prefix(40)) { src in
@@ -113,19 +113,6 @@ struct EditorLeftSidebarView: View {
                     .controlSize(.small)
 
                     Spacer(minLength: 0)
-
-                    Button {
-                        model.pinCurrentAsExample()
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "pin.fill")
-                            Text("Pin")
-                        }
-                        .font(.system(size: 10))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Pin current file as the canonical reference example in .rawviewer/instrument/examples/")
                 }
             }
             .padding(4)

@@ -201,64 +201,17 @@ final class EditorWorkspaceViewModel: ObservableObject {
     }
 
     func loadRepresentativeSampleForProfile(profileURL: URL) {
-        guard let project = project else { return }
+        guard project != nil else { return }
         let profileBaseName = profileURL.deletingPathExtension().lastPathComponent
-        let examplesDir = project.root.appendingPathComponent(".rawviewer/instrument/examples", isDirectory: true)
+        let id = editor.instrumentID.isEmpty ? profileBaseName : editor.instrumentID
 
-        var matchedURL: URL? = nil
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: examplesDir.path, isDirectory: &isDir), isDir.boolValue,
-           let files = try? FileManager.default.contentsOfDirectory(at: examplesDir, includingPropertiesForKeys: nil) {
-            matchedURL = files.first(where: {
-                let name = $0.lastPathComponent
-                return name.localizedCaseInsensitiveContains(profileBaseName) ||
-                       (!editor.instrumentID.isEmpty && name.localizedCaseInsensitiveContains(editor.instrumentID))
-            })
-        }
+        let matched = sources.first(where: {
+            $0.url.lastPathComponent.localizedCaseInsensitiveContains(id) ||
+            (!editor.instrumentName.isEmpty && $0.url.lastPathComponent.localizedCaseInsensitiveContains(editor.instrumentName))
+        }) ?? sources.first
 
-        if matchedURL == nil {
-            let id = editor.instrumentID.isEmpty ? profileBaseName : editor.instrumentID
-            matchedURL = sources.first(where: {
-                $0.url.lastPathComponent.localizedCaseInsensitiveContains(id) ||
-                (!editor.instrumentName.isEmpty && $0.url.lastPathComponent.localizedCaseInsensitiveContains(editor.instrumentName))
-            })?.url
-        }
-
-        if matchedURL == nil {
-            matchedURL = sources.first?.url
-        }
-
-        if let targetURL = matchedURL {
-            if let existing = sources.first(where: { $0.url == targetURL }) {
-                selectSource(existing, preserveProfile: true)
-            } else {
-                let size = (try? targetURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
-                let synthetic = RawSource(
-                    relativePath: targetURL.lastPathComponent,
-                    url: targetURL,
-                    byteSize: size,
-                    mtime: 0
-                )
-                selectSource(synthetic, preserveProfile: true)
-            }
-        }
-    }
-
-    func pinCurrentAsExample() {
-        guard let project = project, let current = selectedSource else { return }
-        let id = editor.instrumentID.trimmingCharacters(in: .whitespaces).isEmpty
-            ? current.url.deletingPathExtension().lastPathComponent
-            : editor.instrumentID.trimmingCharacters(in: .whitespaces)
-        let ext = current.url.pathExtension
-        let examplesDir = project.root.appendingPathComponent(".rawviewer/instrument/examples", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: examplesDir, withIntermediateDirectories: true)
-            let destURL = examplesDir.appendingPathComponent("\(id)-example.\(ext)")
-            let data = try Data(contentsOf: current.url)
-            try data.write(to: destURL, options: .atomic)
-            saveStatusMessage = "Pinned sample as example: \(destURL.lastPathComponent)"
-        } catch {
-            saveStatusMessage = "Failed to pin example: \(error.localizedDescription)"
+        if let matched = matched {
+            selectSource(matched, preserveProfile: true)
         }
     }
 
@@ -654,20 +607,6 @@ final class EditorWorkspaceViewModel: ObservableObject {
                 elements: semanticElements
             )
             try CategoryRuleEngine.save(rules: rule, project: project)
-
-            // Auto-pin reference example file to .rawviewer/instrument/examples/
-            if let current = selectedSource {
-                let id = editor.instrumentID.trimmingCharacters(in: .whitespaces).isEmpty
-                    ? current.url.deletingPathExtension().lastPathComponent
-                    : editor.instrumentID.trimmingCharacters(in: .whitespaces)
-                let ext = current.url.pathExtension
-                let examplesDir = project.root.appendingPathComponent(".rawviewer/instrument/examples", isDirectory: true)
-                try? FileManager.default.createDirectory(at: examplesDir, withIntermediateDirectories: true)
-                let destURL = examplesDir.appendingPathComponent("\(id)-example.\(ext)")
-                if let data = try? Data(contentsOf: current.url) {
-                    try? data.write(to: destURL, options: .atomic)
-                }
-            }
 
             // Save grammar catalog to .rawviewer/view/grammar.yaml
             saveGrammarCatalog()
