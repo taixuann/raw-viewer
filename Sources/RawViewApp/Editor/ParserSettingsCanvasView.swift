@@ -9,6 +9,10 @@ struct ParserSettingsCanvasView: View {
     @Binding var columns: [ColumnDefinition]
     let lineTags: [Int: LineRegionType]
     var metadataCellTags: [String: MetadataCellTag] = [:]
+    @Binding var activeGrammarID: String
+    var availableGrammars: [FilenameGrammar] = []
+    var onCreateNewGrammar: (() -> Void)? = nil
+    var onSaveProfile: (() -> Void)? = nil
     var onTagMetadataCell: ((MetadataCellTag) -> Void)? = nil
     var onRemoveMetadataTag: ((Int, Int) -> Void)? = nil
     var onUpdateColumn: ((Int, ColumnDefinition) -> Void)? = nil
@@ -229,6 +233,8 @@ struct ParserSettingsCanvasView: View {
                 headerLineText: $headerLineText,
                 dataStartLineChoice: $dataStartLineChoice,
                 dataStartLineText: $dataStartLineText,
+                activeGrammarID: $activeGrammarID,
+                availableGrammars: availableGrammars,
                 showMetadataPopover: $showMetadataPopover,
                 activeMetadataCount: activeMetadataCount,
                 metadataEntriesCount: metadataEntries.count,
@@ -252,21 +258,14 @@ struct ParserSettingsCanvasView: View {
                 onSetSelectedColumnsRole: { isX, isY in setSelectedColumnsRole(isX: isX, isY: isY) },
                 onSetSelectedColumnsProgression: { type, behavior in setSelectedColumnsProgression(type: type, behavior: behavior) },
                 rolePillText: rolePillText,
-                onRunAutoDetect: {
-                    onRunAutoDetect?()
-                    selectedDelimiter = delimiter
-                    selectedDecimal = decimalSeparator
-                    headerLineChoice = currentHeaderLine ?? 0
-                    headerLineText = headerLineChoice <= 0 ? "" : "\(headerLineChoice)"
-                    dataStartLineChoice = currentDataStartLine
-                    dataStartLineText = "\(dataStartLineChoice)"
-                    skippedMetadataLines.removeAll()
-                    selectedColumns.removeAll()
-                    selectedLines.removeAll()
-                },
                 onApplyCustomStructure: {
-                    let finalDelim = selectedDelimiter == "CUSTOM" ? customDelimiterText : selectedDelimiter
-                    onApplyCustomStructure?(finalDelim, selectedDecimal, effectiveHeaderLine, effectiveDataStartLine, skippedMetadataLines)
+                    applyLiveReparse()
+                },
+                onCreateNewGrammar: {
+                    onCreateNewGrammar?()
+                },
+                onSaveProfile: {
+                    onSaveProfile?()
                 }
             )
 
@@ -364,6 +363,31 @@ struct ParserSettingsCanvasView: View {
             dataStartLineChoice = currentDataStartLine
             dataStartLineText = "\(dataStartLineChoice)"
         }
+        .onChange(of: selectedDelimiter) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: customDelimiterText) { _, _ in
+            if selectedDelimiter == "CUSTOM" {
+                applyLiveReparse()
+            }
+        }
+        .onChange(of: selectedDecimal) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: headerLineChoice) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: dataStartLineChoice) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: skippedMetadataLines) { _, _ in
+            applyLiveReparse()
+        }
+    }
+
+    private func applyLiveReparse() {
+        let finalDelim = selectedDelimiter == "CUSTOM" ? customDelimiterText : selectedDelimiter
+        onApplyCustomStructure?(finalDelim, selectedDecimal, effectiveHeaderLine, effectiveDataStartLine, skippedMetadataLines)
     }
 
     // MARK: - Column Skipping & Metadata Helpers

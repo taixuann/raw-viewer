@@ -3,12 +3,12 @@ import RawViewCore
 
 // MARK: - StreamToolbarCards
 
-/// Top control toolbar for Stream Parser Settings composed of 4 macOS Studio Cards:
-/// - Card 1: Delimiter & Decimal Delimiters block
-/// - Card 2: Row bounds (Header L# & Data Start L# stepper)
-/// - Card 3: Metadata & Columns Status, Preview rows selector, Expand All, Column summary & auto-skip
-/// - Card 4: Run auto-detect and Apply buttons
-/// Plus contextual batch selection / column actions card.
+/// Top control toolbar for Stream Parser Settings redesigned as a flat unified toolbar band:
+/// - Section 1: Structure (Delimiter & Decimal Delimiters, Header L# & Data Starts steppers) with live auto-reparsing
+/// - Section 2: Linked Grammar (Active Grammar selector with project & global grammars, Create New Grammar action)
+/// - Section 3: View & Metadata (Header View segmented switch, Preview row count, Metadata Tags popover, Columns summary & auto-skip)
+/// - Contextual Selection: Column & Row batch selection actions & hover inspector
+/// - Section 4: Primary Action (Save Profile)
 struct StreamToolbarCards: View {
     let linesCount: Int
     @Binding var selectedDelimiter: String
@@ -18,6 +18,8 @@ struct StreamToolbarCards: View {
     @Binding var headerLineText: String
     @Binding var dataStartLineChoice: Int
     @Binding var dataStartLineText: String
+    @Binding var activeGrammarID: String
+    let availableGrammars: [FilenameGrammar]
     @Binding var showMetadataPopover: Bool
     let activeMetadataCount: Int
     let metadataEntriesCount: Int
@@ -43,167 +45,318 @@ struct StreamToolbarCards: View {
     let onSetSelectedColumnsRole: (_ isX: Bool, _ isY: Bool) -> Void
     let onSetSelectedColumnsProgression: (_ type: ProgressionType, _ behavior: ProgressionBehavior) -> Void
     let rolePillText: (ColumnDefinition) -> String
-    let onRunAutoDetect: () -> Void
     let onApplyCustomStructure: () -> Void
+    let onCreateNewGrammar: () -> Void
+    let onSaveProfile: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            // CARD 1: Delimiter & Decimal Delimiters Block
-            card1DelimiterAndDecimal
+        HStack(alignment: .center, spacing: 12) {
+            // SECTION 1: Structure (Delimiter, Decimal, Header L#, Data Starts)
+            section1Structure
 
-            // CARD 2: Row Bounds (Header L# & Data Start L#)
-            card2RowBounds
+            Divider()
+                .frame(height: 22)
 
-            // CARD 3: Metadata & Columns Status & Preview Controls
-            card3MetadataAndColumnsStatus
+            // SECTION 2: Linked Grammar
+            section2LinkedGrammar
 
-            // Contextual Column & Row Selection Actions Card
-            contextualSelectionCard
+            Divider()
+                .frame(height: 22)
 
-            Spacer()
+            // SECTION 3: View & Metadata Controls
+            section3ViewAndMetadata
 
-            // CARD 4: Run Actions (Auto-detect & Apply)
-            card4RunActions
+            Divider()
+                .frame(height: 22)
+
+            // Contextual Column & Row Selection Actions
+            contextualSelectionSection
+
+            Spacer(minLength: 8)
+
+            Divider()
+                .frame(height: 22)
+
+            // SECTION 4: Actions (Save Profile)
+            section4Actions
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color(NSColor.controlBackgroundColor))
     }
 
-    // MARK: - Card 1: Delimiter & Decimal Delimiters Block
-    private var card1DelimiterAndDecimal: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Row 1: Delimiter
-            HStack(spacing: 4) {
-                Text("Delimiter:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 58, alignment: .leading)
-                Picker("", selection: $selectedDelimiter) {
-                    Text("Semicolon (;)").tag(";")
-                    Text("Comma (,)").tag(",")
-                    Text("Tab (\\t)").tag("\t")
-                    Text("Space").tag(" ")
-                    Text("Custom…").tag("CUSTOM")
-                }
-                .pickerStyle(.menu)
-                .frame(width: 115)
+    // MARK: - Section 1: Structure (Delimiter, Decimal, Header L#, Data Starts)
+    private var section1Structure: some View {
+        HStack(spacing: 12) {
+            // Column 1: Delimiter & Decimal
+            VStack(alignment: .leading, spacing: 4) {
+                // Row 1: Delimiter
+                HStack(spacing: 4) {
+                    Text("Delimiter:")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 58, alignment: .leading)
+                    Picker("", selection: Binding(
+                        get: { selectedDelimiter },
+                        set: { newVal in
+                            selectedDelimiter = newVal
+                            onApplyCustomStructure()
+                        }
+                    )) {
+                        Text("Semicolon (;)").tag(";")
+                        Text("Comma (,)").tag(",")
+                        Text("Tab (\\t)").tag("\t")
+                        Text("Space").tag(" ")
+                        Text("Custom…").tag("CUSTOM")
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 110)
 
-                if selectedDelimiter == "CUSTOM" {
-                    TextField("|", text: $customDelimiterText)
+                    if selectedDelimiter == "CUSTOM" {
+                        TextField("|", text: Binding(
+                            get: { customDelimiterText },
+                            set: { newVal in
+                                customDelimiterText = newVal
+                                onApplyCustomStructure()
+                            }
+                        ))
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 32)
                         .font(.system(size: 10.5, design: .monospaced))
+                    }
+                }
+
+                // Row 2: Decimal
+                HStack(spacing: 4) {
+                    Text("Decimal:")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 58, alignment: .leading)
+                    Picker("", selection: Binding(
+                        get: { selectedDecimal },
+                        set: { newVal in
+                            selectedDecimal = newVal
+                            onApplyCustomStructure()
+                        }
+                    )) {
+                        Text("Period (.)").tag(".")
+                        Text("Comma (,)").tag(",")
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 110)
                 }
             }
 
-            // Row 2: Decimal
-            HStack(spacing: 4) {
-                Text("Decimal:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 58, alignment: .leading)
-                Picker("", selection: $selectedDecimal) {
-                    Text("Period (.)").tag(".")
-                    Text("Comma (,)").tag(",")
+            // Column 2: Header L# & Data Starts
+            VStack(alignment: .leading, spacing: 4) {
+                // Row 1: Header Line
+                HStack(spacing: 4) {
+                    Text("Header L#:")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 84, alignment: .leading)
+                    TextField("None", text: $headerLineText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .multilineTextAlignment(.center)
+                        .frame(width: 42)
+                        .onChange(of: headerLineText) { _, newValue in
+                            if let val = Int(newValue.trimmingCharacters(in: .whitespaces)) {
+                                headerLineChoice = max(0, val)
+                            } else if newValue.isEmpty {
+                                headerLineChoice = 0
+                            }
+                            onApplyCustomStructure()
+                        }
+                    Stepper("", value: Binding(
+                        get: { headerLineChoice },
+                        set: { newVal in
+                            headerLineChoice = max(0, newVal)
+                            headerLineText = newVal <= 0 ? "" : "\(newVal)"
+                            onApplyCustomStructure()
+                        }
+                    ), in: 0...max(linesCount, 1))
+                    .labelsHidden()
                 }
-                .pickerStyle(.menu)
-                .frame(width: 115)
+
+                // Row 2: Data Starts (84pt width so it NEVER wraps)
+                HStack(spacing: 4) {
+                    Text("Data Starts:")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 84, alignment: .leading)
+                    TextField("1", text: $dataStartLineText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .multilineTextAlignment(.center)
+                        .frame(width: 42)
+                        .onChange(of: dataStartLineText) { _, newValue in
+                            if let val = Int(newValue.trimmingCharacters(in: .whitespaces)) {
+                                dataStartLineChoice = max(1, val)
+                            }
+                            onApplyCustomStructure()
+                        }
+                    Stepper("", value: Binding(
+                        get: { dataStartLineChoice },
+                        set: { newVal in
+                            dataStartLineChoice = max(1, newVal)
+                            dataStartLineText = "\(dataStartLineChoice)"
+                            onApplyCustomStructure()
+                        }
+                    ), in: 1...max(linesCount, 1))
+                    .labelsHidden()
+                }
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(NSColor.windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8))
     }
 
-    // MARK: - Card 2: Row Bounds
-    private var card2RowBounds: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Row 1: Header Line
-            HStack(spacing: 4) {
-                Text("Header L#:")
+    // MARK: - Section 2: Linked Grammar
+    private var section2LinkedGrammar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Row 1: Grammar Selector Menu
+            HStack(spacing: 5) {
+                Text("Grammar:")
                     .font(.system(size: 10.5, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 72, alignment: .leading)
-                TextField("None", text: $headerLineText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .multilineTextAlignment(.center)
-                    .frame(width: 42)
-                    .onChange(of: headerLineText) { _, newValue in
-                        if let val = Int(newValue.trimmingCharacters(in: .whitespaces)) {
-                            headerLineChoice = max(0, val)
-                        } else if newValue.isEmpty {
-                            headerLineChoice = 0
+
+                Menu {
+                    let projectGrammars = availableGrammars.filter { $0.scope == .project }
+                    let globalGrammars = availableGrammars.filter { $0.scope == .global || ($0.scope == nil && $0.isDefault) }
+                    let otherGrammars = availableGrammars.filter { $0.scope != .project && !globalGrammars.contains($0) }
+
+                    if !projectGrammars.isEmpty {
+                        Section("Project Grammars") {
+                            ForEach(projectGrammars) { g in
+                                Button {
+                                    activeGrammarID = g.id
+                                } label: {
+                                    if g.id == activeGrammarID {
+                                        Label("📁 \(g.name) (Project)", systemImage: "checkmark")
+                                    } else {
+                                        Text("📁 \(g.name) (Project)")
+                                    }
+                                }
+                            }
                         }
                     }
-                Stepper("", value: Binding(
-                    get: { headerLineChoice },
-                    set: { newVal in
-                        headerLineChoice = max(0, newVal)
-                        headerLineText = newVal <= 0 ? "" : "\(newVal)"
-                    }
-                ), in: 0...max(linesCount, 1))
-                .labelsHidden()
-            }
 
-            // Row 2: Data Start Line
-            HStack(spacing: 4) {
-                Text("Data Start L#:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 72, alignment: .leading)
-                TextField("1", text: $dataStartLineText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .multilineTextAlignment(.center)
-                    .frame(width: 42)
-                    .onChange(of: dataStartLineText) { _, newValue in
-                        if let val = Int(newValue.trimmingCharacters(in: .whitespaces)) {
-                            dataStartLineChoice = max(1, val)
+                    if !globalGrammars.isEmpty {
+                        Section("Global Grammars") {
+                            ForEach(globalGrammars) { g in
+                                Button {
+                                    activeGrammarID = g.id
+                                } label: {
+                                    if g.id == activeGrammarID {
+                                        Label("🌐 \(g.name) (Global)", systemImage: "checkmark")
+                                    } else {
+                                        Text("🌐 \(g.name) (Global)")
+                                    }
+                                }
+                            }
                         }
                     }
-                Stepper("", value: Binding(
-                    get: { dataStartLineChoice },
-                    set: { newVal in
-                        dataStartLineChoice = max(1, newVal)
-                        dataStartLineText = "\(dataStartLineChoice)"
-                    }
-                ), in: 1...max(linesCount, 1))
-                .labelsHidden()
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(NSColor.windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8))
-    }
 
-    // MARK: - Card 3: Metadata & Columns Status & Preview Controls
-    private var card3MetadataAndColumnsStatus: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Row 1: Metadata Items Popover Button & Preview Row Control
-            HStack(spacing: 6) {
-                Button {
-                    showMetadataPopover.toggle()
+                    if !otherGrammars.isEmpty {
+                        Section("Other Grammars") {
+                            ForEach(otherGrammars) { g in
+                                Button {
+                                    activeGrammarID = g.id
+                                } label: {
+                                    if g.id == activeGrammarID {
+                                        Label(g.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(g.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button {
+                        onCreateNewGrammar()
+                    } label: {
+                        Label("+ Create New Grammar…", systemImage: "plus")
+                    }
                 } label: {
+                    let active = availableGrammars.first(where: { $0.id == activeGrammarID })
+                    let icon = (active?.scope == .project) ? "📁" : "🌐"
+                    let scopeLabel = (active?.scope == .project) ? " (Project)" : " (Global)"
+                    let name = active?.name ?? "Standard Scientific"
+                    let displayText = "\(icon) \(name)\(active?.scope != nil ? scopeLabel : "")"
+
                     HStack(spacing: 4) {
-                        Image(systemName: "tag.fill")
-                            .foregroundStyle(Color.purple)
-                        Text("Metadata Tags (\(activeMetadataCount)/\(metadataEntriesCount))")
+                        Text(displayText)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .lineLimit(1)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 7.5))
+                            .foregroundStyle(.secondary)
                     }
-                    .font(.system(size: 10.5))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(Color(NSColor.windowBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8)
+                    )
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .popover(isPresented: $showMetadataPopover, arrowEdge: .bottom) {
-                    metadataPopoverContent
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            // Row 2: Shortcut to Create New Grammar & Template hint
+            HStack(spacing: 6) {
+                Button {
+                    onCreateNewGrammar()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text("+ Create New Grammar…")
+                            .font(.system(size: 9.5))
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.mini)
+                .help("Switch to Filename Grammar tab to define a new naming pattern")
+
+                if let active = availableGrammars.first(where: { $0.id == activeGrammarID }), !active.template.isEmpty {
+                    Text(active.template)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 160, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    // MARK: - Section 3: View & Metadata Controls
+    private var section3ViewAndMetadata: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Row 1: Header View segmented switch & Preview rows selector
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text("Header View:")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+
+                    Picker("", selection: $headerRowMode) {
+                        Label("Raw Stream", systemImage: "doc.text")
+                            .tag(ParserSettingsCanvasView.HeaderRowMode.raw)
+                        Label("Column Cards", systemImage: "rectangle.split.3x1.fill")
+                            .tag(ParserSettingsCanvasView.HeaderRowMode.configured)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 195)
                 }
 
-                // Preview row count selector & Expand All
                 HStack(spacing: 4) {
                     Text("Preview:")
                         .font(.system(size: 10, weight: .bold))
@@ -231,62 +384,61 @@ struct StreamToolbarCards: View {
                 }
             }
 
-            // Row 2: Columns Summary & Quick Actions
-            HStack(spacing: 5) {
-                let activeCols = columns.filter { !$0.isSkipped }.count
-                Text("Cols: \(activeCols)/\(columns.count)")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(activeCols < columns.count ? Color.orange : Color.secondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
-                    .background(Capsule().fill(Color.secondary.opacity(0.1)))
-
-                Button("Include All") {
-                    onIncludeAllColumns()
+            // Row 2: Metadata Tags Button & Columns Summary / Quick Actions
+            HStack(spacing: 8) {
+                Button {
+                    showMetadataPopover.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "tag.fill")
+                            .foregroundStyle(Color.purple)
+                        Text("Metadata Tags (\(activeMetadataCount)/\(metadataEntriesCount))")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7.5))
+                    }
+                    .font(.system(size: 10.5))
                 }
-                .font(.system(size: 9.5))
-                .buttonStyle(.borderless)
-                .controlSize(.mini)
-
-                Button("⊘ Auto-Skip Empty") {
-                    onAutoSkipEmptyColumns()
-                }
-                .font(.system(size: 9.5, weight: .medium))
                 .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .help("Automatically marks completely empty data columns as skipped")
+                .controlSize(.small)
+                .popover(isPresented: $showMetadataPopover, arrowEdge: .bottom) {
+                    metadataPopoverContent
+                }
+
+                HStack(spacing: 5) {
+                    let activeCols = columns.filter { !$0.isSkipped }.count
+                    Text("Cols: \(activeCols)/\(columns.count)")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(activeCols < columns.count ? Color.orange : Color.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.secondary.opacity(0.1)))
+
+                    Button("Include All") {
+                        onIncludeAllColumns()
+                    }
+                    .font(.system(size: 9.5))
+                    .buttonStyle(.borderless)
+                    .controlSize(.mini)
+
+                    Button("⊘ Auto-Skip Empty") {
+                        onAutoSkipEmptyColumns()
+                    }
+                    .font(.system(size: 9.5, weight: .medium))
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("Automatically marks completely empty data columns as skipped")
+                }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(NSColor.windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8))
     }
 
-    // MARK: - Contextual Column / Row Selection Actions Card
-    private var contextualSelectionCard: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Row 1: Header Mode Segmented Switch (Raw Header vs Column Cards)
-            HStack(spacing: 6) {
-                Text("Header View:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-
-                Picker("", selection: $headerRowMode) {
-                    Label("Raw Stream", systemImage: "doc.text")
-                        .tag(ParserSettingsCanvasView.HeaderRowMode.raw)
-                    Label("Column Cards", systemImage: "rectangle.split.3x1.fill")
-                        .tag(ParserSettingsCanvasView.HeaderRowMode.configured)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 210)
-            }
-
-            // Row 2: Contextual Selection Actions OR Instruction Hint
+    // MARK: - Contextual Column / Row Selection Actions Section
+    private var contextualSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
             if !selectedColumns.isEmpty {
                 let allSelectedSkipped = selectedColumns.allSatisfy { $0 < columns.count && columns[$0].isSkipped }
 
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Text("\(selectedColumns.count) selected")
                         .font(StudioTokens.captionBold(uiFontSize: uiFontSize))
                         .foregroundStyle(Color.accentColor)
@@ -301,17 +453,17 @@ struct StreamToolbarCards: View {
                             onSkipSelectedColumns()
                         }
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: allSelectedSkipped ? "arrow.uturn.backward" : "nosign")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 8.5, weight: .bold))
                             Text(allSelectedSkipped
                                  ? (selectedColumns.count > 1 ? "Include (\(selectedColumns.count))" : "Include")
                                  : (selectedColumns.count > 1 ? "Skip (\(selectedColumns.count))" : "Skip"))
                                 .font(StudioTokens.toolbarLabel(uiFontSize: uiFontSize))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .frame(height: 24)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .frame(height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
                                 .fill(isSkipLit ? skipColor.opacity(0.18) : Color.primary.opacity(0.04))
@@ -333,15 +485,15 @@ struct StreamToolbarCards: View {
                     Button {
                         onSetSelectedColumnsRole(true, false)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Text("X")
-                                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 9, weight: .heavy, design: .monospaced))
                             Text(selectedColumns.count > 1 ? "Set X (\(selectedColumns.count))" : "Set X")
                                 .font(StudioTokens.toolbarLabel(uiFontSize: uiFontSize))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .frame(height: 24)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .frame(height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
                                 .fill(isXLit ? Color.blue.opacity(0.18) : Color.primary.opacity(0.04))
@@ -363,15 +515,15 @@ struct StreamToolbarCards: View {
                     Button {
                         onSetSelectedColumnsRole(false, true)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Text("Y")
-                                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                                .font(.system(size: 9, weight: .heavy, design: .monospaced))
                             Text(selectedColumns.count > 1 ? "Set Y (\(selectedColumns.count))" : "Set Y")
                                 .font(StudioTokens.toolbarLabel(uiFontSize: uiFontSize))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .frame(height: 24)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .frame(height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
                                 .fill(isYLit ? Color.green.opacity(0.18) : Color.primary.opacity(0.04))
@@ -416,17 +568,17 @@ struct StreamToolbarCards: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 8.5))
+                                .font(.system(size: 8))
                             Text(selectedColumns.count > 1 ? "Set Prog (\(selectedColumns.count))" : "Set Prog")
                                 .font(StudioTokens.toolbarLabel(uiFontSize: uiFontSize))
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 7))
+                                .font(.system(size: 6.5))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .frame(height: 24)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .frame(height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
                                 .fill(isProgLit ? Color.purple.opacity(0.18) : Color.primary.opacity(0.04))
@@ -452,7 +604,7 @@ struct StreamToolbarCards: View {
                 }
             } else if let hColIdx = hoveredColumn, hColIdx < columns.count {
                 let col = columns[hColIdx]
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Text("Col #\(hColIdx + 1):")
                         .font(StudioTokens.captionBold(uiFontSize: uiFontSize))
                         .foregroundStyle(.secondary)
@@ -465,7 +617,7 @@ struct StreamToolbarCards: View {
                         hasDropdown: false,
                         uiFontSize: uiFontSize
                     )
-                    Text("— Click column header to select")
+                    Text("— Click header to select")
                         .font(StudioTokens.caption(uiFontSize: uiFontSize))
                         .foregroundStyle(.tertiary)
                 }
@@ -499,52 +651,30 @@ struct StreamToolbarCards: View {
                 HStack(spacing: 4) {
                     Image(systemName: "cursorarrow.click.2")
                         .font(.system(size: 8))
-                    Text("Click, ⇧Click, ⌘Click columns in grid to batch assign")
+                    Text("Click columns to batch assign")
                         .font(.system(size: 9.5))
                 }
                 .foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(NSColor.windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8))
     }
 
-    // MARK: - Card 4: Run Actions
-    private var card4RunActions: some View {
-        VStack(alignment: .trailing, spacing: 5) {
-            // Row 1: Re-run Auto Detect Button
-            Button {
-                onRunAutoDetect()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                    Text("Auto Detect")
-                    ShortcutBadge("autoDetect")
-                }
-                .font(.system(size: 10.5))
+    // MARK: - Section 4: Actions (Save Profile)
+    private var section4Actions: some View {
+        Button {
+            onSaveProfile()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "square.and.arrow.down.fill")
+                    .font(.system(size: 10.5))
+                Text("Save Profile")
+                    .font(.system(size: 11, weight: .semibold))
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .keyboardShortcut("d", modifiers: [.command])
-
-            // Row 2: Apply Button
-            Button {
-                onApplyCustomStructure()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark")
-                    Text("Apply & Parse")
-                }
-                .font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(NSColor.windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8))
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .keyboardShortcut("s", modifiers: [.command])
+        .help("Save instrument profile and parsing rules to project (⌘S)")
     }
 }

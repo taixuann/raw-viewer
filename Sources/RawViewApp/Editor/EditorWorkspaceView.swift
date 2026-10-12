@@ -78,7 +78,12 @@ final class EditorWorkspaceViewModel: ObservableObject {
 
     // MARK: - Grammar Engine State
     @Published var grammarCatalog: FilenameGrammarCatalog = FilenameGrammarCatalog(grammars: FilenameGrammarCatalog.standardDefaults, activeGrammarID: "autolab-scientific")
-    @Published var activeGrammarID: String = "autolab-scientific"
+    @Published var activeGrammarID: String = "autolab-scientific" {
+        didSet {
+            guard activeGrammarID != oldValue else { return }
+            selectGrammar(id: activeGrammarID)
+        }
+    }
     @Published var activeTemplate: String = "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]"
     @Published var sampleExtractedFacts: ExtractedGrammarFacts = ExtractedGrammarFacts(isMatched: false)
     @Published var grammarMatchError: String? = nil
@@ -389,7 +394,9 @@ final class EditorWorkspaceViewModel: ObservableObject {
     }
 
     func selectGrammar(id: String) {
-        activeGrammarID = id
+        if activeGrammarID != id {
+            activeGrammarID = id
+        }
         grammarCatalog.activeGrammarID = id
         if let match = grammarCatalog.grammars.first(where: { $0.id == id }) {
             activeTemplate = match.template

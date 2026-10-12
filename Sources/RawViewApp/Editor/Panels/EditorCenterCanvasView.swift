@@ -38,6 +38,14 @@ struct EditorCenterCanvasView: View {
                     columns: $model.editor.columns,
                     lineTags: model.editor.lineTags,
                     metadataCellTags: model.editor.metadataCellTags,
+                    activeGrammarID: $model.activeGrammarID,
+                    availableGrammars: model.grammarCatalog.grammars,
+                    onCreateNewGrammar: {
+                        selectedStudioTab = .tokens
+                    },
+                    onSaveProfile: {
+                        model.saveProfileAndRules()
+                    },
                     onTagMetadataCell: { tag in
                         model.tagMetadataCell(tag)
                     },
