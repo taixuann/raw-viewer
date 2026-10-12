@@ -44,6 +44,20 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
     }
 }
 
+public enum FilenameGrammarScope: String, Sendable, Equatable, CaseIterable, Identifiable {
+    case project = "project"
+    case global = "global"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .project: return "Project"
+        case .global: return "Global"
+        }
+    }
+}
+
 public struct FilenameGrammar: Sendable, Equatable, Identifiable {
     public var id: String
     public var name: String
@@ -51,6 +65,7 @@ public struct FilenameGrammar: Sendable, Equatable, Identifiable {
     public var description: String
     public var fields: [GrammarField]
     public var isDefault: Bool
+    public var scope: FilenameGrammarScope?
 
     public init(
         id: String = UUID().uuidString,
@@ -58,7 +73,8 @@ public struct FilenameGrammar: Sendable, Equatable, Identifiable {
         template: String,
         description: String = "",
         fields: [GrammarField] = [],
-        isDefault: Bool = false
+        isDefault: Bool = false,
+        scope: FilenameGrammarScope? = nil
     ) {
         self.id = id
         self.name = name
@@ -66,6 +82,7 @@ public struct FilenameGrammar: Sendable, Equatable, Identifiable {
         self.description = description
         self.fields = fields
         self.isDefault = isDefault
+        self.scope = scope
     }
 }
 
@@ -89,7 +106,7 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
         FilenameGrammar(
             id: "autolab-scientific",
             name: "Autolab USTH Scientific Pattern",
-            template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]",
+            template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}",
             description: "Default pattern for electrochemistry measurement series",
             fields: [
                 GrammarField(name: "date", role: "Date & Time", type: .datetime, formatHint: "DDMMYY-HHmmSS"),
@@ -97,7 +114,8 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
                 GrammarField(name: "mode", role: "Mode", type: .string),
                 GrammarField(name: "device-id", role: "Device ID", type: .string, stripBrackets: true),
                 GrammarField(name: "study", role: "Study", type: .string),
-                GrammarField(name: "remarks", role: "Remarks", type: .string, stripBrackets: true)
+                GrammarField(name: "remarks", role: "Remarks", type: .string, stripBrackets: true, isOptional: true),
+                GrammarField(name: "batch", role: "Batch", type: .number, formatHint: "001", isOptional: true)
             ],
             isDefault: true
         ),
@@ -125,6 +143,7 @@ public struct ExtractedGrammarFacts: Sendable, Equatable {
     public let mode: String?
     public let deviceID: String?
     public let category: String?
+    public let batch: String?
     public let remarks: [String]
     public let unmatchedReason: String?
 
@@ -136,6 +155,7 @@ public struct ExtractedGrammarFacts: Sendable, Equatable {
         mode: String? = nil,
         deviceID: String? = nil,
         category: String? = nil,
+        batch: String? = nil,
         remarks: [String] = [],
         unmatchedReason: String? = nil
     ) {
@@ -146,6 +166,7 @@ public struct ExtractedGrammarFacts: Sendable, Equatable {
         self.mode = mode
         self.deviceID = deviceID
         self.category = category
+        self.batch = batch
         self.remarks = remarks
         self.unmatchedReason = unmatchedReason
     }
@@ -170,6 +191,10 @@ public enum GrammarCompileError: Error, LocalizedError {
 
 public enum FilenameGrammarEngine {
     public static let relativePath = ".rawviewer/view/grammar.yaml"
+
+    public static var globalGrammarURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".rawviewer/grammar.yaml")
+    }
 
     private static func patternForField(_ field: GrammarField?, hasTrailing: Bool) -> String {
         guard let field = field else {
@@ -317,6 +342,7 @@ public enum FilenameGrammarEngine {
         var mode: String? = nil
         var deviceID: String? = nil
         var category: String? = nil
+        var batch: String? = nil
         var remarks: [String] = []
 
         for name in fieldNames {
@@ -335,6 +361,8 @@ public enum FilenameGrammarEngine {
                 deviceID = val
             } else if role == "study" || role == "category" || lowerName == "study" || lowerName == "category" {
                 category = val
+            } else if role == "batch" || lowerName == "batch" {
+                batch = val
             } else if role == "remarks" || lowerName.contains("remark") {
                 remarks.append(val)
             }
@@ -348,6 +376,7 @@ public enum FilenameGrammarEngine {
             mode: mode,
             deviceID: deviceID,
             category: category,
+            batch: batch,
             remarks: remarks,
             unmatchedReason: nil
         )
@@ -358,11 +387,10 @@ public enum FilenameGrammarEngine {
            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
-    /// Saves the grammar catalog to `.rawviewer/view/grammar.yaml`.
-    public static func save(catalog: FilenameGrammarCatalog, project: ProjectContext) throws {
-        let dir = project.root.appendingPathComponent(".rawviewer/view", isDirectory: true)
+    /// Saves the grammar catalog to a YAML file at the specified file URL.
+    public static func save(catalog: FilenameGrammarCatalog, fileURL: URL) throws {
+        let dir = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("grammar.yaml")
 
         var lines: [String] = []
         if let active = catalog.activeGrammarID {
@@ -375,6 +403,9 @@ public enum FilenameGrammarEngine {
             lines.append("    template: \"\(yamlEscape(g.template))\"")
             lines.append("    description: \"\(yamlEscape(g.description))\"")
             lines.append("    is_default: \(g.isDefault)")
+            if let scope = g.scope {
+                lines.append("    scope: \"\(yamlEscape(scope.rawValue))\"")
+            }
             if !g.fields.isEmpty {
                 lines.append("    fields:")
                 for f in g.fields {
@@ -390,19 +421,65 @@ public enum FilenameGrammarEngine {
         }
 
         let yaml = lines.joined(separator: "\n") + "\n"
-        try yaml.write(to: file, atomically: true, encoding: .utf8)
+        try yaml.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
-    /// Loads the grammar catalog from `.rawviewer/view/grammar.yaml`, falling back to standard defaults if absent.
-    public static func load(project: ProjectContext) -> FilenameGrammarCatalog? {
+    /// Saves the grammar catalog to `.rawviewer/view/grammar.yaml` in the given project.
+    public static func save(catalog: FilenameGrammarCatalog, project: ProjectContext) throws {
         let file = project.root.appendingPathComponent(relativePath)
-        guard FileManager.default.fileExists(atPath: file.path),
-              let data = try? Data(contentsOf: file),
+        try save(catalog: catalog, fileURL: file)
+    }
+
+    /// Loads the grammar catalog from the specified file URL.
+    public static func load(fileURL: URL) -> FilenameGrammarCatalog? {
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let data = try? Data(contentsOf: fileURL),
               let text = String(data: data, encoding: .utf8),
               let node = try? YAMLParser.parse(text) else {
             return nil
         }
         return parse(node: node)
+    }
+
+    /// Loads the grammar catalog from `.rawviewer/view/grammar.yaml` in the given project.
+    public static func load(project: ProjectContext) -> FilenameGrammarCatalog? {
+        let file = project.root.appendingPathComponent(relativePath)
+        return load(fileURL: file)
+    }
+
+    /// Loads combined project and global grammar catalogs.
+    /// Returns tagged Project and Global grammars, along with the resolved active grammar ID.
+    public static func loadCombined(
+        project: ProjectContext?,
+        globalURL: URL = globalGrammarURL
+    ) -> (projectGrammars: [FilenameGrammar], globalGrammars: [FilenameGrammar], activeID: String?) {
+        let projectCatalog = project.flatMap { load(project: $0) }
+        let globalCatalog = load(fileURL: globalURL)
+
+        let projectGrammars: [FilenameGrammar] = (projectCatalog?.grammars ?? []).map {
+            var g = $0
+            g.scope = .project
+            return g
+        }
+
+        let baseGlobalGrammars = (globalCatalog?.grammars.isEmpty == false)
+            ? globalCatalog!.grammars
+            : FilenameGrammarCatalog.standardDefaults
+
+        let globalGrammars: [FilenameGrammar] = baseGlobalGrammars.map {
+            var g = $0
+            g.scope = .global
+            return g
+        }
+
+        let activeID = projectCatalog?.activeGrammarID
+            ?? projectGrammars.first(where: { $0.isDefault })?.id
+            ?? globalCatalog?.activeGrammarID
+            ?? globalGrammars.first(where: { $0.isDefault })?.id
+            ?? projectGrammars.first?.id
+            ?? globalGrammars.first?.id
+
+        return (projectGrammars, globalGrammars, activeID)
     }
 
     static func parse(node: YAMLNode) -> FilenameGrammarCatalog? {
@@ -418,6 +495,8 @@ public enum FilenameGrammarEngine {
                 }
                 let desc = item.value(for: "description")?.scalarValue ?? ""
                 let isDef = (item.value(for: "is_default")?.scalarValue?.lowercased() == "true")
+                let scopeRaw = item.value(for: "scope")?.scalarValue
+                let scope = scopeRaw.flatMap { FilenameGrammarScope(rawValue: $0) }
 
                 var fields: [GrammarField] = []
                 if let fieldList = item.value(for: "fields")?.listItems {
@@ -448,7 +527,8 @@ public enum FilenameGrammarEngine {
                     template: template,
                     description: desc,
                     fields: fields,
-                    isDefault: isDef
+                    isDefault: isDef,
+                    scope: scope
                 ))
             }
         }

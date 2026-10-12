@@ -157,4 +157,92 @@ struct FilenameGrammarEngineTests {
         let res2 = FilenameGrammarEngine.extract(from: nonMatchingBatch, grammar: grammar)
         #expect(res2.isMatched == false)
     }
+
+    @Test func standardScientificTemplateWithBatchAndDateTime() throws {
+        let standard = FilenameGrammarCatalog.standardDefaults.first!
+        #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}")
+        let (_, fieldNames) = try FilenameGrammarEngine.compile(template: standard.template, fields: standard.fields)
+        #expect(fieldNames.contains("batch"))
+
+        let sample = "261012-143000_Autolab.CV_[D01]_Stability_r.[scan1]_001.csv"
+        let facts = FilenameGrammarEngine.extract(from: sample, grammar: standard)
+        #expect(facts.isMatched == true)
+        #expect(facts.extractedFields["date"] == "261012-143000")
+        #expect(facts.extractedFields["batch"] == "001")
+        #expect(facts.extractedFields["device-id"] == "D01")
+    }
+
+    @Test func globalAndProjectStorageIsolation() throws {
+        let globalDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: globalDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: globalDir) }
+        let globalFile = globalDir.appendingPathComponent("grammar.yaml")
+
+        let testCatalog = FilenameGrammarCatalog(grammars: [
+            FilenameGrammar(id: "global-1", name: "Global Grammar", template: "{date}_{study}")
+        ])
+        try FilenameGrammarEngine.save(catalog: testCatalog, fileURL: globalFile)
+
+        let loaded = FilenameGrammarEngine.load(fileURL: globalFile)
+        #expect(loaded?.grammars.first?.id == "global-1")
+    }
+
+    @Test func loadCombinedMergesProjectAndGlobalGrammars() throws {
+        let (project, root) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let tempGlobalDir = FileManager.default.temporaryDirectory.appendingPathComponent("global-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempGlobalDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempGlobalDir) }
+        let tempGlobalFile = tempGlobalDir.appendingPathComponent("grammar.yaml")
+
+        let projectGrammar = FilenameGrammar(id: "proj-1", name: "Project G", template: "{date}_{study}")
+        let projectCatalog = FilenameGrammarCatalog(grammars: [projectGrammar], activeGrammarID: "proj-1")
+        try FilenameGrammarEngine.save(catalog: projectCatalog, project: project)
+
+        let globalGrammar = FilenameGrammar(id: "glob-1", name: "Global G", template: "{date}_{instrument}")
+        let globalCatalog = FilenameGrammarCatalog(grammars: [globalGrammar], activeGrammarID: "glob-1")
+        try FilenameGrammarEngine.save(catalog: globalCatalog, fileURL: tempGlobalFile)
+
+        let combined = FilenameGrammarEngine.loadCombined(project: project, globalURL: tempGlobalFile)
+        #expect(combined.projectGrammars.count == 1)
+        #expect(combined.projectGrammars.first?.id == "proj-1")
+        #expect(combined.projectGrammars.first?.scope == .project)
+        #expect(combined.globalGrammars.count == 1)
+        #expect(combined.globalGrammars.first?.id == "glob-1")
+        #expect(combined.globalGrammars.first?.scope == .global)
+        #expect(combined.activeID == "proj-1")
+    }
+
+    @Test func standardScientificTemplatePermutations() throws {
+        let standard = FilenameGrammarCatalog.standardDefaults.first!
+
+        // 1. With remarks and batch
+        let s1 = "261012-143000_Autolab.CV_[D01]_Stability_r.[scan1]_001.csv"
+        let f1 = FilenameGrammarEngine.extract(from: s1, grammar: standard)
+        #expect(f1.isMatched == true)
+        #expect(f1.extractedFields["remarks"] == "scan1")
+        #expect(f1.extractedFields["batch"] == "001")
+
+        // 2. With remarks, without batch
+        let s2 = "261012-143000_Autolab.CV_[D01]_Stability_r.[scan1].csv"
+        let f2 = FilenameGrammarEngine.extract(from: s2, grammar: standard)
+        #expect(f2.isMatched == true)
+        #expect(f2.extractedFields["remarks"] == "scan1")
+        #expect(f2.extractedFields["batch"] == nil)
+
+        // 3. Without remarks, with batch
+        let s3 = "261012-143000_Autolab.CV_[D01]_Stability_001.csv"
+        let f3 = FilenameGrammarEngine.extract(from: s3, grammar: standard)
+        #expect(f3.isMatched == true)
+        #expect(f3.extractedFields["remarks"] == nil)
+        #expect(f3.extractedFields["batch"] == "001")
+
+        // 4. Without remarks, without batch
+        let s4 = "261012-143000_Autolab.CV_[D01]_Stability.csv"
+        let f4 = FilenameGrammarEngine.extract(from: s4, grammar: standard)
+        #expect(f4.isMatched == true)
+        #expect(f4.extractedFields["remarks"] == nil)
+        #expect(f4.extractedFields["batch"] == nil)
+    }
 }
