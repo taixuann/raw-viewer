@@ -212,128 +212,91 @@ struct StreamToolbarCards: View {
 
     // MARK: - Section 2: Linked Grammar
     private var section2LinkedGrammar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Row 1: Grammar Selector Menu
-            HStack(spacing: 5) {
-                Text("Grammar:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 5) {
+            Text("Grammar:")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(.secondary)
 
-                Menu {
-                    let projectGrammars = availableGrammars.filter { $0.scope == .project }
-                    let globalGrammars = availableGrammars.filter { $0.scope == .global || ($0.scope == nil && $0.isDefault) }
-                    let otherGrammars = availableGrammars.filter { $0.scope != .project && !globalGrammars.contains($0) }
+            Menu {
+                let projectGrammars = availableGrammars.filter { $0.scope == .project }
+                let globalGrammars = availableGrammars.filter { $0.scope == .global || ($0.scope == nil && $0.isDefault) }
+                let otherGrammars = availableGrammars.filter { $0.scope != .project && !globalGrammars.contains($0) }
 
-                    if !projectGrammars.isEmpty {
-                        Section("Project Grammars") {
-                            ForEach(projectGrammars) { g in
-                                Button {
-                                    activeGrammarID = g.id
-                                } label: {
-                                    if g.id == activeGrammarID {
-                                        Label("📁 \(g.name) (Project)", systemImage: "checkmark")
-                                    } else {
-                                        Text("📁 \(g.name) (Project)")
-                                    }
+                if !projectGrammars.isEmpty {
+                    Section("Project Grammars") {
+                        ForEach(projectGrammars) { g in
+                            Button {
+                                activeGrammarID = g.id
+                            } label: {
+                                if g.id == activeGrammarID {
+                                    Label("📁 \(g.name) (Project)", systemImage: "checkmark")
+                                } else {
+                                    Text("📁 \(g.name) (Project)")
                                 }
                             }
                         }
                     }
-
-                    if !globalGrammars.isEmpty {
-                        Section("Global Grammars") {
-                            ForEach(globalGrammars) { g in
-                                Button {
-                                    activeGrammarID = g.id
-                                } label: {
-                                    if g.id == activeGrammarID {
-                                        Label("🌐 \(g.name) (Global)", systemImage: "checkmark")
-                                    } else {
-                                        Text("🌐 \(g.name) (Global)")
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !otherGrammars.isEmpty {
-                        Section("Other Grammars") {
-                            ForEach(otherGrammars) { g in
-                                Button {
-                                    activeGrammarID = g.id
-                                } label: {
-                                    if g.id == activeGrammarID {
-                                        Label(g.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(g.name)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Button {
-                        onCreateNewGrammar()
-                    } label: {
-                        Label("+ Create New Grammar…", systemImage: "plus")
-                    }
-                } label: {
-                    let active = availableGrammars.first(where: { $0.id == activeGrammarID })
-                    let icon = (active?.scope == .project) ? "📁" : "🌐"
-                    let scopeLabel = (active?.scope == .project) ? " (Project)" : " (Global)"
-                    let name = active?.name ?? "Standard Scientific"
-                    let displayText = "\(icon) \(name)\(active?.scope != nil ? scopeLabel : "")"
-
-                    HStack(spacing: 4) {
-                        Text(displayText)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7.5))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3.5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(Color(NSColor.windowBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.8)
-                    )
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
 
-            // Row 2: Shortcut to Create New Grammar & Template hint
-            HStack(spacing: 6) {
+                if !globalGrammars.isEmpty {
+                    Section("Global Grammars") {
+                        ForEach(globalGrammars) { g in
+                            Button {
+                                activeGrammarID = g.id
+                            } label: {
+                                if g.id == activeGrammarID {
+                                    Label("🌐 \(g.name) (Global)", systemImage: "checkmark")
+                                } else {
+                                    Text("🌐 \(g.name) (Global)")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !otherGrammars.isEmpty {
+                    Section("Other Grammars") {
+                        ForEach(otherGrammars) { g in
+                            Button {
+                                activeGrammarID = g.id
+                            } label: {
+                                if g.id == activeGrammarID {
+                                    Label(g.name, systemImage: "checkmark")
+                                } else {
+                                    Text(g.name)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
                 Button {
                     onCreateNewGrammar()
                 } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 8, weight: .semibold))
-                        Text("+ Create New Grammar…")
-                            .font(.system(size: 9.5))
-                    }
+                    Label("+ Create New Grammar…", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.mini)
-                .help("Switch to Filename Grammar tab to define a new naming pattern")
+            } label: {
+                let active = availableGrammars.first(where: { $0.id == activeGrammarID })
+                let icon = (active?.scope == .project) ? "📁" : "🌐"
+                let scopeLabel = (active?.scope == .project) ? " (Project)" : " (Global)"
+                let name = active?.name ?? "Standard Filename Pattern"
+                let displayText = "\(icon) \(name)\(active?.scope != nil ? scopeLabel : "")"
 
-                if let active = availableGrammars.first(where: { $0.id == activeGrammarID }), !active.template.isEmpty {
-                    Text(active.template)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    Text(displayText)
+                        .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 160, alignment: .leading)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
+                .frame(height: 24)
             }
+            .menuStyle(.borderedButton)
+            .controlSize(.small)
+            .fixedSize()
         }
     }
 
@@ -376,10 +339,12 @@ struct StreamToolbarCards: View {
                         isDataExpanded.toggle()
                     } label: {
                         Image(systemName: isDataExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 9))
+                            .font(.system(size: 10, weight: .medium))
+                            .frame(width: 14, height: 14, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .controlSize(.small)
+                    .frame(width: 24, height: 24)
                     .help(isDataExpanded ? "Collapse to preview rows" : "Expand all rows")
                 }
             }
@@ -394,9 +359,10 @@ struct StreamToolbarCards: View {
                             .foregroundStyle(Color.purple)
                         Text("Metadata Tags (\(activeMetadataCount)/\(metadataEntriesCount))")
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 7.5))
+                            .font(.system(size: 8))
                     }
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(height: 24)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -407,25 +373,27 @@ struct StreamToolbarCards: View {
                 HStack(spacing: 5) {
                     let activeCols = columns.filter { !$0.isSkipped }.count
                     Text("Cols: \(activeCols)/\(columns.count)")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                         .foregroundStyle(activeCols < columns.count ? Color.orange : Color.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                        .padding(.horizontal, 6)
+                        .frame(height: 24)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
 
                     Button("Include All") {
                         onIncludeAllColumns()
                     }
-                    .font(.system(size: 9.5))
-                    .buttonStyle(.borderless)
-                    .controlSize(.mini)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(height: 24)
 
                     Button("⊘ Auto-Skip Empty") {
                         onAutoSkipEmptyColumns()
                     }
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
                     .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .controlSize(.small)
+                    .frame(height: 24)
                     .help("Automatically marks completely empty data columns as skipped")
                 }
             }

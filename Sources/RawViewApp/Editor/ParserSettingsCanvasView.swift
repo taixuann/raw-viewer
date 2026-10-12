@@ -33,7 +33,7 @@ struct ParserSettingsCanvasView: View {
     @State private var selectedLines: Set<Int> = [] // 1-based line numbers for Shift/Cmd selection
     @State private var lastClickedLine: Int? = nil // Selection anchor for Shift+Click range
     @State private var isDataExpanded: Bool = false // Toggle between head+tail inspection and full stream
-    @State private var previewRowCount: Int = 50 // Number of data preview rows before folding
+    @State private var previewRowCount: Int = 25 // Number of data preview rows before folding
 
     @State private var activeCellPopover: CellTarget? = nil
 
