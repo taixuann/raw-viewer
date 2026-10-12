@@ -253,4 +253,31 @@ struct FilenameGrammarEngineTests {
         #expect(f4.extractedFields["remarks"] == nil)
         #expect(f4.extractedFields["batch"] == nil)
     }
+
+    @Test func testProgressiveTokenExtractionOnPartialMismatch() throws {
+        let grammar = FilenameGrammar(
+            id: "standard-scientific",
+            name: "Standard Filename Pattern",
+            template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}",
+            fields: [
+                GrammarField(name: "date", role: "Date & Time", type: .datetime, formatHint: "DDMMYY-HHmmSS"),
+                GrammarField(name: "instrument", role: "Instrument", type: .string),
+                GrammarField(name: "mode", role: "Mode", type: .string),
+                GrammarField(name: "device-id", role: "Device ID", type: .string, stripBrackets: true),
+                GrammarField(name: "study", role: "Study", type: .string),
+                GrammarField(name: "remarks", role: "Remarks", type: .string, stripBrackets: true, isOptional: true),
+                GrammarField(name: "batch", role: "Batch", type: .number, formatHint: "001", isOptional: true)
+            ]
+        )
+        let filename = "271125-000000_autolab.cv_[d01]_kinetics_r.[100mv]-extra.txt"
+        let facts = FilenameGrammarEngine.extract(from: filename, grammar: grammar)
+
+        #expect(facts.isMatched == false)
+        #expect(facts.extractedFields["date"] == "271125-000000")
+        #expect(facts.extractedFields["instrument"] == "autolab")
+        #expect(facts.extractedFields["mode"] == "cv")
+        #expect(facts.extractedFields["device-id"] == "d01")
+        #expect(facts.extractedFields["study"] == "kinetics")
+    }
 }
+

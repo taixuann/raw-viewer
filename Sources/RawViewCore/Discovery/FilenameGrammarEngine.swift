@@ -269,7 +269,15 @@ public enum FilenameGrammarEngine {
                 }
 
                 let hasTrailing = (nextIndex < trimmed.endIndex)
-                let captureGroup = patternForField(fieldConfig, hasTrailing: hasTrailing || !trailingEnclosure.isEmpty)
+                var captureGroup = patternForField(fieldConfig, hasTrailing: hasTrailing || !trailingEnclosure.isEmpty)
+
+                // If next character in template is an explicit delimiter (e.g. "_" or "."), ensure string fields do not swallow that delimiter
+                if fieldConfig?.type == .string && nextIndex < trimmed.endIndex {
+                    let nextChar = trimmed[nextIndex]
+                    if nextChar == "_" || nextChar == "." || nextChar == "-" || nextChar == "[" {
+                        captureGroup = "([^" + NSRegularExpression.escapedPattern(for: String(nextChar)) + "]+?)"
+                    }
+                }
 
                 if isOptional {
                     let escapedLeading = leadingLiteral.isEmpty ? "" : NSRegularExpression.escapedPattern(for: leadingLiteral)
@@ -315,17 +323,63 @@ public enum FilenameGrammarEngine {
         if !ext.isEmpty && !grammar.template.hasSuffix(".\(ext)") {
             target = (filename as NSString).deletingPathExtension
         }
-
+        let trimmed = grammar.template.trimmingCharacters(in: .whitespacesAndNewlines)
         let range = NSRange(target.startIndex..<target.endIndex, in: target)
-        guard let match = regex.firstMatch(in: target, options: [], range: range) else {
+        var match = regex.firstMatch(in: target, options: [], range: range)
+        var activeFieldNames = fieldNames
+        let isFullMatch = (match != nil)
+
+        // If full string regex match fails, perform progressive prefix matching from N-1 down to 1 token
+        if match == nil && fieldNames.count > 1 {
+            for count in stride(from: fieldNames.count - 1, through: max(2, (fieldNames.count + 1) / 2), by: -1) {
+                // Build a prefix template up through the close brace of the count-th token plus the following literal/delimiter
+                var matchedClose = trimmed.startIndex
+                var foundCount = 0
+                var sIdx = trimmed.startIndex
+                while sIdx < trimmed.endIndex && foundCount < count {
+                    if let ob = trimmed[sIdx...].firstIndex(of: "{"), let cb = trimmed[ob...].firstIndex(of: "}") {
+                        matchedClose = trimmed.index(after: cb)
+                        if matchedClose < trimmed.endIndex && (trimmed[matchedClose] == "]" || trimmed[matchedClose] == ")") {
+                            matchedClose = trimmed.index(after: matchedClose)
+                        }
+                        foundCount += 1
+                        sIdx = matchedClose
+                        // Include subsequent delimiter literal up to next {
+                        if foundCount == count {
+                            if let nextOb = trimmed[matchedClose...].firstIndex(of: "{") {
+                                matchedClose = nextOb
+                            }
+                        }
+                    } else {
+                        break
+                    }
+                }
+
+                if foundCount == count {
+                    let subTemplate = String(trimmed[..<matchedClose])
+                    if let (subRegex, subFieldNames) = try? compile(template: subTemplate, fields: grammar.fields) {
+                        let subPattern = subRegex.pattern.hasSuffix("$") ? String(subRegex.pattern.dropLast()) : subRegex.pattern
+                        if let prefixRegex = try? NSRegularExpression(pattern: subPattern, options: []) {
+                            if let subMatch = prefixRegex.firstMatch(in: target, options: [], range: range) {
+                                match = subMatch
+                                activeFieldNames = subFieldNames
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        guard let effectiveMatch = match else {
             return ExtractedGrammarFacts(isMatched: false, unmatchedReason: "Filename does not match template pattern")
         }
 
         var extracted: [String: String] = [:]
-        for (idx, name) in fieldNames.enumerated() {
+        for (idx, name) in activeFieldNames.enumerated() {
             let groupIdx = idx + 1
-            guard groupIdx < match.numberOfRanges else { continue }
-            let groupRange = match.range(at: groupIdx)
+            guard groupIdx < effectiveMatch.numberOfRanges else { continue }
+            let groupRange = effectiveMatch.range(at: groupIdx)
             if groupRange.location != NSNotFound, let swiftRange = Range(groupRange, in: target) {
                 var value = String(target[swiftRange])
                 let fieldConfig = grammar.fields.first(where: { $0.name == name })
@@ -369,7 +423,7 @@ public enum FilenameGrammarEngine {
         }
 
         return ExtractedGrammarFacts(
-            isMatched: true,
+            isMatched: isFullMatch,
             extractedFields: extracted,
             timestamp: timestamp,
             instrument: instrument,
@@ -378,7 +432,7 @@ public enum FilenameGrammarEngine {
             category: category,
             batch: batch,
             remarks: remarks,
-            unmatchedReason: nil
+            unmatchedReason: isFullMatch ? nil : "Partial match: trailing tokens differ"
         )
     }
 

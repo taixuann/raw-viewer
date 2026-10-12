@@ -505,11 +505,17 @@ final class EditorWorkspaceViewModel: ObservableObject {
             grammarMatchError = nil
         } catch {
             grammarMatchError = error.localizedDescription
-            sampleExtractedFacts = ExtractedGrammarFacts(isMatched: false, unmatchedReason: error.localizedDescription)
-            return
         }
 
-        sampleExtractedFacts = FilenameGrammarEngine.extract(from: filename, grammar: effective)
+        let facts = FilenameGrammarEngine.extract(from: filename, grammar: effective)
+        sampleExtractedFacts = facts
+        if !facts.isMatched && grammarMatchError == nil {
+            grammarMatchError = facts.unmatchedReason
+        }
+    }
+
+    func updateSampleGrammarFacts() {
+        recalculateGrammarExtraction()
     }
 
     func runAutoDetect() {
