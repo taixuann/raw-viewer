@@ -4,7 +4,6 @@ import RawViewCore
 /// Panel 1 (Left Sidebar): Clean Profile Manager & Active Source
 /// Focuses purely on:
 /// - Active Target File card (sample filename, line count, switch sample menu, pin as example)
-/// - Profile Identity (Profile ID, Display Name)
 /// - Saved Profiles Library (scans .rawviewer/instrument/*.yaml, 1-click loading, import YAML profile)
 /// - Sticky Actions Footer (Test Against Cohort, Build Profile Cmd+S)
 struct EditorLeftSidebarView: View {
@@ -43,10 +42,7 @@ struct EditorLeftSidebarView: View {
                     // 1. Active Target Sample Card
                     activeSourceCard
 
-                    // 2. Profile Identity Card
-                    profileIdentityCard
-
-                    // 3. Saved Profiles Library & Import
+                    // 2. Saved Profiles Library & Import
                     savedProfilesCard
                 }
                 .padding(12)
@@ -136,59 +132,7 @@ struct EditorLeftSidebarView: View {
         }
     }
 
-    // MARK: - 2. Profile Identity Card
-    private var profileIdentityCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Profile Identity", systemImage: "cpu")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text("Profile ID")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if !model.tokens.isEmpty {
-                            Menu {
-                                ForEach(model.tokens, id: \.self) { tok in
-                                    Button(tok) {
-                                        model.editor.instrumentID = tok
-                                        if model.editor.instrumentName.isEmpty {
-                                            model.editor.instrumentName = tok
-                                        }
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "wand.and.stars")
-                                    Text("From Token…")
-                                }
-                                .font(.system(size: 9))
-                            }
-                            .menuStyle(.borderlessButton)
-                        }
-                    }
-                    TextField("e.g. autolab-pgstat", text: $model.editor.instrumentID)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Display Name")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    TextField("e.g. Autolab PGSTAT302N", text: $model.editor.instrumentName)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                }
-            }
-            .padding(4)
-        }
-    }
-
-    // MARK: - 3. Saved Profiles Library & Import
+    // MARK: - 2. Saved Profiles Library & Import
     private var savedProfilesCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {

@@ -2,17 +2,17 @@ import SwiftUI
 import RawViewCore
 
 /// Clean high-level container shell assembling Profile Studio:
-/// - Left Panel: `EditorLeftSidebarView` (Active Target File card, Profile Identity, Saved Profiles list, Import YAML, Test Cohort & Build Action)
-/// - Right Panel: `EditorCenterCanvasView` (3 Dedicated Tabs: Filename Tokens | Raw Stream Studio | Live Sandbox Studio)
+/// - Left Panel: `EditorLeftSidebarView` (Active Target File card, Saved Profiles list, Import YAML, Test Cohort & Build Action)
+/// - Right Panel: `EditorCenterCanvasView` (3 Dedicated Tabs: Raw Stream Studio | Live Sandbox Studio | Filename Grammar)
 public struct EditorWorkspaceView: View {
     public let project: ProjectContext
     public let sources: [RawSource]
     public var initialSelectedSource: RawSource? = nil
 
     public enum StudioTab: String, CaseIterable, Identifiable {
-        case tokens = "Filename Tokens"
         case rawStream = "Raw Stream Studio"
         case liveSandbox = "Live Sandbox Studio"
+        case tokens = "Filename Grammar"
         public var id: String { rawValue }
     }
 
@@ -173,6 +173,17 @@ final class EditorWorkspaceViewModel: ObservableObject {
         } catch {
             self.saveStatusMessage = "Failed to load profile: \(error.localizedDescription)"
         }
+    }
+
+    /// Creates a new profile non-destructively by cloning current column mappings,
+    /// delimiter, line tags, and sample state with a new ID and display name.
+    func duplicateProfileFromCurrent(newID: String, newName: String) {
+        let cleanID = newID.trimmingCharacters(in: .whitespaces)
+        let cleanName = newName.trimmingCharacters(in: .whitespaces)
+        editor.instrumentID = cleanID
+        editor.instrumentName = cleanName.isEmpty ? cleanID.capitalized : cleanName
+        saveStatusMessage = "Duplicated to new profile '\(editor.instrumentName)' (unsaved)"
+        objectWillChange.send()
     }
 
     func syncDefaultPlotChannels() {
@@ -345,7 +356,7 @@ final class EditorWorkspaceViewModel: ObservableObject {
         recalculateGrammarExtraction()
     }
 
-    func saveGrammarCatalog() {
+    func saveGrammarToProject() {
         guard let project = project else { return }
         syncCurrentTemplateToCatalog()
         grammarCatalog.activeGrammarID = activeGrammarID
@@ -355,6 +366,21 @@ final class EditorWorkspaceViewModel: ObservableObject {
         } catch {
             saveStatusMessage = "Grammar save error: \(error.localizedDescription)"
         }
+    }
+
+    func saveGrammarToGlobal() {
+        syncCurrentTemplateToCatalog()
+        grammarCatalog.activeGrammarID = activeGrammarID
+        do {
+            try FilenameGrammarEngine.save(catalog: grammarCatalog, fileURL: FilenameGrammarEngine.globalGrammarURL)
+            saveStatusMessage = "Saved global grammar template (~/.rawviewer/grammar.yaml)"
+        } catch {
+            saveStatusMessage = "Global grammar save error: \(error.localizedDescription)"
+        }
+    }
+
+    func saveGrammarCatalog() {
+        saveGrammarToProject()
     }
 
     func syncCurrentTemplateToCatalog() {
