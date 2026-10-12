@@ -158,6 +158,14 @@ struct FilenameGrammarEngineTests {
         #expect(res2.isMatched == false)
     }
 
+    @Test func testStandardDefaultsCanonicalNaming() throws {
+        let first = try #require(FilenameGrammarCatalog.standardDefaults.first)
+        #expect(first.id == "standard-scientific")
+        #expect(first.name == "Standard Filename Pattern")
+        #expect(!first.name.contains("Autolab"))
+        #expect(first.isDefault == true)
+    }
+
     @Test func standardScientificTemplateWithBatchAndDateTime() throws {
         let standard = FilenameGrammarCatalog.standardDefaults.first!
         #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}")

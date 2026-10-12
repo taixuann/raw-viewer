@@ -104,8 +104,8 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
 
     public static let standardDefaults: [FilenameGrammar] = [
         FilenameGrammar(
-            id: "autolab-scientific",
-            name: "Autolab USTH Scientific Pattern",
+            id: "standard-scientific",
+            name: "Standard Filename Pattern",
             template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}",
             description: "Default pattern for electrochemistry measurement series",
             fields: [
