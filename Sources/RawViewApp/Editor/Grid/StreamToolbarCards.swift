@@ -65,14 +65,14 @@ struct StreamToolbarCards: View {
             Divider()
                 .frame(height: 22)
 
-            // SECTION 2: Profile & Linked Grammar (2 rows)
-            section3ProfileAndGrammar
+            // SECTION 2: View & Metadata Controls
+            section2ViewAndMetadata
 
             Divider()
                 .frame(height: 22)
 
-            // SECTION 3: View & Metadata Controls
-            section2ViewAndMetadata
+            // SECTION 3: Profile & Linked Grammar (2 rows)
+            section3ProfileAndGrammar
 
             Divider()
                 .frame(height: 22)
@@ -318,114 +318,116 @@ struct StreamToolbarCards: View {
         }
     }
 
-    // MARK: - Section 3: Profile & Linked Grammar (2 Rows)
+    // MARK: - Section 3: Profile & Linked Grammar (2 Rows Grid Aligned)
     private var section3ProfileAndGrammar: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 4) {
             // Row 1: Profile Selector & New Button
-            HStack(spacing: 5) {
+            GridRow {
                 Text("Profile:")
                     .font(.system(size: 10.5, weight: .bold))
                     .foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .leading)
 
-                Menu {
-                    if savedProfiles.isEmpty {
-                        Text("No saved profiles")
-                    } else {
-                        ForEach(savedProfiles, id: \.self) { profileURL in
-                            let profileBaseName = profileURL.deletingPathExtension().lastPathComponent
-                            let isCurrent = (currentProfileName == profileBaseName)
-                            Button {
-                                onLoadProfile(profileURL)
-                            } label: {
-                                if isCurrent {
-                                    Label(profileBaseName, systemImage: "checkmark")
-                                } else {
-                                    Text(profileBaseName)
+                HStack(spacing: 6) {
+                    Menu {
+                        if savedProfiles.isEmpty {
+                            Text("No saved profiles")
+                        } else {
+                            ForEach(savedProfiles, id: \.self) { profileURL in
+                                let profileBaseName = profileURL.deletingPathExtension().lastPathComponent
+                                let isCurrent = (currentProfileName == profileBaseName)
+                                Button {
+                                    onLoadProfile(profileURL)
+                                } label: {
+                                    if isCurrent {
+                                        Label(profileBaseName, systemImage: "checkmark")
+                                    } else {
+                                        Text(profileBaseName)
+                                    }
                                 }
                             }
                         }
+                    } label: {
+                        Text(currentProfileName.isEmpty ? "Untitled" : currentProfileName)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
                     }
-                } label: {
-                    Text(currentProfileName.isEmpty ? "Untitled" : currentProfileName)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderedButton)
-                .controlSize(.small)
-                .frame(maxWidth: 160)
-                .help("Switch active instrument profile")
+                    .menuStyle(.borderedButton)
+                    .controlSize(.small)
+                    .frame(width: 140)
+                    .help("Switch active instrument profile")
 
-                Button {
-                    newProfileID = currentProfileName.isEmpty ? "new-profile" : "\(currentProfileName)-copy"
-                    newProfileName = currentProfileName.isEmpty ? "New Profile" : "\(currentProfileName) (Copy)"
-                    showingNewProfilePopover = true
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "plus")
-                        Text("New")
+                    Button {
+                        newProfileID = currentProfileName.isEmpty ? "new-profile" : "\(currentProfileName)-copy"
+                        newProfileName = currentProfileName.isEmpty ? "New Profile" : "\(currentProfileName) (Copy)"
+                        showingNewProfilePopover = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "plus")
+                            Text("New")
+                        }
+                        .font(.system(size: 10.5, weight: .medium))
                     }
-                    .font(.system(size: 10.5, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Create a new profile by duplicating current setup (non-destructive)")
-                .popover(isPresented: $showingNewProfilePopover) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Duplicate Profile")
-                            .font(.system(size: 12, weight: .bold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Create a new profile by duplicating current setup (non-destructive)")
+                    .popover(isPresented: $showingNewProfilePopover) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Duplicate Profile")
+                                .font(.system(size: 12, weight: .bold))
 
-                        Text("Creates a new profile preserving current column mappings, delimiter, and line tags.")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Profile ID")
-                                .font(.system(size: 10, weight: .semibold))
+                            Text("Creates a new profile preserving current column mappings, delimiter, and line tags.")
+                                .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
-                            TextField("e.g. autolab-pgstat", text: $newProfileID)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11, design: .monospaced))
-                        }
+                                .fixedSize(horizontal: false, vertical: true)
 
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Display Name")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            TextField("e.g. Autolab PGSTAT302N", text: $newProfileName)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11))
-                        }
-
-                        HStack {
-                            Button("Cancel") {
-                                showingNewProfilePopover = false
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Profile ID")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    TextField("e.g. autolab-pgstat", text: $newProfileID)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(size: 11, design: .monospaced))
                             }
-                            .controlSize(.small)
 
-                            Spacer()
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Display Name")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                TextField("e.g. Autolab PGSTAT302N", text: $newProfileName)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 11))
+                            }
 
-                            Button("Create Profile") {
-                                let cleanID = newProfileID.trimmingCharacters(in: .whitespaces)
-                                let cleanName = newProfileName.trimmingCharacters(in: .whitespaces)
-                                if !cleanID.isEmpty {
-                                    onDuplicateProfile(cleanID, cleanName)
+                            HStack {
+                                Button("Cancel") {
                                     showingNewProfilePopover = false
                                 }
+                                .controlSize(.small)
+
+                                Spacer()
+
+                                Button("Create Profile") {
+                                    let cleanID = newProfileID.trimmingCharacters(in: .whitespaces)
+                                    let cleanName = newProfileName.trimmingCharacters(in: .whitespaces)
+                                    if !cleanID.isEmpty {
+                                        onDuplicateProfile(cleanID, cleanName)
+                                        showingNewProfilePopover = false
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(newProfileID.trimmingCharacters(in: .whitespaces).isEmpty)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(newProfileID.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
+                        .padding(14)
+                        .frame(width: 280)
                     }
-                    .padding(14)
-                    .frame(width: 280)
                 }
             }
 
             // Row 2: Grammar Selector
-            HStack(spacing: 5) {
+            GridRow {
                 Text("Grammar:")
                     .font(.system(size: 10.5, weight: .bold))
                     .foregroundStyle(.secondary)
@@ -504,7 +506,7 @@ struct StreamToolbarCards: View {
                 }
                 .menuStyle(.borderedButton)
                 .controlSize(.small)
-                .frame(maxWidth: 220)
+                .frame(width: 204)
             }
         }
     }
