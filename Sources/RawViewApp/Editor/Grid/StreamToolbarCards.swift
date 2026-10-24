@@ -5,10 +5,11 @@ import RawViewCore
 
 /// Top control toolbar for Stream Parser Settings redesigned as a flat unified toolbar band:
 /// - Section 1: Structure (Delimiter & Decimal Delimiters, Header L# & Data Starts steppers) with live auto-reparsing
-/// - Section 2: Linked Grammar (Active Grammar selector with project & global grammars, Create New Grammar action)
-/// - Section 3: View & Metadata (Header View segmented switch, Preview row count, Metadata Tags popover, Columns summary & auto-skip)
+/// - Section 2: View & Metadata (Header View segmented switch, Preview row count, Metadata Tags popover, Columns summary & auto-skip)
 /// - Contextual Selection: Column & Row batch selection actions & hover inspector
-/// - Section 4: Primary Action (Save Profile)
+/// Document controls (Profile/Grammar selectors) live only in the shared
+/// canvas header; Save Profile lives in Raw Stream Studio and Save Grammar
+/// in Filename Grammar (Task 7). This toolbar keeps tab-local tools.
 struct StreamToolbarCards: View {
     let linesCount: Int
     @Binding var selectedDelimiter: String
@@ -18,12 +19,6 @@ struct StreamToolbarCards: View {
     @Binding var headerLineText: String
     @Binding var dataStartLineChoice: Int
     @Binding var dataStartLineText: String
-    @Binding var activeGrammarID: String
-    let availableGrammars: [FilenameGrammar]
-    let currentProfileName: String
-    let savedProfiles: [URL]
-    let onLoadProfile: (URL) -> Void
-    let onDuplicateProfile: (String, String) -> Void
     @Binding var showMetadataPopover: Bool
     let activeMetadataCount: Int
     let metadataEntriesCount: Int
@@ -50,12 +45,6 @@ struct StreamToolbarCards: View {
     let onSetSelectedColumnsProgression: (_ type: ProgressionType, _ behavior: ProgressionBehavior) -> Void
     let rolePillText: (ColumnDefinition) -> String
     let onApplyCustomStructure: () -> Void
-    let onCreateNewGrammar: () -> Void
-    let onSaveProfile: () -> Void
-
-    @State private var showingNewProfilePopover = false
-    @State private var newProfileID = ""
-    @State private var newProfileName = ""
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -71,22 +60,10 @@ struct StreamToolbarCards: View {
             Divider()
                 .frame(height: 22)
 
-            // SECTION 3: Profile & Linked Grammar (2 rows)
-            section3ProfileAndGrammar
-
-            Divider()
-                .frame(height: 22)
-
             // Contextual Column & Row Selection Actions
             contextualSelectionSection
 
             Spacer(minLength: 8)
-
-            Divider()
-                .frame(height: 22)
-
-            // SECTION 4: Actions (Save Profile)
-            section4Actions
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -318,199 +295,6 @@ struct StreamToolbarCards: View {
         }
     }
 
-    // MARK: - Section 3: Profile & Linked Grammar (2 Rows Grid Aligned)
-    private var section3ProfileAndGrammar: some View {
-        Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 4) {
-            // Row 1: Profile Selector & New Button
-            GridRow {
-                Text("Profile:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 58, alignment: .leading)
-
-                HStack(spacing: 6) {
-                    Menu {
-                        if savedProfiles.isEmpty {
-                            Text("No saved profiles")
-                        } else {
-                            ForEach(savedProfiles, id: \.self) { profileURL in
-                                let profileBaseName = profileURL.deletingPathExtension().lastPathComponent
-                                let isCurrent = (currentProfileName == profileBaseName)
-                                Button {
-                                    onLoadProfile(profileURL)
-                                } label: {
-                                    if isCurrent {
-                                        Label(profileBaseName, systemImage: "checkmark")
-                                    } else {
-                                        Text(profileBaseName)
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        Text(currentProfileName.isEmpty ? "Untitled" : currentProfileName)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                    }
-                    .menuStyle(.borderedButton)
-                    .controlSize(.small)
-                    .frame(width: 140)
-                    .help("Switch active instrument profile")
-
-                    Button {
-                        newProfileID = currentProfileName.isEmpty ? "new-profile" : "\(currentProfileName)-copy"
-                        newProfileName = currentProfileName.isEmpty ? "New Profile" : "\(currentProfileName) (Copy)"
-                        showingNewProfilePopover = true
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "plus")
-                            Text("New")
-                        }
-                        .font(.system(size: 10.5, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Create a new profile by duplicating current setup (non-destructive)")
-                    .popover(isPresented: $showingNewProfilePopover) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Duplicate Profile")
-                                .font(.system(size: 12, weight: .bold))
-
-                            Text("Creates a new profile preserving current column mappings, delimiter, and line tags.")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Profile ID")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                    TextField("e.g. autolab-pgstat", text: $newProfileID)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.system(size: 11, design: .monospaced))
-                            }
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Display Name")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                TextField("e.g. Autolab PGSTAT302N", text: $newProfileName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 11))
-                            }
-
-                            HStack {
-                                Button("Cancel") {
-                                    showingNewProfilePopover = false
-                                }
-                                .controlSize(.small)
-
-                                Spacer()
-
-                                Button("Create Profile") {
-                                    let cleanID = newProfileID.trimmingCharacters(in: .whitespaces)
-                                    let cleanName = newProfileName.trimmingCharacters(in: .whitespaces)
-                                    if !cleanID.isEmpty {
-                                        onDuplicateProfile(cleanID, cleanName)
-                                        showingNewProfilePopover = false
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                                .disabled(newProfileID.trimmingCharacters(in: .whitespaces).isEmpty)
-                            }
-                        }
-                        .padding(14)
-                        .frame(width: 280)
-                    }
-                }
-            }
-
-            // Row 2: Grammar Selector
-            GridRow {
-                Text("Grammar:")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 58, alignment: .leading)
-
-                Menu {
-                    let projectGrammars = availableGrammars.filter { $0.scope == .project }
-                    let globalGrammars = availableGrammars.filter { $0.scope == .global || ($0.scope == nil && $0.isDefault) }
-                    let otherGrammars = availableGrammars.filter { $0.scope != .project && !globalGrammars.contains($0) }
-
-                    if !projectGrammars.isEmpty {
-                        Section("Project Grammars") {
-                            ForEach(projectGrammars) { g in
-                                Button {
-                                    activeGrammarID = g.id
-                                } label: {
-                                    if g.id == activeGrammarID {
-                                        Label("📁 \(g.name) (Project)", systemImage: "checkmark")
-                                    } else {
-                                        Text("📁 \(g.name) (Project)")
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !globalGrammars.isEmpty {
-                        Section("Global Grammars") {
-                            ForEach(globalGrammars) { g in
-                                Button {
-                                    activeGrammarID = g.id
-                                } label: {
-                                    if g.id == activeGrammarID {
-                                        Label("🌐 \(g.name) (Global)", systemImage: "checkmark")
-                                    } else {
-                                        Text("🌐 \(g.name) (Global)")
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !otherGrammars.isEmpty {
-                        Section("Other Grammars") {
-                            ForEach(otherGrammars) { g in
-                                Button {
-                                    activeGrammarID = g.id
-                                } label: {
-                                    if g.id == activeGrammarID {
-                                        Label(g.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(g.name)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Button {
-                        onCreateNewGrammar()
-                    } label: {
-                        Label("+ Create New Grammar…", systemImage: "plus")
-                    }
-                } label: {
-                    let active = availableGrammars.first(where: { $0.id == activeGrammarID })
-                    let icon = (active?.scope == .project) ? "📁" : "🌐"
-                    let scopeLabel = (active?.scope == .project) ? " (Project)" : " (Global)"
-                    let name = active?.name ?? "Standard Filename Pattern"
-                    let displayText = "\(icon) \(name)\(active?.scope != nil ? scopeLabel : "")"
-
-                    Text(displayText)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderedButton)
-                .controlSize(.small)
-                .frame(width: 204)
-            }
-        }
-    }
-
     // MARK: - Contextual Column / Row Selection Actions Section
     private var contextualSelectionSection: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -738,22 +522,4 @@ struct StreamToolbarCards: View {
         }
     }
 
-    // MARK: - Section 4: Actions (Save Profile)
-    private var section4Actions: some View {
-        Button {
-            onSaveProfile()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "square.and.arrow.down.fill")
-                    .font(.system(size: 10.5))
-                Text("Save Profile")
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .padding(.horizontal, 4)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .keyboardShortcut("s", modifiers: [.command])
-        .help("Save instrument profile and parsing rules to project (⌘S)")
-    }
 }

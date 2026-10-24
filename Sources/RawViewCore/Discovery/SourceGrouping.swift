@@ -155,3 +155,79 @@ public struct SourceGrouping: Sendable, Equatable {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 }
+
+extension SourceGrouping {
+    /// Explorer bucket for inventory filenames that do not fully match the
+    /// view grammar. Partial matches land here too: trailing tokens that
+    /// differ are editor feedback only, never confirmed group facts.
+    public static let unmatchedBucketLabel = "Unmatched"
+    /// Explorer bucket for full grammar matches lacking the viewed variable
+    /// (an absent optional field). The source stays visible, never dropped.
+    public static let missingValueBucketLabel = "Missing value"
+
+    /// Groups inventory sources by one declared grammar variable, extracted
+    /// from each source basename without opening raw files. Populated groups
+    /// sort lexically, followed by Missing value, then Unmatched. Every
+    /// source occurs exactly once. A matched literal equal to a bucket label
+    /// is qualified so it never collides with the bucket identity. Variant
+    /// routing keys are unrelated: grouping reads extraction only.
+    public static func groups(sources: [RawSource], grammar: FilenameGrammar, variable: String) -> [SourceGroup] {
+        var byValue: [String: [String]] = [:]
+        var missing: [String] = []
+        var unmatched: [String] = []
+        for source in sources {
+            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
+            guard facts.isMatched else { unmatched.append(source.id); continue }
+            guard let value = facts.extractedFields[variable],
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                missing.append(source.id)
+                continue
+            }
+            byValue[displayLabel(forBucketCollision: value), default: []].append(source.id)
+        }
+        var groups = byValue.keys.sorted().map { label in
+            SourceGroup(label: label, sourceIDs: byValue[label, default: []].sorted())
+        }
+        if !missing.isEmpty {
+            groups.append(SourceGroup(label: missingValueBucketLabel, sourceIDs: missing.sorted()))
+        }
+        if !unmatched.isEmpty {
+            groups.append(SourceGroup(label: unmatchedBucketLabel, sourceIDs: unmatched.sorted()))
+        }
+        return groups
+    }
+
+    private static func displayLabel(forBucketCollision value: String) -> String {
+        if value == unmatchedBucketLabel { return "Unmatched (value)" }
+        if value == missingValueBucketLabel { return "Missing value (value)" }
+        return value
+    }
+}
+
+// MARK: - Task 7: effective axis views from session overrides.
+
+extension NormalizedMeasurement {
+    /// Variant-declared axis-eligible column IDs present in this source,
+    /// parsed from the Task 4 eligibility provenance. Skip columns and
+    /// absent optionals are already excluded by the reader.
+    public var eligibleXIDs: [String] { Self.splitIDs(provenance["eligible_x"]) }
+    public var eligibleYIDs: [String] { Self.splitIDs(provenance["eligible_y"]) }
+
+    private static func splitIDs(_ raw: String?) -> [String] {
+        guard let raw, !raw.isEmpty else { return [] }
+        return raw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+
+    /// Display-only copy with a session axis override applied. A nil x/y
+    /// keeps the variant default. Missing IDs are kept as-is, never
+    /// substituted: plots and overlays fail closed on them and the inspector
+    /// offers an explicit reset.
+    // ponytail: lives here (not NormalizedMeasurement.swift) to stay inside the Task 7 touch list.
+    public func withAxisView(x: String?, y: [String]?) -> NormalizedMeasurement {
+        NormalizedMeasurement(
+            source: source, instrument: instrument, applicationMode: applicationMode,
+            view: MeasurementView(kind: view.kind, x: x ?? view.x, y: y ?? view.y, preserveOrder: view.preserveOrder),
+            channels: channels, metadataSections: metadataSections, warnings: warnings,
+            supportStatus: supportStatus, provenance: provenance)
+    }
+}

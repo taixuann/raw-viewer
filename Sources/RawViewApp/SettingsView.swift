@@ -12,40 +12,102 @@ struct SettingsView: View {
     @State private var cacheClearedMessage: String?
     @ObservedObject private var hotkeyManager = HotkeyManager.shared
 
-    var body: some View {
-        TabView {
-            projectTab
-                .tabItem {
-                    Label("Project", systemImage: "folder")
-                }
-                .tag("project")
 
-            appearanceTab
-                .tabItem {
-                    Label("Appearance", systemImage: "paintbrush")
-                }
-                .tag("appearance")
+    enum SettingsTab: String, Identifiable, CaseIterable {
+        case project
+        case appearance
+        case ai
+        case performance
+        case storage
+        case hotkeys
 
-            performanceTab
-                .tabItem {
-                    Label("Performance", systemImage: "bolt.fill")
-                }
-                .tag("performance")
+        var id: String { rawValue }
 
-            storageTab
-                .tabItem {
-                    Label("Storage", systemImage: "internaldrive")
-                }
-                .tag("storage")
-
-            hotkeysTab
-                .tabItem {
-                    Label("Hotkeys", systemImage: "keyboard")
-                }
-                .tag("hotkeys")
+        var label: String {
+            switch self {
+            case .project: return "Project"
+            case .appearance: return "Appearance"
+            case .ai: return "LLM & AI Models"
+            case .performance: return "Performance"
+            case .storage: return "Storage"
+            case .hotkeys: return "Hotkeys"
+            }
         }
-        .frame(width: 560, height: 500)
-        .padding(20)
+
+        var icon: String {
+            switch self {
+            case .project: return "folder"
+            case .appearance: return "paintbrush"
+            case .ai: return "sparkles"
+            case .performance: return "bolt.fill"
+            case .storage: return "internaldrive"
+            case .hotkeys: return "keyboard"
+            }
+        }
+    }
+
+    @State private var selectedTab: SettingsTab = .ai
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                List(selection: $selectedTab) {
+                    Section("General") {
+                        tabRow(.project)
+                        tabRow(.appearance)
+                    }
+
+                    Section("Intelligence") {
+                        tabRow(.ai)
+                    }
+
+                    Section("System") {
+                        tabRow(.performance)
+                        tabRow(.storage)
+                        tabRow(.hotkeys)
+                    }
+                }
+                .listStyle(.sidebar)
+            }
+            .frame(width: 200)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                detailContent
+                    .id(selectedTab)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .controlBackgroundColor))
+        }
+        .frame(minWidth: 720, idealWidth: 760, maxWidth: 820, minHeight: 480, idealHeight: 520, maxHeight: 600)
+    }
+
+    @ViewBuilder
+    private func tabRow(_ tab: SettingsTab) -> some View {
+        Label(tab.label, systemImage: tab.icon)
+            .tag(tab)
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch selectedTab {
+        case .project:
+            projectTab
+        case .appearance:
+            appearanceTab
+        case .ai:
+            AISettingsView()
+        case .performance:
+            performanceTab
+        case .storage:
+            storageTab
+        case .hotkeys:
+            hotkeysTab
+        }
     }
 
     private var appearanceTab: some View {
@@ -197,6 +259,21 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            // Task 6: project-scoped Developer Mode. Disabled without a
+            // project; the toggle rolls back visibly when the write fails and
+            // never touches a global default.
+            Section("Developer Mode") {
+                Toggle("Developer Mode", isOn: Binding(
+                    get: { model.developerMode },
+                    set: { model.setDeveloperMode($0) }
+                ))
+                .disabled(model.project == nil)
+                .help("Adds Profile YAML and grammar YAML source editors for this project only.")
+                Text("Project-only source editors for the whole profile document and the whole grammar catalog. Invalid drafts never reach disk.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

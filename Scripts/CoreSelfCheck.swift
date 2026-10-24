@@ -2396,8 +2396,8 @@ enum CoreSelfCheck {
             let url = ProjectSettingsStore.settingsURL(projectRoot: root)
             precondition(url.path.hasSuffix(".rawviewer/setting.yaml"), "settings file location changed: \(url.path)")
             let text = try String(contentsOf: url, encoding: .utf8)
-            precondition(text == "schema_version: 2\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\n",
-                         "exact schema v2 YAML changed: \(text)")
+            precondition(text == "schema_version: 3\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\ndeveloper_mode: false\nexplorer_views: []\n",
+                         "exact schema v3 YAML changed: \(text)")
             precondition(!text.contains(root.path), "settings stored the absolute project directory")
             let loaded = try ProjectSettingsStore.load(projectRoot: root)
             precondition(loaded == settings, "round trip lost settings")
@@ -2405,6 +2405,19 @@ enum CoreSelfCheck {
             try ProjectSettingsStore.save(dot, projectRoot: root)
             let loadedDot = try ProjectSettingsStore.load(projectRoot: root)
             precondition(loadedDot == dot, "dot data root did not round trip")
+
+            // Schema v3: developer_mode and explorer_views round-trip; legacy
+            // files default to developerMode false with no views.
+            let v3 = ProjectSettings(
+                dataRoot: "data/raw", developerMode: true,
+                explorerViews: [ExplorerViewDefinition(grammarID: "standard-scientific", variable: "study")])
+            try ProjectSettingsStore.save(v3, projectRoot: root)
+            let loadedV3 = try ProjectSettingsStore.load(projectRoot: root)
+            precondition(loadedV3 == v3, "schema v3 developer_mode/explorer_views did not round trip")
+            precondition(loadedV3?.developerMode == true, "developer_mode true did not persist")
+            let legacyV1 = try ProjectSettingsStore.parse(text: validV1)
+            precondition(legacyV1.developerMode == false && legacyV1.explorerViews.isEmpty,
+                         "v1 settings must default to developerMode false with no views")
 
             // Test legacy fallback from .rawviewer/setting/setting.yaml (schema v1)
             let legacyRoot = fm.temporaryDirectory.appendingPathComponent("rawview-settings-legacy-\(UUID().uuidString)")

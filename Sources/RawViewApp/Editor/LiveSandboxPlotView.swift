@@ -20,6 +20,9 @@ struct LiveSandboxPlotView: View {
     var lineTags: [Int: LineRegionType] = [:]
     @Binding var selectedXCol: String?
     @Binding var selectedYCol: String?
+    // MARK: - Task 3: explicit profile-defaults promotion (preview-only until tapped)
+    var variantName: String? = nil
+    var onUseAsProfileDefaults: (() -> Void)? = nil
 
     private var activeXIndex: Int {
         let plottable = columns.indices.filter { idx in
@@ -455,9 +458,32 @@ struct LiveSandboxPlotView: View {
                     .padding(.horizontal, 6)
                     .frame(height: 24)
                     .background(Capsule().fill(.quaternary))
+
+                if onUseAsProfileDefaults != nil {
+                    Button {
+                        onUseAsProfileDefaults?()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.arrow.down")
+                            Text("Use as Profile Defaults")
+                        }
+                        .font(AppTypography.captionBold(uiFontSize: uiFontSize))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(selectedXCol == nil || selectedYCol == nil || variantName == nil)
+                    .help("Preview-only until tapped: replaces the complete default X/Y list on variant '\(variantName ?? "—")' only.")
+                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 6)
+
+            if onUseAsProfileDefaults != nil {
+                Text("Axis choices are preview-only until Use as Profile Defaults; applies to the selected variant only.")
+                    .font(AppTypography.caption(uiFontSize: uiFontSize))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+            }
 
             Divider()
 

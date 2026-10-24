@@ -25,6 +25,11 @@ cp "$root/Sources/RawViewApp/Resources/NativePlotStyle.json" "$app/Contents/Reso
 if [ -f "$root/Sources/RawViewApp/Resources/AppIcon.icns" ]; then
   cp "$root/Sources/RawViewApp/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 fi
+if [ -x "/Users/tai/oakreader-src/backend/dist/oak-backend" ]; then
+  cp "/Users/tai/oakreader-src/backend/dist/oak-backend" "$app/Contents/Resources/oak-backend"
+  chmod +x "$app/Contents/Resources/oak-backend"
+  codesign --force --sign - "$app/Contents/Resources/oak-backend"
+fi
 python3 - "$app/Contents/Info.plist" "$bundle_id" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], "wb") as stream:

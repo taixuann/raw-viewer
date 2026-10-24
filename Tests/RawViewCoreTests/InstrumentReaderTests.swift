@@ -163,13 +163,14 @@ struct InstrumentReaderTests {
     }
 
     @Test func unsupportedSchemaVersionIsRejectedWithActionableDiagnostic() async throws {
-        let profile = Fixtures.keysightProfile.replacingOccurrences(of: "schema_version: 1", with: "schema_version: 3")
+        let profile = Fixtures.keysightProfile.replacingOccurrences(of: "schema_version: 1", with: "schema_version: 9")
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
         let report = await InstrumentReader.inspectMany(try ProjectContext.open(root).discoverSources(), project: try ProjectContext.open(root))
         let error = try #require(report.results.first?.error)
-        #expect(error.contains("unsupported schema_version 3"))
+        #expect(error.contains("unsupported schema_version 9"))
         #expect(error.contains("supports schema_version 1"))
+        #expect(error.contains("1, 2, and 3"))
     }
 
     @Test func invalidProfileFieldNamesTheProfileAndField() async throws {
@@ -1568,6 +1569,767 @@ struct InstrumentReaderTests {
             try await InstrumentReader.load(result.source.url, project: project)
         }
     }
+
+    // MARK: - Task 4: exact variant resolution and extraction (schema v3)
+
+    @Test func v3SharedGrammarResolvesExactVariantWithProvenance() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.profileIssues.isEmpty)
+        let result = try #require(report.results.first)
+        #expect(result.error == nil)
+        let inspection = try #require(result.inspection)
+        #expect(result.disposition == .profileMatched)
+        #expect(inspection.profileID == "acme")
+        #expect(inspection.applicationMode == "cv")
+        #expect(inspection.instrumentID == "acme-inst")
+        #expect(inspection.profileHash == sha256Hex(Data(profileText.utf8)))
+
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.channel(named: "potential")?.values == [1.0, 2.0])
+        #expect(measurement.channel(named: "current")?.values == [10.0, 20.0])
+        #expect(measurement.channel(named: "current")?.unit == "A")
+        #expect(measurement.view.x == "potential")
+        #expect(measurement.view.y == ["current"])
+        #expect(measurement.provenance["profile_id"] == "acme")
+        #expect(measurement.provenance["variant_id"] == "cv")
+        #expect(measurement.provenance["mode"] == "cv")
+        #expect(measurement.provenance["profile_schema_version"] == "3")
+        #expect(measurement.provenance["grammar_id"] == "electrochem")
+        #expect(measurement.provenance["grammar_sha256"] == sha256Hex(Data(V3ReaderFixtures.grammarYAML.utf8)))
+        #expect(measurement.provenance["profile_hash"] == sha256Hex(Data(profileText.utf8)))
+    }
+
+    @Test func v3SecondModeWithSharedGrammarResolvesItsVariant() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.ca_run2.txt": Data(V3ReaderFixtures.caCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.error == nil)
+        #expect(result.disposition == .profileMatched)
+        #expect(result.inspection?.applicationMode == "ca")
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.channel(named: "elapsed")?.values == [0.0, 1.0])
+        #expect(measurement.channel(named: "current")?.values == [5.0, 6.0])
+        #expect(measurement.provenance["variant_id"] == "ca")
+        #expect(measurement.view.x == "elapsed")
+    }
+
+    // MARK: - Task 4: tuples, ambiguity, gates, and layouts
+
+    @Test func v3RepeatedTupleDisambiguatesByHeader() async throws {
+        var wide = V3ReaderFixtures.cvVariant()
+        wide.id = "cv-wide"
+        wide.name = "CV wide"
+        wide.rawStream.columns = [
+            ProfileColumnV3(id: "potential", source: ColumnSourceV3(header: "Volts2"),
+                            label: "Voltage", quantity: "voltage", unit: "V", role: .channel, axes: [.x]),
+            ProfileColumnV3(id: "current", source: ColumnSourceV3(header: "Amps2"),
+                            label: "Current", quantity: "current", unit: "A", role: .channel, axes: [.y]),
+        ]
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.cvVariant(), wide])
+        let profileText = try doc.serializedYAML()
+        let wideCSV = "Run, acme-cv-9\nVolts2, Amps2\n3.0, 30.0\n"
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run9.txt": Data(wideCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition == .profileMatched)
+        #expect(result.inspection?.applicationMode == "cv-wide")
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.provenance["variant_id"] == "cv-wide")
+        #expect(measurement.channel(named: "potential")?.values == [3.0])
+        #expect(measurement.channel(named: "current")?.values == [30.0])
+    }
+
+    @Test func v3AmbiguousCandidatesBlockWithoutFirstMatch() async throws {
+        var twin = V3ReaderFixtures.cvVariant()
+        twin.id = "cv-b"
+        twin.name = "CV B"
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.cvVariant(), twin])
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition == .deterministicBlocked)
+        let message = try #require(result.error)
+        #expect(message.contains("Ambiguous"))
+        #expect(message.contains("cv-b"))
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(sources[0].url, project: project)
+        }
+    }
+
+    @Test func v3UnknownKeyValueBlocksWithoutGenericFallback() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.xx_run9.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition == .deterministicBlocked)
+        #expect(result.disposition != .structuralCandidate)
+        let message = try #require(result.error)
+        #expect(message.contains("xx"))
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(sources[0].url, project: project)
+        }
+    }
+
+    @Test func v3PartialFilenameNeverRoutesToVariant() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        // Missing the _sample token: the grammar prefix-matches but never
+        // full-matches, so no variant routes; the ordinary generic path still
+        // applies to the tabular content.
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv.txt": Data("time,voltage\n0.1,1\n0.2,2\n0.3,3\n".utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition != .profileMatched)
+        #expect(result.disposition == .structuralCandidate)
+        #expect(result.inspection?.profileID == "generic-table")
+    }
+
+    @Test func v3EncodingAlternativesDecodeExplicitly() async throws {
+        var variant = V3ReaderFixtures.cvVariant()
+        variant.rawStream.encodings = ["utf-8", "windows-1252"]
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [variant])
+        let profileText = try doc.serializedYAML()
+        var bytes = Data("Run, caf".utf8)
+        bytes.append(0xE9)
+        bytes.append(contentsOf: Data(", acme-enc-1\nVolts, Amps\n1.0, 10.0\n".utf8))
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": bytes])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.results.first?.disposition == .profileMatched)
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.channel(named: "potential")?.values == [1.0])
+        let acquisition = measurement.metadataSections.first { $0.title == "Acquisition" }
+        let runField = try #require(acquisition?.fields.first { $0.key == "Run" })
+        #expect(runField.value.displayText.contains("caf\u{E9}"))
+    }
+
+    @Test func v3UndeclaredEncodingFailsClosed() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        var bytes = Data("Run, caf".utf8)
+        bytes.append(0xE9)
+        bytes.append(contentsOf: Data(", acme-enc-1\nVolts, Amps\n1.0, 10.0\n".utf8))
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": bytes])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition == .deterministicBlocked)
+        #expect(result.disposition != .structuralCandidate)
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(sources[0].url, project: project)
+        }
+    }
+
+    @Test func v3ReorderedHeaderOnlyColumnsResolveByName() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let reordered = "Run, acme-cv-5\nAmps, Volts\n10.0, 1.0\n20.0, 2.0\n"
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run5.txt": Data(reordered.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.provenance["variant_id"] == "cv")
+        #expect(measurement.channel(named: "potential")?.values == [1.0, 2.0])
+        #expect(measurement.channel(named: "current")?.values == [10.0, 20.0])
+    }
+
+    @Test func v3PositionHeaderDisagreementFailsClosed() async throws {
+        var variant = V3ReaderFixtures.cvVariant()
+        variant.rawStream.columns[0].source = ColumnSourceV3(column: 1, header: "Amps")
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [variant])
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition == .deterministicBlocked)
+        #expect(try #require(result.error).contains("potential"))
+        await #expect(throws: ReaderError.self) {
+            try await InstrumentReader.load(sources[0].url, project: project)
+        }
+    }
+
+    @Test func v3CompatibilitySelectorsGateCandidates() async throws {
+        var gatedOut = V3ReaderFixtures.cvVariant()
+        gatedOut.id = "sel-b"
+        gatedOut.name = "Gated out"
+        gatedOut.match = VariantMatchV3(filenameContainsAll: ["zzz"])
+        var gatedIn = V3ReaderFixtures.cvVariant()
+        gatedIn.id = "sel-a"
+        gatedIn.name = "Gated in"
+        gatedIn.match = VariantMatchV3(filenameContainsAll: ["acme"], contentContainsAny: ["Volts"])
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [gatedOut, gatedIn])
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.provenance["variant_id"] == "sel-a")
+    }
+
+    @Test func v3MarkerHeaderKeepsPhysicalCoordinates() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.markerVariant()])
+        let profileText = try doc.serializedYAML()
+        let marked = "Run, acme-mk-1\nHDR, Volts, Amps\nDATA, 1.0, 10.0\nDATA, 2.0, 20.0\n"
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.mk_m1.txt": Data(marked.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.provenance["variant_id"] == "mk")
+        #expect(measurement.channel(named: "potential")?.values == [1.0, 2.0])
+        #expect(measurement.channel(named: "current")?.values == [10.0, 20.0])
+    }
+
+    @Test func v3RoundTripRetainsProvenanceValuesGapsUnitsDefaults() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.richVariant(), V3ReaderFixtures.caVariant()])
+        let profileText = try doc.serializedYAML()
+        let richCSV = "Run, acme-rich-7\nVolts, Amps, Note\n1.0, 10.0, ok\n, NaN, ok\n2.0, 20.0, ok\n"
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: [
+                "data/raw/acme.rich_run7.txt": Data(richCSV.utf8),
+                "data/raw/acme.ca_run2.txt": Data(V3ReaderFixtures.caCSV.utf8),
+            ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources().sorted { $0.relativePath < $1.relativePath }
+        #expect(sources.count == 2)
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.results.allSatisfy { $0.disposition == .profileMatched })
+        let richURL = try #require(sources.first { $0.relativePath.hasSuffix("rich_run7.txt") }).url
+        let measurement = try await InstrumentReader.load(richURL, project: project)
+        #expect(measurement.provenance["profile_id"] == "acme")
+        #expect(measurement.provenance["variant_id"] == "rich")
+        #expect(measurement.provenance["profile_schema_version"] == "3")
+        #expect(measurement.provenance["grammar_id"] == "electrochem")
+        #expect(measurement.provenance["grammar_sha256"] == sha256Hex(Data(V3ReaderFixtures.grammarYAML.utf8)))
+        #expect(measurement.provenance["profile_hash"] == sha256Hex(Data(profileText.utf8)))
+        let potential = try #require(measurement.channel(named: "potential"))
+        #expect(potential.values == [1.0, nil, 2.0])
+        #expect(potential.gapReasons[1] == .blank)
+        #expect(potential.unit == "V")
+        let current = try #require(measurement.channel(named: "current"))
+        #expect(current.values == [10.0, nil, 20.0])
+        #expect(current.gapReasons[1] == .nan)
+        #expect(current.unit == "A")
+        #expect(measurement.channels.count == 2)
+        #expect(measurement.channel(named: "note") == nil)
+        #expect(measurement.channel(named: "aux") == nil)
+        #expect(measurement.view.x == "potential")
+        #expect(measurement.view.y == ["current"])
+        #expect(measurement.provenance["eligible_x"] == "potential")
+        #expect(measurement.provenance["eligible_y"] == "current")
+        let acquisition = try #require(measurement.metadataSections.first { $0.title == "Acquisition" })
+        let runRecord = try #require(acquisition.fields.first { $0.key == "Run" })
+        #expect(runRecord.value.displayText == "acme-rich-7")
+        let runCell = try #require(acquisition.fields.first { $0.key == "run_id" })
+        #expect(runCell.value.displayText == "acme-rich-7")
+        // The generic fallback cannot even load this layout, let alone produce
+        // variant provenance or exact channels.
+        #expect(throws: GenericTableReader.ReaderError.self) {
+            try GenericTableReader.loadMeasurement(url: richURL, sourceID: "data/raw/acme.rich_run7.txt")
+        }
+    }
+
+    @Test func v3CommentCaptureKeepsOrderedRecords() async throws {
+        var variant = V3ReaderFixtures.cvVariant()
+        variant.rawStream.rows.commentPrefix = "#"
+        variant.metadataCapture = [.commentKeyValue(prefix: "#")]
+        let doc = V3ReaderFixtures.electrochemDoc(variants: [variant])
+        let profileText = try doc.serializedYAML()
+        let commented = "Run, acme-cv-8\nVolts, Amps\n# gain = 5\n# gain = 6\n1.0, 10.0\n# note = hi\n2.0, 20.0\n"
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run8.txt": Data(commented.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        #expect(measurement.channel(named: "potential")?.values == [1.0, 2.0])
+        #expect(measurement.channel(named: "current")?.values == [10.0, 20.0])
+        let acquisition = try #require(measurement.metadataSections.first { $0.title == "Acquisition" })
+        #expect(acquisition.fields.first { $0.key == "gain" }?.value.displayText == "5")
+        #expect(acquisition.fields.first { $0.key == "gain #2" }?.value.displayText == "6")
+        #expect(acquisition.fields.first { $0.key == "note" }?.value.displayText == "hi")
+    }
+
+    @Test func v3ConflictingFilenameHeaderMetadataStaysQualified() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let conflicted = "sample, HEADERVAL\nVolts, Amps\n1.0, 10.0\n"
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(conflicted.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let measurement = try await InstrumentReader.load(sources[0].url, project: project)
+        let acquisition = try #require(measurement.metadataSections.first { $0.title == "Acquisition" })
+        let fromFilename = acquisition.fields.first { $0.key == "sample (filename)" }
+        let fromHeader = acquisition.fields.first { $0.key == "sample (header)" }
+        #expect(fromFilename?.value.displayText == "run1")
+        #expect(fromHeader?.value.displayText == "HEADERVAL")
+        #expect(!measurement.warnings.isEmpty)
+    }
+
+    @Test func v3CacheFingerprintInvalidatesOnGrammarKeyVariantEdits() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let sources = try project.discoverSources()
+        let source = try #require(sources.first)
+        let cache = MeasurementCache(project: project)
+        let fingerprint1 = V3Reader.cacheFingerprint(catalog: ProfileCatalog.load(project: project), project: project)
+        let first = try await InstrumentReader.load(source.url, project: project, cache: cache)
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: fingerprint1) != nil)
+        // Grammar-only edit keeps routing but must change cache identity.
+        let grammarURL = root.appendingPathComponent(".rawviewer/grammar.yaml")
+        try Data(V3ReaderFixtures.grammarYAML.replacingOccurrences(of: "Electrochem Filenames", with: "Electrochem Filenames v2").utf8).write(to: grammarURL)
+        let fingerprint2 = V3Reader.cacheFingerprint(catalog: ProfileCatalog.load(project: project), project: project)
+        #expect(fingerprint2 != fingerprint1)
+        let second = try await InstrumentReader.load(source.url, project: project, cache: cache)
+        #expect(second.channel(named: "potential")?.values == first.channel(named: "potential")?.values)
+        #expect(try cache.measurement(for: source, project: project, profileFingerprint: fingerprint2) != nil)
+        // Key-set edit (added variant) changes identity.
+        var extra = V3ReaderFixtures.caVariant()
+        extra.id = "ca-2"
+        extra.name = "CA 2"
+        extra.keyValues = ["instrument": "acme", "mode": "ca2"]
+        let keyEditedText = try V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.cvVariant(), V3ReaderFixtures.caVariant(), extra]).serializedYAML()
+        try Data(keyEditedText.utf8).write(to: root.appendingPathComponent("data/instruments/acme.yaml"))
+        let fingerprint3 = V3Reader.cacheFingerprint(catalog: ProfileCatalog.load(project: project), project: project)
+        #expect(fingerprint3 != fingerprint1)
+        #expect(fingerprint3 != fingerprint2)
+        // Variant edit (unit change) changes identity.
+        var unitEdited = V3ReaderFixtures.cvVariant()
+        unitEdited.rawStream.columns[0].unit = "volt"
+        let variantEditedText = try V3ReaderFixtures.electrochemDoc(variants: [unitEdited, V3ReaderFixtures.caVariant()]).serializedYAML()
+        try Data(variantEditedText.utf8).write(to: root.appendingPathComponent("data/instruments/acme.yaml"))
+        let fingerprint4 = V3Reader.cacheFingerprint(catalog: ProfileCatalog.load(project: project), project: project)
+        #expect(fingerprint4 != fingerprint1)
+        #expect(fingerprint4 != fingerprint3)
+        let fourth = try await InstrumentReader.load(source.url, project: project, cache: cache)
+        #expect(fourth.channel(named: "potential")?.unit == "volt")
+    }
+
+    @Test func v3LegacyOriginShadowsOnlyExactCompanion() async throws {
+        let legacyText = Fixtures.keysightProfile
+        let peerText = Fixtures.keysightProfile.replacingOccurrences(of: "keysight-b1500a", with: "keysight-peer")
+        var doc = V3ReaderFixtures.electrochemDoc()
+        let legacySHA = sha256Hex(Data(legacyText.utf8))
+        doc.legacyOrigin = ProfileLegacyOrigin(path: "data/instruments/legacy.yaml", sha256: legacySHA)
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["legacy.yaml": legacyText, "other.yaml": peerText, "acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        var catalog = ProfileCatalog.load(project: project)
+        #expect(catalog.v3Documents.count == 1)
+        #expect(!catalog.profiles.contains { $0.relativePath == "data/instruments/legacy.yaml" })
+        #expect(catalog.profiles.contains { $0.relativePath == "data/instruments/other.yaml" })
+        #expect(!catalog.issues.contains { $0.contains("changed since import") })
+        // A changed companion stays visible beside the v3 document with a conflict.
+        let touched = legacyText.replacingOccurrences(of: "Keysight B1500A Semiconductor", with: "Keysight B1500A Semi")
+        try Data(touched.utf8).write(to: root.appendingPathComponent("data/instruments/legacy.yaml"))
+        catalog = ProfileCatalog.load(project: project)
+        #expect(catalog.profiles.contains { $0.relativePath == "data/instruments/legacy.yaml" })
+        #expect(catalog.profiles.contains { $0.relativePath == "data/instruments/other.yaml" })
+        #expect(catalog.v3Documents.count == 1)
+        #expect(catalog.issues.contains { $0.contains("changed since import") })
+    }
+
+    @Test func v3ArchiveDirectoriesAreIgnored() async throws {
+        let doc = V3ReaderFixtures.electrochemDoc()
+        let profileText = try doc.serializedYAML()
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["acme.yaml": profileText],
+            sources: ["data/raw/acme.cv_run1.txt": Data(V3ReaderFixtures.cvCSV.utf8)])
+        let archive = root.appendingPathComponent("data/instruments/archive")
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        try Data(profileText.utf8).write(to: archive.appendingPathComponent("old.yaml"))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let catalog = ProfileCatalog.load(project: project)
+        #expect(catalog.v3Documents.count == 1)
+        #expect(catalog.issues.isEmpty)
+        let sources = try project.discoverSources()
+        let report = await InstrumentReader.inspectMany(sources, project: project)
+        #expect(report.results.first?.disposition == .profileMatched)
+    }
+
+    // MARK: - Task 5: legacy/upgraded reader equivalence on generic fixtures
+
+    /// Generic invented instruments only; never real product names.
+    static let upgradeLegacyTabular = """
+    schema_version: 2
+    instrument:
+      id: synth-tab
+      name: Synth Tab Fixture
+    formats:
+      - id: tab
+        kind: tabular
+        extensions: [".csv"]
+        delimiter: ","
+        encoding: ["utf-8", "windows-1252"]
+        rows:
+          names_prefix: "HDR"
+          data_prefix: "ROW"
+        columns:
+          voltage:
+            header: "V1"
+            quantity: voltage
+            unit: "V"
+          current:
+            header: "I1"
+            quantity: current
+            unit: "A"
+          power:
+            header: "P1"
+            quantity: power
+            unit: "W"
+    modes:
+      - id: sweep-a
+        format: tab
+        filename_contains_all: ["synthx", "sweep-a"]
+        detect: ["SYNTH-TAB-A"]
+        extract:
+          x: voltage
+          y: [current, power]
+    """
+
+    static let upgradeLegacyHeaderless = """
+    schema_version: 2
+    instrument:
+      id: synth-pos
+      name: Synth Positional Fixture
+    formats:
+      - id: pos
+        kind: comment-tsv
+        extensions: [".txt"]
+        delimiter: ","
+        columns:
+          wavelength:
+            column_index: 0
+            quantity: length
+            unit: "nm"
+          counts:
+            column_index: 2
+            quantity: counts
+            unit: "ct"
+    modes:
+      - id: scan
+        format: pos
+        filename_contains_all: ["synthx", "scan"]
+        detect: ["SYNTH-POS"]
+        extract:
+          x: wavelength
+          y: [counts]
+    """
+
+    static let upgradeLegacyFirstRow = """
+    schema_version: 2
+    instrument:
+      id: synth-first
+      name: Synth First-Row Fixture
+    formats:
+      - id: frh
+        kind: first-row-header
+        extensions: [".csv"]
+        delimiter: ","
+        columns:
+          elapsed:
+            header: "Time"
+            quantity: time
+            unit: "s"
+          signal:
+            header: "Volts"
+            aliases: ["V"]
+            quantity: voltage
+            unit: "V"
+          aux:
+            header: "Aux"
+            quantity: signal
+            unit: "V"
+            required: false
+    modes:
+      - id: run
+        format: frh
+        filename_contains_all: ["synthx", "run"]
+        detect: ["SYNTH-FIRST"]
+        extract:
+          x: elapsed
+          y: [signal]
+    """
+
+    private func upgradeCatalog() -> FilenameGrammarCatalog {
+        FilenameGrammarCatalog(grammars: [FilenameGrammar(
+            id: "electrochem", name: "Electrochem Filenames",
+            template: "{instrument}.{mode}_{sample}",
+            fields: [
+                GrammarField(name: "instrument", role: "instrument", type: .string),
+                GrammarField(name: "mode", role: "mode", type: .string),
+                GrammarField(name: "sample", role: "sample", type: .string),
+            ])])
+    }
+
+    /// Strict-path upgrade of one legacy YAML string; originals untouched.
+    private func upgradedYAML(
+        legacyYAML: String, valuesByVariant: [String: [String: String]]
+    ) throws -> String {
+        let outcome = ProfileSchema.load(
+            text: legacyYAML, relativePath: "data/instruments/synth.yaml",
+            sha256: sha256Hex(Data(legacyYAML.utf8)))
+        let profile = try #require(outcome.profile)
+        var draft = try LegacyProfileUpgrader.draft(
+            from: profile, legacyPath: "data/instruments/synth.yaml",
+            sha256: sha256Hex(Data(legacyYAML.utf8)))
+        draft.resolve(grammarID: "electrochem", variantKeys: ["instrument", "mode"],
+                      valuesByVariantID: valuesByVariant)
+        return try draft.finalize(catalog: upgradeCatalog()).serializedYAML()
+    }
+
+    private func acquisitionPairs(_ measurement: NormalizedMeasurement) -> [(String, String)] {
+        guard let section = measurement.metadataSections.first(where: { $0.title == "Acquisition" }) else {
+            return []
+        }
+        return section.fields.map { ($0.key, "\($0.value)") }
+    }
+
+    private func assertEquivalent(
+        legacy: NormalizedMeasurement, upgraded: NormalizedMeasurement, variant: String
+    ) throws {
+        #expect(upgraded.applicationMode == variant)
+        #expect(upgraded.provenance["variant_id"] == variant)
+        #expect(upgraded.view.x == legacy.view.x)
+        #expect(upgraded.view.y == legacy.view.y)
+        #expect(upgraded.channels.map(\.name) == legacy.channels.map(\.name))
+        for channel in legacy.channels {
+            let other = try #require(upgraded.channel(named: channel.name))
+            #expect(other.values == channel.values)
+            #expect(other.quantity == channel.quantity)
+            #expect(other.unit == channel.unit)
+            #expect(other.gapReasons.map { $0 == nil } == channel.gapReasons.map { $0 == nil })
+        }
+        // Acquisition metadata: ordered pairs with repeated keys preserved.
+        let legacyPairs = acquisitionPairs(legacy).map { "\($0.0)=\($0.1)" }
+        let upgradedPairs = acquisitionPairs(upgraded).map { "\($0.0)=\($0.1)" }
+        #expect(upgradedPairs == legacyPairs)
+        let legacyData = legacy.metadataSections.first { $0.title == "Data" }?.fields
+        let upgradedData = upgraded.metadataSections.first { $0.title == "Data" }?.fields
+        #expect(legacyData?.map { "\($0.key)=\($0.value)" } == upgradedData?.map { "\($0.key)=\($0.value)" })
+    }
+
+    @Test func upgradedTabularMatchesLegacyIncludingAcquisitionMetadata() async throws {
+        let sourceA = Data("""
+            Title, SYNTH-TAB-A export
+            Operator, ada
+            Operator, grace
+            HDR, V1, I1, P1
+            ROW, 1, 2, 3
+            ROW, 2, , 6
+            ROW, 3, 8, 9
+
+            """.utf8)
+        // Fewer pre-header rows, more data rows, and a windows-1252 byte.
+        var rawB = Data("Title, SYNTH-TAB-A export\nOperator, caf".utf8)
+        rawB.append(0xE9)
+        rawB.append(contentsOf: Data("\nHDR, V1, I1, P1\nROW, 1, 1, 1\nROW, 2, 2, 2\nROW, 3, 3, 3\nROW, 4, 4, 4\nROW, 5, 5, 5\n".utf8))
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["synth-tab.yaml": Self.upgradeLegacyTabular],
+            sources: ["data/raw/synthx.sweep-a_s01.csv": sourceA,
+                      "data/raw/synthx.sweep-a_s02.csv": rawB])
+        defer { try? FileManager.default.removeItem(at: root) }
+        var project = try ProjectContext.open(root)
+        let legacySources = try project.discoverSources()
+        let legacyA = try await InstrumentReader.load(legacySources.first { $0.relativePath.hasSuffix("s01.csv") }!.url, project: project)
+        let legacyB = try await InstrumentReader.load(legacySources.first { $0.relativePath.hasSuffix("s02.csv") }!.url, project: project)
+
+        let upgraded = try upgradedYAML(
+            legacyYAML: Self.upgradeLegacyTabular,
+            valuesByVariant: ["sweep-a": ["instrument": "synthx", "mode": "sweep-a"]])
+        let v3dir = root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
+        try FileManager.default.createDirectory(at: v3dir, withIntermediateDirectories: true)
+        try upgraded.write(to: v3dir.appendingPathComponent("synth-tab.yaml"), atomically: true, encoding: .utf8)
+        project = try ProjectContext.open(root)
+        let upgradedSources = try project.discoverSources()
+        let upA = try await InstrumentReader.load(upgradedSources.first { $0.relativePath.hasSuffix("s01.csv") }!.url, project: project)
+        let upB = try await InstrumentReader.load(upgradedSources.first { $0.relativePath.hasSuffix("s02.csv") }!.url, project: project)
+
+        try assertEquivalent(legacy: legacyA, upgraded: upA, variant: "sweep-a")
+        try assertEquivalent(legacy: legacyB, upgraded: upB, variant: "sweep-a")
+        // The declared encoding alternative decodes identically on both paths.
+        #expect(acquisitionPairs(legacyB).contains { $0.1.contains("caf\u{E9}") })
+        #expect(legacyA.channel(named: "current")?.values == [2, nil, 8])
+    }
+
+    @Test func upgradedHeaderlessMatchesLegacy() async throws {
+        let source = Data("""
+            #SYNTH-POS instrument
+            #Operator=ada
+            #Operator=grace
+            #Note=first
+            500, x, 10
+            501, x, 20
+            502, x, 30
+
+            """.utf8)
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["synth-pos.yaml": Self.upgradeLegacyHeaderless],
+            sources: ["data/raw/synthx.scan_s01.txt": source])
+        defer { try? FileManager.default.removeItem(at: root) }
+        var project = try ProjectContext.open(root)
+        let legacy = try await InstrumentReader.load(try project.discoverSources().first!.url, project: project)
+
+        let upgraded = try upgradedYAML(
+            legacyYAML: Self.upgradeLegacyHeaderless,
+            valuesByVariant: ["scan": ["instrument": "synthx", "mode": "scan"]])
+        let v3dir = root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
+        try FileManager.default.createDirectory(at: v3dir, withIntermediateDirectories: true)
+        try upgraded.write(to: v3dir.appendingPathComponent("synth-pos.yaml"), atomically: true, encoding: .utf8)
+        project = try ProjectContext.open(root)
+        let up = try await InstrumentReader.load(try project.discoverSources().first!.url, project: project)
+
+        try assertEquivalent(legacy: legacy, upgraded: up, variant: "scan")
+        #expect(acquisitionPairs(legacy).map(\.0) == ["Operator", "Operator #2", "Note"])
+    }
+
+    @Test func upgradedFirstRowMatchesLegacyWithAliasAndAbsentOptional() async throws {
+        // The file uses the declared alias and omits the optional channel.
+        // The detect token rides in an extra header cell: the first
+        // non-blank line is the header by definition on both paths.
+        let source = Data("""
+            \nTime, V, SYNTH-FIRST
+            0, 1, 9
+            1, 2, 8
+
+            """.utf8)
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["synth-first.yaml": Self.upgradeLegacyFirstRow],
+            sources: ["data/raw/synthx.run_s01.csv": source])
+        defer { try? FileManager.default.removeItem(at: root) }
+        var project = try ProjectContext.open(root)
+        let legacy = try await InstrumentReader.load(try project.discoverSources().first!.url, project: project)
+        #expect(legacy.channel(named: "aux") == nil)
+
+        let upgraded = try upgradedYAML(
+            legacyYAML: Self.upgradeLegacyFirstRow,
+            valuesByVariant: ["run": ["instrument": "synthx", "mode": "run"]])
+        let v3dir = root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
+        try FileManager.default.createDirectory(at: v3dir, withIntermediateDirectories: true)
+        try upgraded.write(to: v3dir.appendingPathComponent("synth-first.yaml"), atomically: true, encoding: .utf8)
+        project = try ProjectContext.open(root)
+        let up = try await InstrumentReader.load(try project.discoverSources().first!.url, project: project)
+
+        try assertEquivalent(legacy: legacy, upgraded: up, variant: "run")
+        #expect(up.channel(named: "aux") == nil)
+        #expect(up.channel(named: "signal")?.values == [1, 2])
+    }
+
+    @Test func legacyAndUpgradedAgreeOnFailure() async throws {
+        let bad = Data("Title, SYNTH-TAB-A export\nNOPE, V1\nROW, 1, 2, 3\n".utf8)
+        let root = try makeV3Project(
+            grammar: V3ReaderFixtures.grammarYAML,
+            profiles: ["synth-tab.yaml": Self.upgradeLegacyTabular],
+            sources: ["data/raw/synthx.sweep-a_bad.csv": bad])
+        defer { try? FileManager.default.removeItem(at: root) }
+        var project = try ProjectContext.open(root)
+        let url = try project.discoverSources().first!.url
+        await #expect(throws: ReaderError.self) { try await InstrumentReader.load(url, project: project) }
+
+        let upgraded = try upgradedYAML(
+            legacyYAML: Self.upgradeLegacyTabular,
+            valuesByVariant: ["sweep-a": ["instrument": "synthx", "mode": "sweep-a"]])
+        let v3dir = root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
+        try FileManager.default.createDirectory(at: v3dir, withIntermediateDirectories: true)
+        try upgraded.write(to: v3dir.appendingPathComponent("synth-tab.yaml"), atomically: true, encoding: .utf8)
+        project = try ProjectContext.open(root)
+        let url2 = try project.discoverSources().first!.url
+        await #expect(throws: ReaderError.self) { try await InstrumentReader.load(url2, project: project) }
+    }
 }
 
 private actor ProgressRecorder {
@@ -1995,6 +2757,175 @@ private func makeProject(profiles: [String: String], sources: [String: Data]) th
         try Data(contents.utf8).write(to: url)
     }
     return root
+}
+
+private func makeV3Project(grammar: String, profiles: [String: String], sources: [String: Data]) throws -> URL {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-v3-test-\(UUID().uuidString)")
+    let grammarURL = root.appendingPathComponent(".rawviewer/grammar.yaml")
+    try FileManager.default.createDirectory(at: grammarURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(grammar.utf8).write(to: grammarURL)
+    for (relativePath, data) in sources {
+        let url = root.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+    }
+    for (name, contents) in profiles {
+        let url = root.appendingPathComponent("data/instruments/\(name)")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(contents.utf8).write(to: url)
+    }
+    return root
+}
+
+/// Task 4 fixtures: one grammar shared by every variant, small enough to
+/// read at a glance. Documents are built with the Task 2 types and saved
+/// with `serializedYAML()`, so the save-parse-load path is exercised too.
+enum V3ReaderFixtures {
+    static let grammarYAML = """
+    schema_version: 1
+    grammars:
+      - id: electrochem
+        name: Electrochem Filenames
+        template: "{instrument}.{mode}_{sample}"
+        fields:
+          - name: instrument
+            role: instrument
+            type: string
+            optional: false
+          - name: mode
+            role: mode
+            type: string
+            optional: false
+          - name: sample
+            role: sample
+            type: string
+            optional: false
+    """
+
+    static func cvVariant() -> ProfileVariantV3 {
+        ProfileVariantV3(
+            id: "cv", name: "CV",
+            keyValues: ["instrument": "acme", "mode": "cv"],
+            rawStream: RawStreamV3(
+                extensions: [".txt"], encodings: ["utf-8"],
+                delimiter: ",", decimalSeparator: ".",
+                rows: RowLocatorsV3(header: .row(2), dataStart: .afterHeader),
+                columns: [
+                    ProfileColumnV3(id: "potential",
+                                    source: ColumnSourceV3(header: "Volts"),
+                                    label: "Voltage", quantity: "voltage", unit: "V",
+                                    role: .channel, axes: [.x]),
+                    ProfileColumnV3(id: "current",
+                                    source: ColumnSourceV3(header: "Amps"),
+                                    label: "Current", quantity: "current", unit: "A",
+                                    role: .channel, axes: [.y]),
+                ]),
+            metadataCapture: [.preHeaderFields],
+            defaultPlot: DefaultPlotV3(x: "potential", y: ["current"]))
+    }
+
+    static func caVariant() -> ProfileVariantV3 {
+        ProfileVariantV3(
+            id: "ca", name: "CA",
+            keyValues: ["instrument": "acme", "mode": "ca"],
+            rawStream: RawStreamV3(
+                extensions: [".txt"], encodings: ["utf-8"],
+                delimiter: ",", decimalSeparator: ".",
+                rows: RowLocatorsV3(header: .row(2), dataStart: .afterHeader),
+                columns: [
+                    ProfileColumnV3(id: "elapsed",
+                                    source: ColumnSourceV3(header: "Secs"),
+                                    label: "Time", quantity: "time", unit: "s",
+                                    role: .channel, axes: [.x]),
+                    ProfileColumnV3(id: "current",
+                                    source: ColumnSourceV3(header: "mAmps"),
+                                    label: "Current", quantity: "current", unit: "mA",
+                                    role: .channel, axes: [.y]),
+                ]),
+            metadataCapture: [.preHeaderFields],
+            defaultPlot: DefaultPlotV3(x: "elapsed", y: ["current"]))
+    }
+
+    static func electrochemDoc(variants: [ProfileVariantV3]? = nil) -> ProfileDocumentV3 {
+        ProfileDocumentV3(
+            profileID: "acme", profileName: "Acme Lab",
+            instrumentID: "acme-inst", instrumentName: "Acme Instrument",
+            grammarID: "electrochem", variantKeys: ["instrument", "mode"],
+            variants: variants ?? [cvVariant(), caVariant()])
+    }
+
+    static let cvCSV = """
+    Run, acme-cv-1
+    Volts, Amps
+    1.0, 10.0
+    2.0, 20.0
+
+    """
+
+    static let caCSV = """
+    Run, acme-ca-2
+    Secs, mAmps
+    0.0, 5.0
+    1.0, 6.0
+
+    """
+
+    /// Same routing tuple as `cvVariant` but a header/data marker layout: the
+    /// marker token stays in physical column coordinates (never stripped).
+    static func markerVariant() -> ProfileVariantV3 {
+        ProfileVariantV3(
+            id: "mk", name: "MK",
+            keyValues: ["instrument": "acme", "mode": "mk"],
+            rawStream: RawStreamV3(
+                extensions: [".txt"], encodings: ["utf-8"],
+                delimiter: ",", decimalSeparator: ".",
+                rows: RowLocatorsV3(header: .prefix("HDR"), dataStart: .afterHeader, dataPrefix: "DATA"),
+                columns: [
+                    ProfileColumnV3(id: "potential",
+                                    source: ColumnSourceV3(header: "Volts"),
+                                    label: "Voltage", quantity: "voltage", unit: "V",
+                                    role: .channel, axes: [.x]),
+                    ProfileColumnV3(id: "current",
+                                    source: ColumnSourceV3(header: "Amps"),
+                                    label: "Current", quantity: "current", unit: "A",
+                                    role: .channel, axes: [.y]),
+                ]),
+            defaultPlot: DefaultPlotV3(x: "potential", y: ["current"]))
+    }
+
+    /// Skip/optional/gap/fixed-metadata coverage: `note` is retained but never
+    /// decoded, `aux` is optional and absent from the file, row 3 holds a
+    /// blank and a NaN gap, and `run_id` reads a fixed cell per source.
+    static func richVariant() -> ProfileVariantV3 {
+        ProfileVariantV3(
+            id: "rich", name: "Rich",
+            keyValues: ["instrument": "acme", "mode": "rich"],
+            rawStream: RawStreamV3(
+                extensions: [".txt"], encodings: ["utf-8"],
+                delimiter: ",", decimalSeparator: ".",
+                rows: RowLocatorsV3(header: .row(2), dataStart: .afterHeader),
+                columns: [
+                    ProfileColumnV3(id: "potential",
+                                    source: ColumnSourceV3(header: "Volts"),
+                                    label: "Voltage", quantity: "voltage", unit: "V",
+                                    role: .channel, axes: [.x]),
+                    ProfileColumnV3(id: "current",
+                                    source: ColumnSourceV3(header: "Amps"),
+                                    label: "Current", quantity: "current", unit: "A",
+                                    role: .channel, axes: [.y]),
+                    ProfileColumnV3(id: "note",
+                                    source: ColumnSourceV3(header: "Note"),
+                                    label: "Note", quantity: "note",
+                                    role: .skip),
+                    ProfileColumnV3(id: "aux",
+                                    source: ColumnSourceV3(header: "Aux"),
+                                    label: "Aux", quantity: "voltage", unit: "V",
+                                    required: false, role: .channel, axes: [.y]),
+                ]),
+            metadata: [VariantMetadataV3(key: "run_id", role: "run", row: 1, column: 2)],
+            metadataCapture: [.preHeaderFields],
+            defaultPlot: DefaultPlotV3(x: "potential", y: ["current"]))
+    }
 }
 
 private func sha256Hex(_ data: Data) -> String {

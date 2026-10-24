@@ -42,7 +42,8 @@ public enum InstrumentReader {
         onProgress: (@Sendable ([SourceInspectionResult], Int) async -> Void)? = nil
     ) async -> ReaderInspectionReport {
         let catalog = ProfileCatalog.load(project: project)
-        let catalogFingerprint = catalog.fingerprint
+        let v3grammar = V3Reader.context(project: project)
+        let catalogFingerprint = V3Reader.cacheFingerprint(catalog: catalog, grammarSHA256: v3grammar.sha256)
         var results: [SourceInspectionResult] = []
         results.reserveCapacity(sources.count)
         let maxConcurrency = max(2, min(ProcessInfo.processInfo.activeProcessorCount, 16))
@@ -79,7 +80,7 @@ public enum InstrumentReader {
                         }
                         if let cache {
                             let cached = try? await cache.inspection(for: source, project: project, catalogFingerprint: catalogFingerprint) { (pinnedPrefix: Data, descriptorSize: Int64, actualURL: URL) throws -> MeasurementCache.CachedInspection in
-                                try inspectPinned(source: source, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL)
+                                try inspectPinned(source: source, project: project, catalog: catalog, prefix: pinnedPrefix, descriptorSize: descriptorSize, actualURL: actualURL, v3grammar: v3grammar)
                             }
                             if let cached {
                                 switch cached.outcome {
@@ -90,7 +91,7 @@ public enum InstrumentReader {
                                 }
                             }
                         }
-                        return (offset, inspect(source, project: project, catalog: catalog))
+                        return (offset, inspect(source, project: project, catalog: catalog, v3grammar: v3grammar))
                     }
                 }
                 for await completed in group {
@@ -130,6 +131,8 @@ public enum InstrumentReader {
         do {
             try Task.checkCancellation()
             let catalog = ProfileCatalog.load(project: project)
+            let v3grammar = V3Reader.context(project: project)
+            let cacheFingerprint = V3Reader.cacheFingerprint(catalog: catalog, grammarSHA256: v3grammar.sha256)
             // Single claimed-path containment helper: the claimed (unresolved)
             // selection must sit inside the configured data root, and the
             // project-relative identity it yields is the source identity. The
@@ -174,12 +177,40 @@ public enum InstrumentReader {
                let cached = try? cache.measurement(
                    for: RawSource(relativePath: relativePath, url: source, byteSize: descriptorSize),
                    project: project,
-                   profileFingerprint: catalog.fingerprint) {
+                   profileFingerprint: cacheFingerprint) {
                 try? handle.close()
                 return cached
             }
             var hasher = SHA256()
             hasher.update(data: prefixData)
+            // Schema-v3 routes first with the same exactly-one-variant rule as
+            // inspection. A claimed failure throws here and never reaches the
+            // generic fallback in the legacy path below.
+            switch V3Reader.resolve(prefix: prefixData, extension: fileExtension, basename: basename,
+                                    relativePath: relativePath, descriptorSize: descriptorSize,
+                                    catalog: catalog, grammar: v3grammar) {
+            case .unclaimed:
+                break
+            case .failed(let message):
+                try? handle.close()
+                throw ReaderError.invalidSource(message)
+            case .matched(let match, let v3encoding, let v3sample, let v3pending):
+                let v3extracted = try V3StreamExtractor.extractStreaming(
+                    relativePath: relativePath, match: match, encoding: v3encoding,
+                    initialText: v3sample, initialPending: v3pending, handle: handle, hasher: hasher)
+                try Task.checkCancellation()
+                let v3measurement = try V3Reader.measurement(
+                    relativePath: relativePath, basename: basename, match: match, extracted: v3extracted)
+                if let cache, !Task.isCancelled {
+                    try? cache.store(
+                        measurement: v3measurement,
+                        profileFingerprint: cacheFingerprint,
+                        source: RawSource(relativePath: relativePath, url: source, byteSize: descriptorSize),
+                        prefixSHA256: prefixDigest,
+                        project: project)
+                }
+                return v3measurement
+            }
             // The selected unique profile/format's declared encoding drives
             // decoding: candidates are resolved using each candidate's own
             // encoding, and only one unique profile/format may match.
@@ -264,7 +295,7 @@ public enum InstrumentReader {
             if let cache, !Task.isCancelled {
                 try? cache.store(
                     measurement: measurement,
-                    profileFingerprint: catalog.fingerprint,
+                    profileFingerprint: cacheFingerprint,
                     source: RawSource(relativePath: relativePath, url: source, byteSize: descriptorSize),
                     prefixSHA256: prefixDigest,
                     project: project)
@@ -279,9 +310,9 @@ public enum InstrumentReader {
         }
     }
 
-    private static func inspect(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) -> SourceInspectionResult {
+    private static func inspect(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog, v3grammar: V3GrammarContext) -> SourceInspectionResult {
         do {
-            switch try inspectAccess(source, project: project, catalog: catalog) {
+            switch try inspectAccess(source, project: project, catalog: catalog, v3grammar: v3grammar) {
             case .supported(let inspection, let disposition):
                 return SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil)
             case .blocked(let message):
@@ -304,7 +335,7 @@ public enum InstrumentReader {
     /// THROWS for anything non-deterministic: cancellation, access/security
     /// failures (missing, unreadable, symlinked, escaped), and open/read
     /// errors. Only returned values may reach the inspection cache.
-    static func inspectAccess(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog) throws -> MeasurementCache.CachedInspection {
+    static func inspectAccess(_ source: RawSource, project: ProjectContext, catalog: ProfileCatalog, v3grammar: V3GrammarContext? = nil) throws -> MeasurementCache.CachedInspection {
         // Excluded files are rejected from the claimed name alone, before any open.
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
             return .blocked("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
@@ -342,7 +373,7 @@ public enum InstrumentReader {
         let descriptorSize = Int64(fileStat.st_size)
         try? handle.close()
         try Task.checkCancellation()
-        return try inspectPinned(source: source, project: project, catalog: catalog, prefix: prefixData, descriptorSize: descriptorSize, actualURL: source.url)
+        return try inspectPinned(source: source, project: project, catalog: catalog, prefix: prefixData, descriptorSize: descriptorSize, actualURL: source.url, v3grammar: v3grammar)
     }
 
     /// Pinned inspection production for the cache seam: computes the outcome
@@ -350,7 +381,7 @@ public enum InstrumentReader {
     /// URL obtained by the cache's secured open, without reopening the path.
     /// The descriptor URL is not source identity: hardlinks may have another
     /// F_GETPATH alias, so selectors and diagnostics use the selected source.
-    static func inspectPinned(source: RawSource, project: ProjectContext, catalog: ProfileCatalog, prefix: Data, descriptorSize: Int64, actualURL _: URL) throws -> MeasurementCache.CachedInspection {
+    static func inspectPinned(source: RawSource, project: ProjectContext, catalog: ProfileCatalog, prefix: Data, descriptorSize: Int64, actualURL _: URL, v3grammar: V3GrammarContext? = nil) throws -> MeasurementCache.CachedInspection {
         guard !ProjectContext.skippedRawExtensions.contains(source.url.pathExtension.lowercased()) else {
             return .blocked("\(project.claimedPath(of: source.url)): RawView skips .spe and .affm files.")
         }
@@ -358,6 +389,28 @@ public enum InstrumentReader {
         let fileExtension = "." + source.url.pathExtension.lowercased()
         let basename = source.url.lastPathComponent
         let relativePath = source.relativePath
+        // Schema-v3 routes first: a claimed source resolves to exactly one
+        // variant or a deterministic diagnostic. Claimed failures never reach
+        // the legacy path or the generic fallback below.
+        switch V3Reader.resolve(prefix: prefix, extension: fileExtension, basename: basename,
+                                relativePath: relativePath, descriptorSize: descriptorSize,
+                                catalog: catalog, grammar: v3grammar ?? V3Reader.context(project: project)) {
+        case .unclaimed:
+            break
+        case .failed(let message):
+            return .blocked(message)
+        case .matched(let match, _, _, _):
+            let inspection = SourceInspection(
+                source: relativePath, size: descriptorSize,
+                instrumentID: match.document.instrumentID, instrumentName: match.document.instrumentName,
+                applicationMode: match.variant.id,
+                timestamp: match.facts.timestamp, deviceID: match.facts.deviceID, category: match.facts.category,
+                supportStatus: "supported",
+                validationState: "profile valid; source not loaded; variant \(match.variant.id); grammar \(match.document.grammarID) \(String(match.grammarSHA256.prefix(12)))",
+                readerVersion: version, profileID: match.document.profileID, profileHash: match.documentSHA256, error: nil
+            )
+            return .supported(inspection, .profileMatched)
+        }
         let encoded = resolveEncoded(prefix: prefix, catalog: catalog, extension: fileExtension, basename: basename)
         switch encoded.resolution {
         case .failed(let message):
@@ -1010,7 +1063,7 @@ enum TabularExtractor {
     /// section prefixes stay distinct without inventing values. Empty values are
     /// skipped, values over 512 chars are truncated, fields capped at 256 (the real
     /// Keysight B1500A header carries ~148 fields including trailing Dimension rows).
-    private static func headerMetadata(lines: [String], delimiter: Character, relativePath: String) throws -> [(key: String, value: String)] {
+    static func headerMetadata(lines: [String], delimiter: Character, relativePath: String) throws -> [(key: String, value: String)] {
         var rows: [[String]] = []
         var firstCounts: [String: Int] = [:]
         for (index, line) in lines.enumerated() {
@@ -1238,5 +1291,620 @@ enum FirstRowHeaderExtractor {
             throw ReaderError.invalidSource("\(relativePath): no data rows were found after the header.")
         }
         return TabularExtraction(columns: columns.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: [], sha256: puller.digestHex())
+    }
+}
+
+// MARK: - Schema-v3 exact variant resolution and extraction
+
+/// Project grammar state for v3 routing: the validated catalog plus the exact
+/// source-bytes digest. A missing file and a malformed file stay distinct;
+/// both fail closed at resolve time.
+struct V3GrammarContext: Sendable {
+    let catalog: FilenameGrammarCatalog?
+    let sha256: String?
+    let error: String?
+}
+
+/// One exactly resolved schema-v3 variant with its routing evidence.
+struct V3Match: Sendable {
+    let document: ProfileDocumentV3
+    let variant: ProfileVariantV3
+    let grammar: FilenameGrammar
+    let facts: ExtractedGrammarFacts
+    let grammarSHA256: String
+    let documentPath: String
+    let documentSHA256: String
+}
+
+enum V3Outcome: Sendable {
+    case unclaimed
+    case matched(V3Match, encoding: String.Encoding, sample: String, pending: Data)
+    case failed(String)
+}
+
+/// Thrown when the bounded prefix ends before the header row: inspection
+/// passes the variant and the full-stream load decides.
+private struct V3DeferHeader: Error {
+    let message: String
+}
+
+enum V3Reader {
+    static func context(project: ProjectContext) -> V3GrammarContext {
+        let url = project.root.appendingPathComponent(FilenameGrammarEngine.relativePath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return V3GrammarContext(catalog: nil, sha256: nil,
+                                    error: "grammar catalog \(FilenameGrammarEngine.relativePath) not found")
+        }
+        guard let data = try? Data(contentsOf: url) else {
+            return V3GrammarContext(catalog: nil, sha256: nil,
+                                    error: "grammar catalog \(FilenameGrammarEngine.relativePath) could not be read")
+        }
+        do {
+            return V3GrammarContext(catalog: try FilenameGrammarEngine.load(fileURL: url),
+                                    sha256: sha256Hex(data), error: nil)
+        } catch {
+            return V3GrammarContext(catalog: nil, sha256: sha256Hex(data),
+                                    error: error.localizedDescription)
+        }
+    }
+
+    /// Cache identity: the complete catalog fingerprint (which already covers
+    /// every v3 document's bytes) plus the exact grammar bytes. Legacy-only
+    /// projects keep the bare catalog fingerprint so their keys never move.
+    /// No payload schema change: provenance already round-trips as free-form
+    /// strings, so the cache version stays put.
+    static func cacheFingerprint(catalog: ProfileCatalog, grammarSHA256: String?) -> String {
+        guard !catalog.v3Documents.isEmpty || grammarSHA256 != nil else { return catalog.fingerprint }
+        return sha256Hex(Data("v3cache|\(catalog.fingerprint)|\(grammarSHA256 ?? "absent")".utf8))
+    }
+
+    static func cacheFingerprint(catalog: ProfileCatalog, project: ProjectContext) -> String {
+        cacheFingerprint(catalog: catalog, grammarSHA256: context(project: project).sha256)
+    }
+
+    /// Decodes the bounded prefix with one variant's declared encodings only,
+    /// mirroring the legacy per-candidate decoding (UTF-8 backs off a split
+    /// trailing scalar). Alternatives are explicit, never invented.
+    static func decodePrefix(_ prefix: Data, names: [String]) -> (encoding: String.Encoding, text: String, pending: Data)? {
+        for name in names {
+            guard let encoding = ProfileSchema.encoding(named: name) else { continue }
+            if encoding == .utf8 {
+                var candidate = prefix
+                for _ in 0..<4 {
+                    if let text = String(data: candidate, encoding: .utf8) {
+                        return (encoding, text, prefix.suffix(prefix.count - candidate.count))
+                    }
+                    guard !candidate.isEmpty else { break }
+                    candidate = candidate.dropLast()
+                }
+            } else if let text = String(data: prefix, encoding: encoding) {
+                return (encoding, text, Data())
+            }
+        }
+        return nil
+    }
+
+    /// Full grammar match (partial never routes) → exact raw key tuple
+    /// (case-sensitive) → compatibility selectors and declared stream/header
+    /// checks → exactly one variant. Anything claimed but undecidable is a
+    /// deterministic failure, never a silent route to generic success.
+    static func resolve(prefix: Data, extension fileExtension: String, basename: String,
+                        relativePath: String, descriptorSize: Int64,
+                        catalog: ProfileCatalog, grammar: V3GrammarContext) -> V3Outcome {
+        let ext = fileExtension.lowercased()
+        let claiming = catalog.v3Documents.filter { loaded in
+            loaded.document.variants.contains { $0.rawStream.extensions.map({ $0.lowercased() }).contains(ext) }
+        }
+        guard !claiming.isEmpty else { return .unclaimed }
+        guard let grammarCatalog = grammar.catalog else {
+            return .failed("\(relativePath): schema-v3 profiles claim \"\(ext)\" but the grammar catalog cannot be used (\(grammar.error ?? "missing")); fix \(FilenameGrammarEngine.relativePath) or remove the v3 profiles.")
+        }
+        let truncated = descriptorSize > Int64(prefix.count)
+        struct Candidate {
+            let match: V3Match
+            let encoding: String.Encoding
+            let text: String
+            let pending: Data
+        }
+        var candidates: [Candidate] = []
+        var blockingNotes: [String] = []
+        var matchNotes: [String] = []
+        var sawFullMatch = false
+        var decodedCache: [String: (encoding: String.Encoding, text: String, pending: Data)] = [:]
+        for loaded in claiming {
+            let document = loaded.document
+            guard let grammarDef = grammarCatalog.grammars.first(where: { $0.id == document.grammarID }) else {
+                blockingNotes.append("\(loaded.relativePath): filename.grammar_id \"\(document.grammarID)\" is not in the grammar catalog.")
+                continue
+            }
+            let facts = FilenameGrammarEngine.extract(from: basename, grammar: grammarDef)
+            guard facts.isMatched else { continue }
+            sawFullMatch = true
+            var tuple: [String: String] = [:]
+            var tupleComplete = true
+            for key in document.variantKeys {
+                guard let value = facts.extractedFields[key] else { tupleComplete = false; break }
+                tuple[key] = value
+            }
+            guard tupleComplete else { continue }
+            for variant in document.variants where variant.rawStream.extensions.map({ $0.lowercased() }).contains(ext) {
+                guard document.variantKeys.allSatisfy({ variant.keyValues[$0] == tuple[$0] }) else { continue }
+                let cacheKey = variant.rawStream.encodings.joined(separator: "\u{0}")
+                let decoded: (encoding: String.Encoding, text: String, pending: Data)?
+                if let hit = decodedCache[cacheKey] {
+                    decoded = hit
+                } else {
+                    decoded = decodePrefix(prefix, names: variant.rawStream.encodings)
+                    if let decoded { decodedCache[cacheKey] = decoded }
+                }
+                guard let decoded else {
+                    matchNotes.append("\(loaded.relativePath) variant \"\(variant.id)\": the file header could not be decoded with declared encodings [\(variant.rawStream.encodings.joined(separator: ", "))].")
+                    continue
+                }
+                if let required = variant.match?.filenameContainsAll,
+                   !required.allSatisfy({ basename.lowercased().contains($0.lowercased()) }) { continue }
+                if let any = variant.match?.contentContainsAny,
+                   !any.contains(where: { decoded.text.lowercased().contains($0.lowercased()) }) { continue }
+                do {
+                    try checkHeader(sample: decoded.text, variant: variant, relativePath: relativePath,
+                                    completePrefix: !truncated)
+                    candidates.append(Candidate(
+                        match: V3Match(document: document, variant: variant, grammar: grammarDef, facts: facts,
+                                       grammarSHA256: grammar.sha256 ?? "absent",
+                                       documentPath: loaded.relativePath, documentSHA256: loaded.sha256),
+                        encoding: decoded.encoding, text: decoded.text, pending: decoded.pending))
+                } catch is V3DeferHeader {
+                    // ponytail: bounded-prefix deferral; the full-stream load
+                    // re-runs every check, so a wrong pass still fails closed.
+                    candidates.append(Candidate(
+                        match: V3Match(document: document, variant: variant, grammar: grammarDef, facts: facts,
+                                       grammarSHA256: grammar.sha256 ?? "absent",
+                                       documentPath: loaded.relativePath, documentSHA256: loaded.sha256),
+                        encoding: decoded.encoding, text: decoded.text, pending: decoded.pending))
+                } catch {
+                    matchNotes.append("\(loaded.relativePath) variant \"\(variant.id)\": \(error.localizedDescription)")
+                    continue
+                }
+            }
+        }
+        if candidates.count > 1 {
+            let described = candidates.map { "\($0.match.documentPath) variant \($0.match.variant.id)" }.joined(separator: ", ")
+            return .failed("\(relativePath): Ambiguous profile match: \(described). Keep one variant per source: refine variant keys, compatibility selectors, or stream headers.")
+        }
+        if let unique = candidates.first {
+            if !blockingNotes.isEmpty {
+                return .failed("\(relativePath): variant \"\(unique.match.variant.id)\" matches, but another claiming profile cannot route (\(blockingNotes.joined(separator: " "))). Resolve every claiming variant before loading.")
+            }
+            if case .matched(let foreign) = catalog.resolve(extension: ext, headerSample: unique.text, basename: basename) {
+                return .failed("\(relativePath): Ambiguous profile match: schema-v3 \(unique.match.documentPath) variant \(unique.match.variant.id) and legacy \(foreign.profile.relativePath) mode \(foreign.mode.id) both match. Keep one profile per source.")
+            }
+            let blocking = catalog.brokenClaims.filter { $0.blocks(sample: unique.text.lowercased(), basename: basename) }
+            if !blocking.isEmpty {
+                let note = "A valid v3 profile (\(unique.match.documentPath) variant \(unique.match.variant.id)) also matches this source; the source stays blocked until the invalid profile is fixed or removed."
+                return .failed((blocking.flatMap(\.issues) + [note]).joined(separator: "\n"))
+            }
+            return .matched(unique.match, encoding: unique.encoding, sample: unique.text, pending: unique.pending)
+        }
+        if sawFullMatch {
+            let detail = matchNotes.isEmpty
+                ? "no variant of \(claiming.map(\.relativePath).joined(separator: ", ")) declares those key values"
+                : matchNotes.joined(separator: " ")
+            return .failed("\(relativePath): the filename matches a schema-v3 grammar but \(detail).")
+        }
+        return .unclaimed
+    }
+
+    /// Header locator plus data-column resolution over the available sample.
+    /// A missing header in a complete prefix is definitive; in a truncated
+    /// prefix it defers to the full-stream load.
+    static func checkHeader(sample: String, variant: ProfileVariantV3, relativePath: String, completePrefix: Bool) throws {
+        let lines = sample.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let usable = completePrefix ? lines : Array(lines.dropLast())
+        let numbered = usable.enumerated().map { (number: $0.offset + 1, text: $0.element) }
+        do {
+            guard let (_, headers) = try resolveHeaderRow(lines: numbered, variant: variant, relativePath: relativePath) else { return }
+            _ = try resolveDataColumns(headers: headers, variant: variant, relativePath: relativePath)
+        } catch let deferral as V3DeferHeader {
+            if completePrefix { throw ReaderError.invalidSource("\(relativePath): \(deferral.message).") }
+            throw deferral
+        }
+    }
+
+    static func resolveHeaderRow(lines: [(number: Int, text: String)], variant: ProfileVariantV3, relativePath: String) throws -> (Int, [String])? {
+        let stream = variant.rawStream
+        guard let delimiter = stream.delimiter.first, stream.delimiter.count == 1 else {
+            throw ReaderError.invalidSource("\(relativePath): variant \"\(variant.id)\" declares an unusable delimiter.")
+        }
+        func splitHeader(_ text: String, _ number: Int) throws -> [String] {
+            try TabularExtractor.split(text, delimiter: delimiter, context: "\(relativePath) line \(number)")
+        }
+        switch stream.rows.header {
+        case .none:
+            return nil
+        case .row(let physical):
+            guard physical - 1 < lines.count else {
+                throw V3DeferHeader(message: "header row \(physical) was not found")
+            }
+            let line = lines[physical - 1]
+            return (line.number, try splitHeader(line.text, line.number))
+        case .firstNonBlank:
+            for line in lines where !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (line.number, try splitHeader(line.text, line.number))
+            }
+            throw V3DeferHeader(message: "no non-blank header row was found")
+        case .prefix(let marker):
+            for line in lines {
+                let cells = try splitHeader(line.text, line.number)
+                if cells.first == marker { return (line.number, cells) }
+            }
+            throw V3DeferHeader(message: "no header row starting with \"\(marker)\" was found")
+        }
+    }
+
+    /// Header lookup is case-insensitive, primary header first then alias
+    /// fallback; ambiguous headers and two columns resolving to one source
+    /// column fail closed. Both column and header supplied requires
+    /// agreement; aliases require a header (validated at parse).
+    static func resolveDataColumns(headers: [String]?, variant: ProfileVariantV3, relativePath: String) throws -> [(ProfileColumnV3, Int)] {
+        let decodable = variant.rawStream.columns.filter { $0.role != .skip }
+        guard !decodable.isEmpty else {
+            throw ReaderError.invalidSource("\(relativePath): variant \"\(variant.id)\" declares no decodable columns.")
+        }
+        var resolved: [(ProfileColumnV3, Int)] = []
+        if let headers {
+            for column in decodable {
+                var headerIndex: Int? = nil
+                if let want = column.source.header {
+                    let primary = headers.indices.filter { headers[$0].compare(want, options: .caseInsensitive) == .orderedSame }
+                    if primary.count > 1 {
+                        throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.id)\" (\(want)) matches more than one cell in the header row [\(headers.joined(separator: ", "))].")
+                    }
+                    if let hit = primary.first {
+                        headerIndex = hit
+                    } else {
+                        let fallback = headers.indices.filter { index in
+                            column.source.aliases.contains { headers[index].compare($0, options: .caseInsensitive) == .orderedSame }
+                        }
+                        if fallback.count > 1 {
+                            throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.id)\" (\(want)) matches more than one cell via aliases [\(column.source.aliases.joined(separator: ", "))] in the header row [\(headers.joined(separator: ", "))].")
+                        }
+                        headerIndex = fallback.first
+                    }
+                }
+                if let position = column.source.column {
+                    if let headerIndex {
+                        guard headerIndex == position - 1 else {
+                            throw ReaderError.invalidSource("\(relativePath): column \"\(column.id)\" declares source column \(position) but header \"\(column.source.header ?? "")\" resolves to source column \(headerIndex + 1); position and header must agree.")
+                        }
+                    } else {
+                        headerIndex = position - 1
+                    }
+                }
+                guard let index = headerIndex else {
+                    if !column.required { continue }
+                    throw ReaderError.invalidSource("\(relativePath): header for column \"\(column.id)\" (\(column.source.header ?? "column \(column.source.column ?? 0)")) was not found in the header row [\(headers.joined(separator: ", "))].")
+                }
+                resolved.append((column, index))
+            }
+        } else {
+            for column in decodable {
+                guard let position = column.source.column else {
+                    throw ReaderError.invalidSource("\(relativePath): column \"\(column.id)\" has no header row to resolve against and declares no source column position.")
+                }
+                resolved.append((column, position - 1))
+            }
+        }
+        var seen: [Int: String] = [:]
+        for (column, index) in resolved {
+            if let other = seen[index] {
+                throw ReaderError.invalidSource("\(relativePath): columns \"\(other)\" and \"\(column.id)\" resolve to the same source column \(index + 1).")
+            }
+            seen[index] = column.id
+        }
+        return resolved
+    }
+
+    /// Builds the normalized result with additive v3 provenance: profile and
+    /// variant identity, document and grammar fingerprints, axis eligibility,
+    /// and the default progression. Conflicting filename/header metadata is
+    /// kept with source qualification plus a diagnostic, never precedence.
+    static func measurement(relativePath: String, basename: String, match: V3Match, extracted: TabularExtraction) throws -> NormalizedMeasurement {
+        let variant = match.variant
+        let channels = zip(extracted.columns, extracted.reasons).map { column, reasons in
+            MeasurementChannel(name: column.0.key, label: column.0.label, unit: column.0.unit,
+                               quantity: column.0.quantity.isEmpty ? nil : column.0.quantity,
+                               values: column.1, gapReasons: reasons)
+        }
+        let channelNames = Set(channels.map(\.name))
+        let view: MeasurementView
+        if let plot = variant.defaultPlot {
+            guard channelNames.contains(plot.x), plot.y.allSatisfy({ channelNames.contains($0) }) else {
+                throw ReaderError.invalidSource("\(relativePath): variant \"\(variant.id)\" default_plot references a column missing from this source.")
+            }
+            view = MeasurementView(kind: "xy", x: plot.x, y: plot.y, preserveOrder: true)
+        } else {
+            view = MeasurementView(kind: "metadata-only", x: nil, y: nil, preserveOrder: true)
+        }
+        var acquisition = extracted.headerFields
+        var filenameFields = match.facts.extractedFields.sorted(by: { $0.key < $1.key }).map { (key: $0.key, value: $0.value) }
+        var warnings = extracted.warnings
+        for key in Set(acquisition.map(\.key)).intersection(filenameFields.map(\.key)) {
+            let fileValue = filenameFields.first(where: { $0.key == key })!.value
+            let streamValue = acquisition.first(where: { $0.key == key })!.value
+            if fileValue != streamValue {
+                acquisition.removeAll(where: { $0.key == key })
+                filenameFields.removeAll(where: { $0.key == key })
+                acquisition.append((key: "\(key) (filename)", value: fileValue))
+                acquisition.append((key: "\(key) (header)", value: streamValue))
+                warnings.append("\(relativePath): metadata \"\(key)\" differs between the filename (\(fileValue)) and the file header (\(streamValue)); both are kept with source qualification.")
+            } else {
+                filenameFields.removeAll(where: { $0.key == key })
+            }
+        }
+        func field(_ key: String, _ value: String) -> MetadataField {
+            MetadataField(key: key, label: key.replacingOccurrences(of: "_", with: " ").capitalized,
+                          value: .string(value), unit: nil, kind: "string")
+        }
+        var sections: [MetadataSection] = []
+        if !acquisition.isEmpty {
+            sections.append(MetadataSection(title: "Acquisition", fields: acquisition.map { field($0.key, $0.value) }))
+        }
+        var identity = filenameFields
+        identity.append((key: "filename", value: basename))
+        sections.append(MetadataSection(title: "Identity", fields: identity.map { field($0.key, $0.value) }))
+        let rowCount = channels.first?.values.count ?? 0
+        let gapCount = channels.reduce(0) { $0 + $1.values.filter({ $0 == nil }).count }
+        sections.append(MetadataSection(title: "Data", fields: [
+            MetadataField(key: "channel_count", label: "Channel count", value: .number(Double(channels.count)), unit: nil, kind: "number"),
+            MetadataField(key: "point_count", label: "Point count", value: .number(Double(rowCount)), unit: nil, kind: "number"),
+            MetadataField(key: "gap_count", label: "Gap count", value: .number(Double(gapCount)), unit: nil, kind: "number"),
+        ]))
+        let eligibleX = variant.rawStream.columns
+            .filter { $0.role != .skip && $0.axes.contains(.x) && channelNames.contains($0.id) }.map(\.id).sorted()
+        let eligibleY = variant.rawStream.columns
+            .filter { $0.role != .skip && $0.axes.contains(.y) && channelNames.contains($0.id) }.map(\.id).sorted()
+        return NormalizedMeasurement(
+            source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
+            instrument: InstrumentIdentity(id: match.document.instrumentID, name: match.document.instrumentName,
+                                           vendor: match.document.vendor, model: match.document.model),
+            applicationMode: variant.id,
+            view: view, channels: channels, metadataSections: sections, warnings: warnings, supportStatus: "supported",
+            provenance: [
+                "reader_version": InstrumentReader.version,
+                "profile_id": match.document.profileID,
+                "variant_id": variant.id,
+                "profile_hash": match.documentSHA256,
+                "profile_schema_version": "3",
+                "mode": match.facts.mode ?? variant.id,
+                "grammar_id": match.document.grammarID,
+                "grammar_sha256": match.grammarSHA256,
+                "eligible_x": eligibleX.joined(separator: ","),
+                "eligible_y": eligibleY.joined(separator: ","),
+                "progression": variant.defaultPlot?.progression ?? "",
+            ])
+    }
+}
+
+/// Bounded secure streaming extraction for one resolved v3 variant. Lines
+/// flow through the shared incremental puller (single encoding, running
+/// SHA-256, 1 MiB line/header bounds, cancellation checks); only the rows
+/// metadata needs are retained, so complete value arrays stay exact with no
+/// file-size cap. Gap classification reuses the shared cell contract.
+enum V3StreamExtractor {
+    static func extractStreaming(relativePath: String, match: V3Match, encoding: String.Encoding,
+                                 initialText: String, initialPending: Data,
+                                 handle: FileHandle, hasher: SHA256) throws -> TabularExtraction {
+        let variant = match.variant
+        let stream = variant.rawStream
+        guard let delimiter = stream.delimiter.first, stream.delimiter.count == 1,
+              let decimal = stream.decimalSeparator.first, stream.decimalSeparator.count == 1 else {
+            throw ReaderError.invalidSource("\(relativePath): variant \"\(variant.id)\" declares an unusable delimiter or decimal separator.")
+        }
+        func splitLine(_ text: String, _ number: Int) throws -> [String] {
+            try TabularExtractor.split(text, delimiter: delimiter, context: "\(relativePath) line \(number)")
+        }
+        var puller = LinePuller(handle: handle, hasher: hasher, encoding: encoding,
+                                relativePath: relativePath, pendingBytes: initialPending)
+        try puller.stageText(initialText, final: false)
+        let wantsPreHeader = variant.metadataCapture.contains(.preHeaderFields)
+        let commentPrefix = stream.rows.commentPrefix
+        let wantsComments: Bool = {
+            guard commentPrefix != nil else { return false }
+            return variant.metadataCapture.contains { if case .commentKeyValue = $0 { true } else { false } }
+        }()
+        var fixedRows: Set<Int> = []
+        for meta in variant.metadata where meta.role != "ignore" {
+            if let row = meta.row { fixedRows.insert(row) }
+            if let row = meta.parameterRow { fixedRows.insert(row) }
+        }
+        let excluded = Set(stream.rows.excludedMetadata)
+        let dataStartRow: Int? = {
+            if case .row(let physical) = stream.rows.dataStart { return physical }
+            return nil
+        }()
+        var lineNumber = 0
+        var headerLine: Int? = nil
+        var headerNames: [String]? = nil
+        let isHeaderless: Bool = {
+            if case .none = stream.rows.header { return true }
+            return false
+        }()
+        var columns: [(ProfileColumnV3, Int)] = []
+        var columnsResolved = false
+        var preBuffer: [(number: Int, text: String)] = []
+        var preBytes = 0
+        var retained: [Int: String] = [:]
+        var commentRecords: [(key: String, value: String)] = []
+        var usedCommentKeys = Set<String>()
+        var ledger = CellLedger(count: 0)
+        var rowCount = 0
+        // Headerless layouts resolve columns up front; every other layout
+        // resolves them at the header row with full-stream (definitive) errors.
+        if isHeaderless {
+            columns = try V3Reader.resolveDataColumns(headers: nil, variant: variant, relativePath: relativePath)
+            columnsResolved = true
+            ledger = CellLedger(count: columns.count)
+        }
+        while let line = try puller.nextLine() {
+            lineNumber += 1
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !isHeaderless, headerLine == nil {
+                if let prefix = commentPrefix, trimmed.hasPrefix(prefix) {
+                    recordComment(lineNumber: lineNumber, trimmed: trimmed, prefix: prefix,
+                                  excluded: excluded, wantsComments: wantsComments,
+                                  records: &commentRecords, usedKeys: &usedCommentKeys)
+                    continue
+                }
+                preBytes += line.utf8.count + 1
+                guard preBytes <= InstrumentReader.maximumHeaderBytes else {
+                    throw ReaderError.invalidSource("\(relativePath): header section exceeds the 1 MiB header limit.")
+                }
+                switch stream.rows.header {
+                case .none:
+                    break
+                case .row(let physical):
+                    preBuffer.append((lineNumber, line))
+                    if lineNumber == physical {
+                        headerLine = lineNumber
+                        headerNames = try splitLine(line, lineNumber)
+                    }
+                case .firstNonBlank:
+                    preBuffer.append((lineNumber, line))
+                    if !trimmed.isEmpty {
+                        headerLine = lineNumber
+                        headerNames = try splitLine(line, lineNumber)
+                    }
+                case .prefix(let marker):
+                    preBuffer.append((lineNumber, line))
+                    if try splitLine(line, lineNumber).first == marker {
+                        headerLine = lineNumber
+                        headerNames = try splitLine(line, lineNumber)
+                    }
+                }
+                if headerLine != nil {
+                    if fixedRows.contains(lineNumber) { retained[lineNumber] = line }
+                    columns = try V3Reader.resolveDataColumns(headers: headerNames, variant: variant, relativePath: relativePath)
+                    columnsResolved = true
+                    ledger = CellLedger(count: columns.count)
+                }
+                continue
+            }
+            guard columnsResolved else {
+                throw ReaderError.invalidSource("\(relativePath): no header row was found.")
+            }
+            if let header = headerLine, lineNumber == header { continue }
+            if trimmed.isEmpty { continue }
+            if let prefix = commentPrefix, trimmed.hasPrefix(prefix) {
+                recordComment(lineNumber: lineNumber, trimmed: trimmed, prefix: prefix,
+                              excluded: excluded, wantsComments: wantsComments,
+                              records: &commentRecords, usedKeys: &usedCommentKeys)
+                continue
+            }
+            let startLine: Int = dataStartRow ?? (headerLine.map({ $0 + 1 }) ?? 1)
+            if lineNumber < startLine {
+                if fixedRows.contains(lineNumber) { retained[lineNumber] = line }
+                continue
+            }
+            if fixedRows.contains(lineNumber), retained[lineNumber] == nil { retained[lineNumber] = line }
+            if let dataPrefix = stream.rows.dataPrefix, !dataPrefix.isEmpty {
+                guard try splitLine(line, lineNumber).first == dataPrefix else { continue }
+            }
+            let fields = try splitLine(line, lineNumber)
+            for (columnIndex, column) in columns.enumerated() {
+                if column.1 >= fields.count {
+                    ledger.record(column: columnIndex, reason: .blank,
+                                  message: "\(relativePath) line \(lineNumber): column \"\(column.0.id)\" has no cell \(column.1 + 1); shown as a gap.")
+                } else {
+                    try CellParser.append(raw: fields[column.1], column: columnIndex, key: column.0.id,
+                                          lineNumber: lineNumber, relativePath: relativePath,
+                                          decimal: decimal, ledger: &ledger)
+                }
+            }
+            rowCount += 1
+            if rowCount.isMultiple(of: 4096) { try Task.checkCancellation() }
+        }
+        if !isHeaderless, headerLine == nil {
+            throw ReaderError.invalidSource("\(relativePath): no header row was found.")
+        }
+        guard columnsResolved else {
+            throw ReaderError.invalidSource("\(relativePath): no header row was found.")
+        }
+        guard rowCount > 0 else {
+            if let dataPrefix = stream.rows.dataPrefix, !dataPrefix.isEmpty {
+                throw ReaderError.invalidSource("\(relativePath): no \"\(dataPrefix)\" data rows were found after the header.")
+            }
+            throw ReaderError.invalidSource("\(relativePath): no data rows were found after the header.")
+        }
+        let headerLimit = headerLine ?? lineNumber
+        let preHeaderTexts = preBuffer.filter { $0.number < headerLimit && !excluded.contains($0.number) }.map(\.text)
+        var headerFields = wantsPreHeader
+            ? try TabularExtractor.headerMetadata(lines: preHeaderTexts, delimiter: delimiter, relativePath: relativePath)
+            : []
+        headerFields.append(contentsOf: commentRecords)
+        for meta in variant.metadata where meta.role != "ignore" {
+            guard let row = meta.row, let text = retained[row] ?? preBuffer.first(where: { $0.number == row })?.text else {
+                if meta.row == nil {
+                    throw ReaderError.invalidSource("\(relativePath): metadata \"\(meta.key)\" names no source row; a fixed row is required.")
+                }
+                throw ReaderError.invalidSource("\(relativePath): metadata \"\(meta.key)\" source row \(meta.row!) is past the end of the file.")
+            }
+            if excluded.contains(row) {
+                throw ReaderError.invalidSource("\(relativePath): metadata \"\(meta.key)\" source row \(row) is excluded metadata.")
+            }
+            let cells = try splitLine(text, row)
+            if let column = meta.column {
+                guard column - 1 < cells.count, !cells[column - 1].isEmpty else { continue }
+                headerFields.append((key: meta.key, value: cells[column - 1]))
+            } else {
+                let joined = cells.filter({ !$0.isEmpty }).joined(separator: ", ")
+                guard !joined.isEmpty else { continue }
+                headerFields.append((key: meta.key, value: joined))
+            }
+            if let parameterName = meta.parameterName {
+                let parameterRow = meta.parameterRow ?? meta.row
+                let parameterColumn = meta.parameterColumn ?? meta.column
+                guard let parameterRow, let parameterColumn,
+                      let parameterText = retained[parameterRow] ?? preBuffer.first(where: { $0.number == parameterRow })?.text else { continue }
+                if excluded.contains(parameterRow) {
+                    throw ReaderError.invalidSource("\(relativePath): metadata \"\(meta.key)\" parameter source row \(parameterRow) is excluded metadata.")
+                }
+                let parameterCells = try splitLine(parameterText, parameterRow)
+                guard parameterColumn - 1 < parameterCells.count, !parameterCells[parameterColumn - 1].isEmpty else { continue }
+                headerFields.append((key: "\(meta.key).\(parameterName)", value: parameterCells[parameterColumn - 1]))
+            }
+        }
+        return TabularExtraction(
+            columns: columns.enumerated().map { (index, column) in
+                (ProfileColumn(key: column.0.id, header: column.0.source.header, aliases: column.0.source.aliases,
+                               quantity: column.0.quantity, unit: column.0.unit ?? "", label: column.0.label,
+                               index: nil, required: column.0.required), ledger.values[index])
+            },
+            reasons: ledger.reasons,
+            warnings: ledger.summarize(relativePath: relativePath),
+            headerFields: headerFields,
+            sha256: puller.digestHex())
+    }
+
+    /// Declared comment lines are filtered before decoding; with a
+    /// comment_key_value rule they also become ordered key=value records
+    /// (repeated keys kept, legacy caps), mirroring the comment-tsv contract.
+    private static func recordComment(lineNumber: Int, trimmed: String, prefix: String, excluded: Set<Int>,
+                                      wantsComments: Bool, records: inout [(key: String, value: String)],
+                                      usedKeys: inout Set<String>) {
+        guard wantsComments, !excluded.contains(lineNumber), records.count < 256 else { return }
+        let body = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        guard let separator = body.firstIndex(of: "=") else { return }
+        let key = String(body[..<separator]).trimmingCharacters(in: .whitespaces)
+        let value = String(body[body.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !value.isEmpty else { return }
+        var unique = key
+        var suffix = 2
+        while usedKeys.contains(unique) {
+            unique = "\(key) #\(suffix)"
+            suffix += 1
+        }
+        usedKeys.insert(unique)
+        records.append((unique, value.count > 512 ? String(value.prefix(509)) + "..." : value))
     }
 }

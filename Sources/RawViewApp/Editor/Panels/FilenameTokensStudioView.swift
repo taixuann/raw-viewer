@@ -12,47 +12,67 @@ struct FilenameTokensStudioView: View {
     @State private var showingNewGrammarDialog: Bool = false
     @State private var newGrammarName: String = ""
     @State private var newGrammarTemplate: String = "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]"
+    @State private var nameDrafts: [String: String] = [:]
+    @State private var renameErrorMessage: String? = nil
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // BLOCK 1: UNIFIED GRAMMAR DEFINITION & PATTERN STUDIO
-                unifiedGrammarCard
+        Group {
+            if model.developerMode && model.grammarYAMLMode {
+                // Task 6: inline Visual/YAML switch for the complete project
+                // catalog. The Visual/YAML drafts never merge silently; the
+                // grammar tab keeps one dirty draft with Apply/Discard.
+                GrammarYAMLSourceView(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        // BLOCK 1: UNIFIED GRAMMAR DEFINITION & PATTERN STUDIO
+                        unifiedGrammarCard
 
-                // BLOCK 2: COHORT VALIDATION MATRIX (FULL FILENAMES & MATCH AUDIT)
-                cohortValidationCard
+                        // BLOCK 2: COHORT VALIDATION MATRIX (FULL FILENAMES & MATCH AUDIT)
+                        cohortValidationCard
+                    }
+                    .padding(18)
+                    .frame(maxWidth: .infinity)
+                }
+                .background(Color(NSColor.windowBackgroundColor).opacity(0.35))
             }
-            .padding(18)
-            .frame(maxWidth: .infinity)
         }
-        .background(Color(NSColor.windowBackgroundColor).opacity(0.35))
         .sheet(isPresented: $showingNewGrammarDialog) {
             newGrammarSheet
         }
+        .alert("Variable rename blocked", isPresented: Binding(
+            get: { renameErrorMessage != nil },
+            set: { if !$0 { renameErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { renameErrorMessage = nil }
+        } message: {
+            Text(renameErrorMessage ?? "")
+        }
+    }
+
+    // MARK: - Task 6: Visual/YAML mode switch (Developer Mode only)
+    private var grammarModeSwitch: some View {
+        Picker("Grammar view", selection: $model.grammarYAMLMode) {
+            Text("Visual").tag(false)
+            Text("YAML").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 160)
+        .help("Visual edits the active pattern; YAML edits the whole project catalog as source.")
+        .accessibilityLabel("Grammar editor mode: visual or YAML source")
     }
 
     // MARK: - BLOCK 1: Unified Grammar Definition & Pattern Studio Card
     private var unifiedGrammarCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 1.1 Card Header: Active Grammar, Inline Renaming, and Save Action
+            // 1.1 Card Header: Grammar name editing and creation. Task 7:
+            // Save Grammar lives in this tab only (Cmd+S routes here too).
             HStack(spacing: 8) {
-                Label("Profile:", systemImage: "character.textbox")
+                Label("Grammar:", systemImage: "character.textbox")
                     .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize))
 
-                // Profile Selector Menu
-                Picker("", selection: Binding(
-                    get: { model.activeGrammarID },
-                    set: { model.selectGrammar(id: $0) }
-                )) {
-                    ForEach(model.grammarCatalog.grammars) { g in
-                        Text(g.name).tag(g.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .font(AppTypography.body(uiFontSize: uiFontSize))
-                .frame(width: 170)
-
-                // Inline Profile Name Editor
+                // Inline Grammar Name Editor
                 HStack(spacing: 4) {
                     Image(systemName: "pencil")
                         .font(AppTypography.caption(uiFontSize: uiFontSize))
@@ -78,37 +98,34 @@ struct FilenameTokensStudioView: View {
                     newGrammarTemplate = model.activeTemplate
                     showingNewGrammarDialog = true
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Image(systemName: "plus")
                         Text("New")
                     }
                     .font(AppTypography.toolbarLabel(uiFontSize: uiFontSize))
                 }
+                .buttonStyle(.bordered)
                 .controlSize(.small)
 
-                Spacer()
-
-                Menu {
-                    Button {
-                        model.saveGrammarToProject()
-                    } label: {
-                        Label("Save to Project (.rawviewer/view/grammar.yaml)", systemImage: "folder")
-                    }
-
-                    Button {
-                        model.saveGrammarToGlobal()
-                    } label: {
-                        Label("Save as Global Template (~/.rawviewer/grammar.yaml)", systemImage: "globe")
-                    }
+                // Task 7: Save Grammar lives in the Filename Grammar tab only.
+                Button {
+                    model.saveGrammarCatalog()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.down")
+                        Image(systemName: "text.word.spacing")
                         Text("Save Grammar")
                     }
                     .font(AppTypography.toolbarLabel(uiFontSize: uiFontSize))
                 }
-                .menuStyle(.borderedButton)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
+                .help("Writes the grammar catalog to .rawviewer/grammar.yaml")
+
+                Spacer()
+
+                if model.developerMode {
+                    grammarModeSwitch
+                }
             }
 
             // 1.2 Centered Hero Filename & Direct Visual Token Mapping (Pointer Arrows)
@@ -177,7 +194,9 @@ struct FilenameTokensStudioView: View {
                                 ForEach(model.templateVariableNames, id: \.self) { varName in
                                     let val = model.sampleExtractedFacts.extractedFields[varName]
                                     let field = activeGrammar?.fields.first(where: { $0.name == varName })
-                                    let role = field?.role ?? "Remarks"
+                                    // ponytail: variable-native fields have no role; the chip
+                                    // falls back to the variable name (neutral style below).
+                                    let role = field?.role ?? varName
                                     let isOpt = field?.isOptional ?? false
 
                                     VStack(spacing: 4) {
@@ -284,11 +303,13 @@ struct FilenameTokensStudioView: View {
 
             Divider()
 
-            // 1.4 Variables Configuration Table (Role, Data Type, Format, Optional/Required, and Search Filter)
+            // 1.4 Variables Configuration Table (Name, Data Type, Format, Optional/Required, Variant Key)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Variable Role & Explorer Filter Configuration:")
+                Text("Variable Name & Variant Key Configuration:")
                     .font(AppTypography.captionBold(uiFontSize: uiFontSize))
                     .foregroundStyle(.secondary)
+
+                variantKeyScopeNote
 
                 if model.templateVariableNames.isEmpty {
                     Text("No variables declared. Type {variable_name} in the pattern template above.")
@@ -300,15 +321,12 @@ struct FilenameTokensStudioView: View {
                         Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
                             // Header Row
                             GridRow {
-                                Text("Token")
+                                Text("Name")
                                     .font(AppTypography.captionBold(uiFontSize: uiFontSize))
-                                    .frame(width: 115, alignment: .leading)
+                                    .frame(width: 150, alignment: .leading)
                                 Text("Sample Value")
                                     .font(AppTypography.captionBold(uiFontSize: uiFontSize))
                                     .frame(width: 135, alignment: .leading)
-                                Text("Scientific Role")
-                                    .font(AppTypography.captionBold(uiFontSize: uiFontSize))
-                                    .frame(width: 120, alignment: .leading)
                                 Text("Data Type")
                                     .font(AppTypography.captionBold(uiFontSize: uiFontSize))
                                     .frame(width: 100, alignment: .leading)
@@ -318,7 +336,7 @@ struct FilenameTokensStudioView: View {
                                 Text("Rule")
                                     .font(AppTypography.captionBold(uiFontSize: uiFontSize))
                                     .frame(width: 90, alignment: .leading)
-                                Text("Filter in Explorer")
+                                Text("Variant Key")
                                     .font(AppTypography.captionBold(uiFontSize: uiFontSize))
                                     .frame(width: 110, alignment: .leading)
                             }
@@ -332,7 +350,9 @@ struct FilenameTokensStudioView: View {
                             ForEach(model.templateVariableNames, id: \.self) { varName in
                                 let val = model.sampleExtractedFacts.extractedFields[varName]
                                 let field = activeGrammar?.fields.first(where: { $0.name == varName })
-                                let currentRole = field?.role ?? "Remarks"
+                                // Nil role means variable-native: pass it through so
+                                // type/format edits never materialize a role line.
+                                let currentRole: String? = field?.role
                                 let currentType = field?.type ?? .string
                                 let currentFormat = field?.formatHint ?? ""
                                 let currentStrip = field?.stripBrackets ?? false
@@ -340,10 +360,27 @@ struct FilenameTokensStudioView: View {
                                 let currentFacet = field?.isFacet ?? true
 
                                 GridRow {
-                                    // 1. Token (115pt)
-                                    Text("{\(varName)}")
-                                        .font(AppTypography.mono(size: 11, weight: .bold, uiFontSize: uiFontSize))
-                                        .frame(width: 115, alignment: .leading)
+                                    // 1. Name (150pt): the variable identifier. Editing renames
+                                    // the template placeholder and field together.
+                                    TextField("variable", text: Binding(
+                                        get: { nameDrafts[varName] ?? varName },
+                                        set: { nameDrafts[varName] = $0 }
+                                    ), onCommit: {
+                                        let attempted = nameDrafts[varName] ?? varName
+                                        nameDrafts[varName] = nil
+                                        if attempted != varName {
+                                            renameVariable(from: varName, to: attempted)
+                                        }
+                                    })
+                                    .textFieldStyle(.plain)
+                                    .font(AppTypography.mono(size: 11, weight: .bold, uiFontSize: uiFontSize))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2.5)
+                                    .background(Color(NSColor.textBackgroundColor))
+                                    .cornerRadius(3)
+                                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                                    .frame(width: 150, alignment: .leading)
+                                    .help("Edit to rename {\\(varName)} everywhere it is used.")
 
                                     // 2. Sample Value (135pt)
                                     Text(val ?? "(not in sample)")
@@ -352,30 +389,7 @@ struct FilenameTokensStudioView: View {
                                         .lineLimit(1)
                                         .frame(width: 135, alignment: .leading)
 
-                                    // 3. Scientific Role (120pt)
-                                    Picker("", selection: Binding(
-                                        get: { currentRole },
-                                        set: { newRole in
-                                            model.updateGrammarField(
-                                                name: varName,
-                                                role: newRole,
-                                                type: currentType,
-                                                formatHint: currentFormat,
-                                                stripBrackets: currentStrip,
-                                                isOptional: currentOpt,
-                                                isFacet: currentFacet
-                                            )
-                                        }
-                                    )) {
-                                        ForEach(SemanticTokenElement.standardRoles + ["Skip"], id: \.self) { r in
-                                            Text(r).tag(r)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .font(AppTypography.caption(uiFontSize: uiFontSize))
-                                    .frame(width: 120)
-
-                                    // 4. Data Type (100pt)
+                                    // 3. Data Type (100pt)
                                     Picker("", selection: Binding(
                                         get: { currentType },
                                         set: { newType in
@@ -400,7 +414,7 @@ struct FilenameTokensStudioView: View {
                                     .font(AppTypography.caption(uiFontSize: uiFontSize))
                                     .frame(width: 100)
 
-                                    // 5. Format / Pattern (140pt)
+                                    // 4. Format / Pattern (140pt)
                                     formatPatternCell(
                                         varName: varName,
                                         currentRole: currentRole,
@@ -412,7 +426,7 @@ struct FilenameTokensStudioView: View {
                                     )
                                     .frame(width: 140, alignment: .leading)
 
-                                    // 6. Rule (90pt)
+                                    // 5. Rule (90pt)
                                     Picker("", selection: Binding(
                                         get: { currentOpt },
                                         set: { newOpt in
@@ -434,24 +448,16 @@ struct FilenameTokensStudioView: View {
                                     .font(AppTypography.caption(uiFontSize: uiFontSize))
                                     .frame(width: 90)
 
-                                    // 7. Filter in Explorer (110pt)
-                                    Toggle("Facet Filter", isOn: Binding(
-                                        get: { currentFacet },
-                                        set: { newFacet in
-                                            model.updateGrammarField(
-                                                name: varName,
-                                                role: currentRole,
-                                                type: currentType,
-                                                formatHint: currentFormat,
-                                                stripBrackets: currentStrip,
-                                                isOptional: currentOpt,
-                                                isFacet: newFacet
-                                            )
-                                        }
+                                    // 6. Variant Key (110pt): profile-scoped, required-only.
+                                    Toggle("Variant Key", isOn: Binding(
+                                        get: { model.variantKeys.contains(varName) },
+                                        set: { model.setVariantKey(name: varName, enabled: $0) }
                                     ))
                                     .toggleStyle(.checkbox)
                                     .font(AppTypography.caption(uiFontSize: uiFontSize))
                                     .frame(width: 110, alignment: .leading)
+                                    .disabled(!model.isVariantKeyFieldEnabled(name: varName))
+                                    .help(variantKeyHelp(varName))
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -471,7 +477,7 @@ struct FilenameTokensStudioView: View {
     @ViewBuilder
     private func formatPatternCell(
         varName: String,
-        currentRole: String,
+        currentRole: String?,
         currentType: GrammarFieldType,
         currentFormat: String,
         currentStrip: Bool,
@@ -753,6 +759,49 @@ struct FilenameTokensStudioView: View {
     }
 
     // MARK: - Helpers
+    private var variantKeyScopeNote: some View {
+        Group {
+            if model.hasProfileDocument {
+                HStack(spacing: 8) {
+                    Text("Routing keys for \(model.profileDisplayName)")
+                        .font(AppTypography.captionBold(uiFontSize: uiFontSize))
+                        .foregroundStyle(.secondary)
+                    if !model.isProfileGrammarActive {
+                        Text("This grammar is not the profile's (\(model.profileGrammarID ?? "unknown")); keys are disabled.")
+                            .font(AppTypography.caption(uiFontSize: uiFontSize))
+                            .foregroundStyle(.orange)
+                        Button("Use this grammar for profile…") {
+                            model.useActiveGrammarForProfile()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            } else {
+                Text("No profile selected: Variant Key controls are disabled. Keys persist in the profile YAML, not the grammar.")
+                    .font(AppTypography.caption(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func variantKeyHelp(_ varName: String) -> String {
+        if !model.hasProfileDocument {
+            return "No profile selected: load a profile first. Keys persist in the profile YAML, not the grammar."
+        }
+        if !model.isProfileGrammarActive {
+            return "Only the active profile's grammar accepts keys. Use \"Use this grammar for profile…\" to rebind."
+        }
+        let field = model.grammarCatalog.grammars
+            .first(where: { $0.id == model.activeGrammarID })?.fields.first(where: { $0.name == varName })
+        if field?.isOptional == true {
+            return "Only required fields can be routing keys."
+        }
+        if field == nil {
+            return "Declare this variable in the grammar fields first."
+        }
+        return "Persists in the active profile only; never rewrites the grammar."
+    }
+
     private func variableChip(name: String) -> some View {
         Button {
             insertTokenIntoTemplate(name)
@@ -778,22 +827,45 @@ struct FilenameTokensStudioView: View {
         }
     }
 
+    /// Renames a template variable atomically (placeholder + field together).
+    /// Blocked renames surface the affected references and leave the draft
+    /// untouched. Profile variant keys plus settings Explorer views and
+    /// source-label rows all block.
+    private func renameVariable(from oldName: String, to newName: String) {
+        guard let idx = model.grammarCatalog.grammars.firstIndex(where: { $0.id == model.activeGrammarID }) else { return }
+        var grammar = model.grammarCatalog.grammars[idx]
+        do {
+            try FilenameGrammarEngine.renameVariable(
+                in: &grammar, from: oldName, to: newName,
+                variantKeys: model.variantKeys,
+                explorerViews: model.settingsExplorerViews,
+                sourceLabels: model.settingsSourceLabels
+            )
+            model.grammarCatalog.grammars[idx] = grammar
+            model.updateActiveTemplate(grammar.template)
+        } catch {
+            renameErrorMessage = error.localizedDescription
+        }
+    }
+
     private func badgeBackground(for role: String) -> Color {
-        switch role {
-        case "Study", "category": return Color.purple.opacity(0.1)
-        case "Device ID", "legend": return Color.blue.opacity(0.1)
-        case "Date & Time": return Color.green.opacity(0.1)
-        case "Remarks": return Color.orange.opacity(0.1)
+        // Matched case-insensitively so variable-native names ("study") and
+        // legacy display roles ("Study") share one palette.
+        switch role.lowercased() {
+        case "study", "category": return Color.purple.opacity(0.1)
+        case "device id", "device", "legend": return Color.blue.opacity(0.1)
+        case "date & time", "datetime": return Color.green.opacity(0.1)
+        case "remarks": return Color.orange.opacity(0.1)
         default: return Color.primary.opacity(0.06)
         }
     }
 
     private func badgeForeground(for role: String) -> Color {
-        switch role {
-        case "Study", "category": return .purple
-        case "Device ID", "legend": return .blue
-        case "Date & Time": return .green
-        case "Remarks": return .orange
+        switch role.lowercased() {
+        case "study", "category": return .purple
+        case "device id", "device", "legend": return .blue
+        case "date & time", "datetime": return .green
+        case "remarks": return .orange
         default: return .primary
         }
     }

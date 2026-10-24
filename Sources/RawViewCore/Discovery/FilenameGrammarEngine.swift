@@ -18,7 +18,12 @@ public enum GrammarFieldType: String, Sendable, Equatable, CaseIterable, Identif
 public struct GrammarField: Sendable, Equatable, Identifiable {
     public var id: String { name }
     public var name: String
-    public var role: String
+    /// Optional legacy role. Nil means variable-native: the template
+    /// variable itself is the metadata identity (`{batch}` is `batch`).
+    /// Old role-bearing catalogs load with their mapping preserved until
+    /// explicitly edited; new saves omit nil roles. Compatible schema-1
+    /// extension: no second display-name property exists.
+    public var role: String?
     public var type: GrammarFieldType
     public var formatHint: String
     public var stripBrackets: Bool
@@ -27,7 +32,7 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
 
     public init(
         name: String,
-        role: String = "Remarks",
+        role: String? = nil,
         type: GrammarFieldType = .string,
         formatHint: String = "",
         stripBrackets: Bool = false,
@@ -189,11 +194,146 @@ public enum GrammarCompileError: Error, LocalizedError {
     }
 }
 
+public enum GrammarCatalogError: Error, LocalizedError, Equatable {
+    case fileNotFound(path: String)
+    case parseFailed(path: String, message: String)
+    case invalidSchemaVersion(found: String?)
+    case duplicateGrammarID(String)
+    case duplicateField(grammar: String, field: String)
+    case duplicateVariable(grammar: String, variable: String)
+    case missingFieldDefinition(grammar: String, variable: String)
+    case undeclaredField(grammar: String, field: String)
+    case unknownType(field: String, found: String?)
+    case incompatibleFormat(field: String, format: String)
+    case emptyRole(field: String)
+    case referencedVariable(grammar: String, variable: String, references: [String])
+    case unexpectedKey(scope: String, key: String)
+    case invalidGrammar(grammar: String, reason: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .fileNotFound(let path):
+            return "Grammar catalog not found: \(path)"
+        case .parseFailed(let path, let message):
+            return "Cannot parse grammar catalog \(path): \(message)"
+        case .invalidSchemaVersion(let found):
+            return "Unsupported grammar schema_version '\(found ?? "missing")'; expected 1"
+        case .duplicateGrammarID(let id):
+            return "Duplicate grammar id '\(id)'"
+        case .duplicateField(let grammar, let field):
+            return "Grammar '\(grammar)' declares field '\(field)' more than once"
+        case .duplicateVariable(let grammar, let variable):
+            return "Grammar '\(grammar)' template repeats variable '\(variable)'"
+        case .missingFieldDefinition(let grammar, let variable):
+            return "Grammar '\(grammar)' template variable '\(variable)' has no field definition"
+        case .undeclaredField(let grammar, let field):
+            return "Grammar '\(grammar)' field '\(field)' does not appear in its template"
+        case .unknownType(let field, let found):
+            return "Field '\(field)' has unknown type '\(found ?? "missing")'; expected string, number or datetime"
+        case .incompatibleFormat(let field, let format):
+            return "Field '\(field)' format '\(format)' is incompatible with string type"
+        case .emptyRole(let field):
+            return "Field '\(field)' role must be a nonempty metadata key"
+        case .referencedVariable(let grammar, let variable, let references):
+            return "Variable '\(variable)' in grammar '\(grammar)' is still referenced by \(references.joined(separator: ", ")); remove the references before renaming"
+        case .unexpectedKey(let scope, let key):
+            return "\(scope) contains unexpected key '\(key)'"
+        case .invalidGrammar(let grammar, let reason):
+            return "Grammar '\(grammar)' is invalid: \(reason)"
+        }
+    }
+}
+
+/// Fail-closed deletion guard: every case preserves the target file and
+/// in-memory state; the caller reports the reason and changes nothing.
+public enum SafeDeleteError: Error, LocalizedError, Equatable {
+    case notProjectOwned(path: String)
+    case symlinkRefused(path: String)
+    case changedOnDisk(path: String)
+    case unreadableTarget(path: String)
+    case dependentsUnreadable(detail: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notProjectOwned(let path):
+            return "'\(path)' is not a project-owned canonical file; only .rawviewer/instrument/ YAML files can be deleted"
+        case .symlinkRefused(let path):
+            return "'\(path)' is a symlink; symlinks are never followed for deletion"
+        case .changedOnDisk(let path):
+            return "'\(path)' was deleted, renamed, or changed on disk; reload before deleting"
+        case .unreadableTarget(let path):
+            return "'\(path)' could not be verified for deletion; nothing was deleted"
+        case .dependentsUnreadable(let detail):
+            return "references could not be fully inspected (\(detail)); deletion blocked"
+        }
+    }
+}
+
 public enum FilenameGrammarEngine {
-    public static let relativePath = ".rawviewer/view/grammar.yaml"
+    /// Canonical project-owned grammar catalog (schema v1).
+    public static let relativePath = ".rawviewer/grammar.yaml"
+    /// Previous storage location. Read only when the canonical file is absent;
+    /// a malformed canonical file is an error, never a legacy fallback.
+    public static let legacyRelativePath = ".rawviewer/view/grammar.yaml"
+    /// Grammar catalog schema version written and accepted by this engine.
+    public static let schemaVersion = 1
 
     public static var globalGrammarURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".rawviewer/grammar.yaml")
+    }
+
+    // MARK: - Stable role keys
+
+    /// Explicit legacy-label to stable-key mapping. Custom nonempty roles pass
+    /// through unchanged. There is deliberately no variable-name inference here.
+    private static let canonicalRoleKeys: [String: String] = [
+        "date & time": "datetime",
+        "datetime": "datetime",
+        "instrument": "instrument",
+        "mode": "mode",
+        "study": "study",
+        "category": "category",
+        "device id": "device",
+        "device": "device",
+        "remarks": "remarks",
+        "batch": "batch",
+        "library": "library",
+    ]
+
+    /// Stable-key to UI-label mapping for in-memory display.
+    private static let roleDisplayNames: [String: String] = [
+        "datetime": "Date & Time",
+        "instrument": "Instrument",
+        "mode": "Mode",
+        "study": "Study",
+        "device": "Device ID",
+        "remarks": "Remarks",
+        "batch": "Batch",
+        "library": "Library",
+    ]
+
+    /// Stable metadata key for a stored or in-memory role value.
+    public static func canonicalRoleKey(for role: String) -> String {
+        canonicalRoleKeys[role.lowercased()] ?? role
+    }
+
+    /// UI label for a stored stable role key; custom keys display as-is.
+    public static func displayRole(for role: String) -> String {
+        roleDisplayNames[role] ?? role
+    }
+
+    /// Ordered variable names declared in a template, e.g. ["date", "study"].
+    public static func templateVariables(in template: String) -> [String] {
+        var names: [String] = []
+        var scan = template.startIndex
+        while scan < template.endIndex {
+            guard let open = template[scan...].firstIndex(of: "{"),
+                  let close = template[open...].firstIndex(of: "}") else { break }
+            let name = String(template[template.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { names.append(name) }
+            scan = template.index(after: close)
+        }
+        return names
     }
 
     private static func patternForField(_ field: GrammarField?, hasTrailing: Bool) -> String {
@@ -390,7 +530,10 @@ public enum FilenameGrammarEngine {
             }
         }
 
-        // Map extracted variables to semantic roles in declared template order
+        // Map extracted variables to semantic keys: explicit stable roles
+        // keep the legacy mapping; variable-native fields use their own
+        // identifier. No substring inference: undeclared roles stay available
+        // as raw extracted fields (editor feedback) without routing semantics.
         var timestamp: String? = nil
         var instrument: String? = nil
         var mode: String? = nil
@@ -401,24 +544,33 @@ public enum FilenameGrammarEngine {
 
         for name in fieldNames {
             guard let val = extracted[name] else { continue }
-            let fieldConfig = grammar.fields.first(where: { $0.name == name })
-            let role = fieldConfig?.role.lowercased() ?? ""
-            let lowerName = name.lowercased()
-
-            if role.contains("date") || role.contains("time") || lowerName.contains("date") || lowerName.contains("time") {
+            guard let fieldConfig = grammar.fields.first(where: { $0.name == name }) else { continue }
+            // Variable-native fields (role == nil) are keyed by their own
+            // identifier: {batch} is batch. Explicit roles keep the legacy
+            // mapping. Undeclared variables stay raw-only; never inferred.
+            let key: String
+            if let role = fieldConfig.role, !role.isEmpty {
+                key = canonicalRoleKey(for: role)
+            } else {
+                key = canonicalRoleKey(for: fieldConfig.name)
+            }
+            switch key {
+            case "datetime":
                 timestamp = val
-            } else if role == "instrument" || lowerName == "instrument" {
+            case "instrument":
                 instrument = val
-            } else if role == "mode" || lowerName == "mode" {
+            case "mode":
                 mode = val
-            } else if role.contains("device") || lowerName.contains("device") {
+            case "device":
                 deviceID = val
-            } else if role == "study" || role == "category" || lowerName == "study" || lowerName == "category" {
+            case "study", "category":
                 category = val
-            } else if role == "batch" || lowerName == "batch" {
+            case "batch":
                 batch = val
-            } else if role == "remarks" || lowerName.contains("remark") {
+            case "remarks":
                 remarks.append(val)
+            default:
+                break
             }
         }
 
@@ -441,74 +593,300 @@ public enum FilenameGrammarEngine {
            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
-    /// Saves the grammar catalog to a YAML file at the specified file URL.
-    public static func save(catalog: FilenameGrammarCatalog, fileURL: URL) throws {
-        let dir = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-
+    /// Serializes a validated catalog to canonical schema-v1 YAML.
+    /// Validation runs first, so serialization never emits an invalid document.
+    /// Variable-native fields (nil role) omit the role line; explicit legacy
+    /// roles are written back unchanged.
+    public static func serializedYAML(catalog: FilenameGrammarCatalog) throws -> String {
+        try validate(catalog: catalog)
         var lines: [String] = []
-        if let active = catalog.activeGrammarID {
-            lines.append("active_grammar_id: \"\(yamlEscape(active))\"")
+        lines.append("schema_version: 1")
+        // An empty catalog persists as an explicit empty list (the state
+        // left by deleting the final grammar), never as a missing key.
+        guard !catalog.grammars.isEmpty else {
+            lines.append("grammars: []")
+            return lines.joined(separator: "\n") + "\n"
         }
         lines.append("grammars:")
         for g in catalog.grammars {
             lines.append("  - id: \"\(yamlEscape(g.id))\"")
             lines.append("    name: \"\(yamlEscape(g.name))\"")
             lines.append("    template: \"\(yamlEscape(g.template))\"")
-            lines.append("    description: \"\(yamlEscape(g.description))\"")
-            lines.append("    is_default: \(g.isDefault)")
-            if let scope = g.scope {
-                lines.append("    scope: \"\(yamlEscape(scope.rawValue))\"")
+            if !g.description.isEmpty {
+                lines.append("    description: \"\(yamlEscape(g.description))\"")
             }
-            if !g.fields.isEmpty {
-                lines.append("    fields:")
-                for f in g.fields {
-                    lines.append("      - name: \"\(yamlEscape(f.name))\"")
-                    lines.append("        role: \"\(yamlEscape(f.role))\"")
-                    lines.append("        type: \"\(yamlEscape(f.type.rawValue))\"")
-                    lines.append("        format_hint: \"\(yamlEscape(f.formatHint))\"")
-                    lines.append("        strip_brackets: \(f.stripBrackets)")
-                    lines.append("        is_optional: \(f.isOptional)")
-                    lines.append("        is_facet: \(f.isFacet)")
+            lines.append("    fields:")
+            for f in g.fields {
+                lines.append("      - name: \"\(yamlEscape(f.name))\"")
+                if let role = f.role {
+                    lines.append("        role: \"\(yamlEscape(canonicalRoleKey(for: role)))\"")
+                }
+                lines.append("        type: \"\(f.type.rawValue)\"")
+                if !f.formatHint.isEmpty {
+                    lines.append("        format: \"\(yamlEscape(f.formatHint))\"")
+                }
+                lines.append("        optional: \(f.isOptional)")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Validates a catalog against the schema-v1 contract: unique grammar and
+    /// field IDs, exact template-field correspondence, known types and
+    /// type-compatible formats, and compilable templates.
+    public static func validate(catalog: FilenameGrammarCatalog) throws {
+        var seenIDs = Set<String>()
+        for g in catalog.grammars {
+            let label = g.id.isEmpty ? "grammars[?]" : g.id
+            guard !g.id.isEmpty, !g.id.contains("\n") else {
+                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "id must be nonempty single-line text")
+            }
+            guard seenIDs.insert(g.id).inserted else {
+                throw GrammarCatalogError.duplicateGrammarID(g.id)
+            }
+            guard !g.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "name must be nonempty")
+            }
+            let trimmed = g.template.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "template must be nonempty")
+            }
+            do {
+                _ = try compile(template: g.template, fields: g.fields)
+            } catch {
+                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: error.localizedDescription)
+            }
+            let variables = templateVariables(in: trimmed)
+            var seenVariables = Set<String>()
+            for v in variables {
+                guard seenVariables.insert(v).inserted else {
+                    throw GrammarCatalogError.duplicateVariable(grammar: label, variable: v)
+                }
+            }
+            var seenFields = Set<String>()
+            for f in g.fields {
+                guard seenFields.insert(f.name).inserted else {
+                    throw GrammarCatalogError.duplicateField(grammar: label, field: f.name)
+                }
+            }
+            for v in variables {
+                guard seenFields.contains(v) else {
+                    throw GrammarCatalogError.missingFieldDefinition(grammar: label, variable: v)
+                }
+            }
+            for f in g.fields {
+                guard seenVariables.contains(f.name) else {
+                    throw GrammarCatalogError.undeclaredField(grammar: label, field: f.name)
+                }
+                // Nil role means variable-native (identity is the variable
+                // name). An explicit role must stay nonempty.
+                if let role = f.role {
+                    guard !role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw GrammarCatalogError.emptyRole(field: f.name)
+                    }
+                }
+                if f.type == .string, !f.formatHint.isEmpty {
+                    throw GrammarCatalogError.incompatibleFormat(field: f.name, format: f.formatHint)
                 }
             }
         }
+    }
 
-        let yaml = lines.joined(separator: "\n") + "\n"
+    /// A variable identifier is valid when it is nonempty, contains no
+    /// whitespace, and contains none of {}[] — the characters that would
+    /// break the existing template parser. Names are used verbatim: never
+    /// title-cased or otherwise transformed.
+    public static func isValidVariableName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+            && name.rangeOfCharacter(from: CharacterSet(charactersIn: "{}[]")) == nil
+    }
+
+    /// Atomically renames a template variable: the `{old}` placeholder and
+    /// the field definition change together; the role is untouched, so a
+    /// legacy mapping survives renames until explicitly edited. Throws
+    /// without mutating on unknown, invalid, duplicate, or referenced names.
+    /// A name is referenced when a profile variant key, an Explorer view, or
+    /// a source-label row for the same grammar still uses it — the error
+    /// lists every affected reference and no cascade rewrite is performed.
+    public static func renameVariable(
+        in grammar: inout FilenameGrammar,
+        from oldName: String,
+        to newName: String,
+        variantKeys: [String] = [],
+        explorerViews: [ExplorerViewDefinition] = [],
+        sourceLabels: [SourceLabelLayout] = []
+    ) throws {
+        let label = grammar.id.isEmpty ? "grammars[?]" : grammar.id
+        guard grammar.fields.contains(where: { $0.name == oldName }) else {
+            throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "unknown variable '\(oldName)'")
+        }
+        guard newName != oldName else { return }
+        guard isValidVariableName(newName) else {
+            throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "variable name '\(newName)' must be nonempty with no whitespace or {}[]")
+        }
+        let siblings = Set(templateVariables(in: grammar.template))
+            .union(grammar.fields.map(\.name))
+            .subtracting([oldName])
+        guard !siblings.contains(newName) else {
+            throw GrammarCatalogError.duplicateVariable(grammar: label, variable: newName)
+        }
+        var references: [String] = []
+        if variantKeys.contains(oldName) {
+            references.append("variant key '\(oldName)'")
+        }
+        for view in explorerViews where view.grammarID == grammar.id && view.variable == oldName {
+            references.append("Explorer view '\(view.variable)'")
+        }
+        for layout in sourceLabels where layout.grammarID == grammar.id {
+            for (index, row) in layout.rows.enumerated() where row.variables.contains(oldName) {
+                references.append("source label row \(index + 1) ('\(oldName)')")
+            }
+        }
+        guard references.isEmpty else {
+            throw GrammarCatalogError.referencedVariable(grammar: label, variable: oldName, references: references)
+        }
+        var renamed = grammar
+        renamed.template = templateReplacingVariable(in: grammar.template, from: oldName, to: newName)
+        if let fIdx = renamed.fields.firstIndex(where: { $0.name == oldName }) {
+            renamed.fields[fIdx].name = newName
+        }
+        grammar = renamed
+    }
+
+    /// Replaces `{old}` placeholders (inner whitespace tolerated) with
+    /// `{new}`; all other template text passes through byte-identical.
+    static func templateReplacingVariable(in template: String, from oldName: String, to newName: String) -> String {
+        var out = ""
+        var scan = template.startIndex
+        while scan < template.endIndex {
+            guard let open = template[scan...].firstIndex(of: "{"),
+                  let close = template[open...].firstIndex(of: "}") else {
+                out += template[scan...]
+                break
+            }
+            let inner = String(template[template.index(after: open)..<close])
+            out += template[scan...open]
+            out += inner.trimmingCharacters(in: .whitespaces) == oldName ? newName : inner
+            out += "}"
+            scan = template.index(after: close)
+        }
+        return out
+    }
+
+    /// Saves the grammar catalog to a YAML file at the specified file URL.
+    /// The catalog is validated before any write, so a failed save preserves
+    /// the existing document. Output contains only schema-v1 keys: no
+    /// variant-key flags, is_facet, scope, or active_grammar_id.
+    public static func save(catalog: FilenameGrammarCatalog, fileURL: URL) throws {
+        let yaml = try serializedYAML(catalog: catalog)
+        let dir = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try yaml.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
-    /// Saves the grammar catalog to `.rawviewer/view/grammar.yaml` in the given project.
+    /// Saves the grammar catalog to `.rawviewer/grammar.yaml` in the given project.
     public static func save(catalog: FilenameGrammarCatalog, project: ProjectContext) throws {
         let file = project.root.appendingPathComponent(relativePath)
         try save(catalog: catalog, fileURL: file)
     }
 
-    /// Loads the grammar catalog from the specified file URL.
-    public static func load(fileURL: URL) -> FilenameGrammarCatalog? {
-        guard FileManager.default.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL),
-              let text = String(data: data, encoding: .utf8),
-              let node = try? YAMLParser.parse(text) else {
-            return nil
+    /// Loads and strictly validates the canonical schema-v1 catalog from a file.
+    /// A missing file throws fileNotFound; malformed content throws a
+    /// validation error. The two are never conflated into a silent default.
+    public static func load(fileURL: URL) throws -> FilenameGrammarCatalog {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw GrammarCatalogError.fileNotFound(path: fileURL.path)
         }
-        return parse(node: node)
+        let text: String
+        do {
+            text = try String(contentsOf: fileURL, encoding: .utf8)
+        } catch {
+            throw GrammarCatalogError.parseFailed(path: fileURL.path, message: error.localizedDescription)
+        }
+        let node: YAMLNode
+        do {
+            node = try YAMLParser.parse(text)
+        } catch let parseError as YAMLParseError {
+            throw GrammarCatalogError.parseFailed(path: fileURL.path, message: parseError.localizedDescription)
+        }
+        do {
+            return try parseCanonical(node: node)
+        } catch let catalogError as GrammarCatalogError {
+            throw catalogError
+        } catch {
+            throw GrammarCatalogError.parseFailed(path: fileURL.path, message: error.localizedDescription)
+        }
     }
 
-    /// Loads the grammar catalog from `.rawviewer/view/grammar.yaml` in the given project.
-    public static func load(project: ProjectContext) -> FilenameGrammarCatalog? {
+    /// Loads the canonical `.rawviewer/grammar.yaml` catalog in the project.
+    /// Never falls back to the legacy path: a malformed canonical file is an
+    /// error even when legacy definitions exist.
+    public static func load(project: ProjectContext) throws -> FilenameGrammarCatalog {
         let file = project.root.appendingPathComponent(relativePath)
-        return load(fileURL: file)
+        return try load(fileURL: file)
     }
 
-    /// Loads combined project and global grammar catalogs.
-    /// Returns tagged Project and Global grammars, along with the resolved active grammar ID.
+    /// Result of a legacy import: the migrated catalog plus human-reviewable
+    /// diagnostics describing every guessed or dropped legacy semantic.
+    public struct LegacyGrammarImport: Sendable, Equatable {
+        public var catalog: FilenameGrammarCatalog
+        public var diagnostics: [String]
+    }
+
+    /// Reads a legacy `.rawviewer/view/grammar.yaml` file without changing it.
+    /// Missing types default to string and recognized display roles map to
+    /// stable keys; each such decision is recorded in diagnostics for review.
+    /// Legacy-only state (is_facet, is_default, scope, active_grammar_id) is
+    /// kept in memory as compatibility state and never written to new output.
+    public static func importLegacy(fileURL: URL) throws -> LegacyGrammarImport {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw GrammarCatalogError.fileNotFound(path: fileURL.path)
+        }
+        let text: String
+        do {
+            text = try String(contentsOf: fileURL, encoding: .utf8)
+        } catch {
+            throw GrammarCatalogError.parseFailed(path: fileURL.path, message: error.localizedDescription)
+        }
+        let node: YAMLNode
+        do {
+            node = try YAMLParser.parse(text)
+        } catch let parseError as YAMLParseError {
+            throw GrammarCatalogError.parseFailed(path: fileURL.path, message: parseError.localizedDescription)
+        }
+        return parseLegacy(node: node)
+    }
+
+    /// Imports the legacy project grammar file. Throws fileNotFound when no
+    /// legacy file exists.
+    public static func importLegacy(project: ProjectContext) throws -> LegacyGrammarImport {
+        let file = project.root.appendingPathComponent(legacyRelativePath)
+        return try importLegacy(fileURL: file)
+    }
+
+    /// Best-effort display/menu helper. It never throws and never masks a
+    /// malformed canonical file: when the canonical file exists but fails
+    /// strict validation, that side resolves to empty (project) or the
+    /// built-in defaults (global) instead of a silent legacy substitution.
+    /// Legacy import runs only when the canonical file is absent. For the
+    /// enforced save/load path, use throwing `load(project:)` instead.
     public static func loadCombined(
         project: ProjectContext?,
         globalURL: URL = globalGrammarURL
     ) -> (projectGrammars: [FilenameGrammar], globalGrammars: [FilenameGrammar], activeID: String?) {
-        let projectCatalog = project.flatMap { load(project: $0) }
-        let globalCatalog = load(fileURL: globalURL)
+        let projectCatalog: FilenameGrammarCatalog? = project.flatMap { ctx in
+            let canonicalURL = ctx.root.appendingPathComponent(relativePath)
+            if FileManager.default.fileExists(atPath: canonicalURL.path) {
+                // Canonical present: strict read only. Malformed content
+                // yields nil (empty project grammars), never legacy fallback.
+                return try? load(fileURL: canonicalURL)
+            }
+            return try? importLegacy(project: ctx).catalog
+        }
+        // Global side is strict-only too: a malformed global file falls back
+        // to the built-in defaults, never a lenient re-parse of its content.
+        let globalCatalog: FilenameGrammarCatalog? = try? load(fileURL: globalURL)
 
         let projectGrammars: [FilenameGrammar] = (projectCatalog?.grammars ?? []).map {
             var g = $0
@@ -536,10 +914,113 @@ public enum FilenameGrammarEngine {
         return (projectGrammars, globalGrammars, activeID)
     }
 
-    static func parse(node: YAMLNode) -> FilenameGrammarCatalog? {
+    /// Strict schema-v1 parse: schema_version must be 1, only documented keys
+    /// are accepted, and the result must validate. The role key is optional:
+    /// absent means variable-native; present roles map to display labels
+    /// exactly as before (legacy mapping is never reinterpreted on load).
+    static func parseCanonical(node: YAMLNode) throws -> FilenameGrammarCatalog {
+        guard let entries = node.mapEntries else {
+            throw GrammarCatalogError.parseFailed(path: "", message: "catalog root must be a mapping")
+        }
+        for (key, _) in entries {
+            guard key == "schema_version" || key == "grammars" else {
+                throw GrammarCatalogError.unexpectedKey(scope: "grammar catalog", key: key)
+            }
+        }
+        guard node.value(for: "schema_version")?.scalarValue == "1" else {
+            throw GrammarCatalogError.invalidSchemaVersion(found: node.value(for: "schema_version")?.scalarValue)
+        }
+        guard let list = node.value(for: "grammars")?.listItems else {
+            throw GrammarCatalogError.parseFailed(path: "", message: "grammars must be a YAML list")
+        }
+        var grammars: [FilenameGrammar] = []
+        for (index, item) in list.enumerated() {
+            let label = item.value(for: "id")?.scalarValue ?? "grammars[\(index)]"
+            guard let itemEntries = item.mapEntries else {
+                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "grammar must be a mapping")
+            }
+            for (key, _) in itemEntries {
+                guard key == "id" || key == "name" || key == "template" || key == "description" || key == "fields" else {
+                    throw GrammarCatalogError.unexpectedKey(scope: "grammar '\(label)'", key: key)
+                }
+            }
+            guard let id = item.value(for: "id")?.scalarValue,
+                  let name = item.value(for: "name")?.scalarValue,
+                  let template = item.value(for: "template")?.scalarValue else {
+                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "id, name and template are required")
+            }
+            let description = item.value(for: "description")?.scalarValue ?? ""
+            var fields: [GrammarField] = []
+            if let fieldList = item.value(for: "fields")?.listItems {
+                for fNode in fieldList {
+                    guard let fEntries = fNode.mapEntries else {
+                        throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field must be a mapping")
+                    }
+                    for (key, _) in fEntries {
+                        guard key == "name" || key == "role" || key == "type" || key == "format" || key == "optional" else {
+                            throw GrammarCatalogError.unexpectedKey(scope: "field in grammar '\(label)'", key: key)
+                        }
+                    }
+                    guard let fName = fNode.value(for: "name")?.scalarValue, !fName.isEmpty else {
+                        throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field name is required")
+                    }
+                    // Absent role means variable-native; a present role must
+                    // be nonempty and maps to its display label (legacy kept).
+                    let fRoleRaw = fNode.value(for: "role")?.scalarValue
+                    if let raw = fRoleRaw, raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        throw GrammarCatalogError.emptyRole(field: fName)
+                    }
+                    let mappedRole: String? = fRoleRaw.map { displayRole(for: $0) }
+                    guard let fTypeRaw = fNode.value(for: "type")?.scalarValue,
+                          let fType = GrammarFieldType(rawValue: fTypeRaw) else {
+                        throw GrammarCatalogError.unknownType(field: fName, found: fNode.value(for: "type")?.scalarValue)
+                    }
+                    let fFormat = fNode.value(for: "format")?.scalarValue ?? ""
+                    if let optRaw = fNode.value(for: "optional")?.scalarValue?.lowercased() {
+                        guard optRaw == "true" || optRaw == "false" else {
+                            throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field '\(fName)' optional must be true or false")
+                        }
+                        fields.append(GrammarField(
+                            name: fName,
+                            role: mappedRole,
+                            type: fType,
+                            formatHint: fFormat,
+                            isOptional: optRaw == "true"
+                        ))
+                    } else {
+                        fields.append(GrammarField(
+                            name: fName,
+                            role: mappedRole,
+                            type: fType,
+                            formatHint: fFormat
+                        ))
+                    }
+                }
+            }
+            grammars.append(FilenameGrammar(
+                id: id,
+                name: name,
+                template: template,
+                description: description,
+                fields: fields
+            ))
+        }
+        let catalog = FilenameGrammarCatalog(grammars: grammars)
+        try validate(catalog: catalog)
+        return catalog
+    }
+
+    /// Lenient legacy parse: tolerates absent files keys and legacy-only keys,
+    /// records every normalization as a diagnostic for human review.
+    static func parseLegacy(node: YAMLNode) -> LegacyGrammarImport {
+        var diagnostics: [String] = ["Imported from legacy grammar definitions; review migrated semantics."]
         var activeID = node.value(for: "active_grammar_id")?.scalarValue
+        if activeID != nil {
+            diagnostics.append("Legacy active_grammar_id '\(activeID!)' is compatibility state only; not written to schema-v1 output.")
+        }
         if activeID == "autolab-scientific" {
             activeID = "standard-scientific"
+            diagnostics.append("Normalized legacy grammar id 'autolab-scientific' to 'standard-scientific'.")
         }
 
         var grammars: [FilenameGrammar] = []
@@ -548,16 +1029,25 @@ public enum FilenameGrammarEngine {
                 guard var id = item.value(for: "id")?.scalarValue,
                       var name = item.value(for: "name")?.scalarValue,
                       let template = item.value(for: "template")?.scalarValue else {
+                    diagnostics.append("Skipped a legacy grammar entry missing id, name or template.")
                     continue
                 }
                 if id == "autolab-scientific" {
                     id = "standard-scientific"
+                    diagnostics.append("Normalized legacy grammar id 'autolab-scientific' to 'standard-scientific'.")
                 }
                 if name.contains("Autolab USTH") {
                     name = "Standard Filename Pattern"
+                    diagnostics.append("Normalized legacy grammar name to 'Standard Filename Pattern'.")
                 }
                 let desc = item.value(for: "description")?.scalarValue ?? ""
                 let isDef = (item.value(for: "is_default")?.scalarValue?.lowercased() == "true")
+                if item.value(for: "is_default") != nil {
+                    diagnostics.append("Grammar '\(id)': legacy is_default is compatibility state only; not written to schema-v1 output.")
+                }
+                if item.value(for: "is_facet") != nil || item.value(for: "fields")?.listItems?.contains(where: { $0.value(for: "is_facet") != nil }) == true {
+                    diagnostics.append("Grammar '\(id)': legacy is_facet is compatibility state only; not written to schema-v1 output.")
+                }
                 let scopeRaw = item.value(for: "scope")?.scalarValue
                 let scope = scopeRaw.flatMap { FilenameGrammarScope(rawValue: $0) }
 
@@ -565,16 +1055,40 @@ public enum FilenameGrammarEngine {
                 if let fieldList = item.value(for: "fields")?.listItems {
                     for fNode in fieldList {
                         guard let fName = fNode.value(for: "name")?.scalarValue else { continue }
-                        let fRole = fNode.value(for: "role")?.scalarValue ?? "Remarks"
-                        let fTypeRaw = fNode.value(for: "type")?.scalarValue ?? ""
-                        let fType = GrammarFieldType(rawValue: fTypeRaw) ?? .string
-                        let fHint = fNode.value(for: "format_hint")?.scalarValue ?? ""
+                        let fRoleRaw = fNode.value(for: "role")?.scalarValue ?? "Remarks"
+                        if fNode.value(for: "role") == nil {
+                            diagnostics.append("Field '\(fName)': no legacy role; defaulted to Remarks for review.")
+                        }
+                        let mappedRole = displayRole(for: canonicalRoleKey(for: fRoleRaw))
+                        if mappedRole != fRoleRaw {
+                            diagnostics.append("Field '\(fName)': mapped legacy role '\(fRoleRaw)' to stable key '\(canonicalRoleKey(for: fRoleRaw))'.")
+                        }
+                        let fTypeRaw = fNode.value(for: "type")?.scalarValue
+                        let fType: GrammarFieldType
+                        if let raw = fTypeRaw, let known = GrammarFieldType(rawValue: raw) {
+                            fType = known
+                        } else {
+                            fType = .string
+                            diagnostics.append("Field '\(fName)': legacy type '\(fTypeRaw ?? "missing")' needs review; defaulted to string.")
+                        }
+                        var fHint = fNode.value(for: "format")?.scalarValue ?? fNode.value(for: "format_hint")?.scalarValue ?? ""
+                        if fNode.value(for: "format_hint") != nil {
+                            diagnostics.append("Field '\(fName)': mapped legacy format_hint to format.")
+                        }
+                        if fType == .string, !fHint.isEmpty {
+                            diagnostics.append("Field '\(fName)': format '\(fHint)' is incompatible with string type; dropped for review.")
+                            fHint = ""
+                        }
                         let fStrip = (fNode.value(for: "strip_brackets")?.scalarValue?.lowercased() == "true")
-                        let fOpt = (fNode.value(for: "is_optional")?.scalarValue?.lowercased() == "true")
+                        let optRaw = fNode.value(for: "optional")?.scalarValue ?? fNode.value(for: "is_optional")?.scalarValue
+                        if fNode.value(for: "is_optional") != nil {
+                            diagnostics.append("Field '\(fName)': mapped legacy is_optional to optional.")
+                        }
+                        let fOpt = (optRaw?.lowercased() == "true")
                         let fFacet = (fNode.value(for: "is_facet")?.scalarValue?.lowercased() != "false")
                         fields.append(GrammarField(
                             name: fName,
-                            role: fRole,
+                            role: mappedRole,
                             type: fType,
                             formatHint: fHint,
                             stripBrackets: fStrip,
@@ -594,9 +1108,183 @@ public enum FilenameGrammarEngine {
                     scope: scope
                 ))
             }
+        } else {
+            diagnostics.append("Legacy file defines no grammars list.")
         }
 
-        guard !grammars.isEmpty else { return nil }
-        return FilenameGrammarCatalog(grammars: grammars, activeGrammarID: activeID)
+        return LegacyGrammarImport(
+            catalog: FilenameGrammarCatalog(grammars: grammars, activeGrammarID: activeID),
+            diagnostics: diagnostics
+        )
+    }
+
+    // MARK: - Task 4: safe deletion guards
+
+    /// Project-owned profile directories inspected for grammar references,
+    /// including excluded/invalid files. Bundled examples are never project
+    /// configuration and are not inspected.
+    private static let grammarReferenceScanDirs = [
+        ".rawviewer/instrument",
+        "data/.rawview/instrument",
+        "data/instruments/rawview",
+        "data/instruments",
+    ]
+
+    /// Best-effort grammar_id for one profile file's text, found even in
+    /// excluded files that fail full validation. Nil when no plausible
+    /// key/value pair exists. Comment lines never count as references.
+    static func referencedGrammarID(in text: String) -> String? {
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            guard let keyRange = line.range(of: "grammar_id") else { continue }
+            // The key must start the content or follow whitespace/list markup.
+            let prefix = line[..<keyRange.lowerBound]
+            guard prefix.allSatisfy({ $0.isWhitespace || $0 == "-" }) else { continue }
+            let afterKey = line[keyRange.upperBound...]
+            guard let colon = afterKey.firstIndex(of: ":") else { continue }
+            var value = afterKey[afterKey.index(after: colon)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let hash = value.firstIndex(of: "#") {
+                value = String(value[..<hash]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            return value
+        }
+        return nil
+    }
+
+    /// Human-readable dependents blocking deletion of one grammar entry:
+    /// project profiles (valid and excluded alike), settings explorerViews,
+    /// and settings sourceLabels. Empty means deletable. Throws fail-closed
+    /// when any inspection fails, so an unreadable file never silently
+    /// passes. Never mutates anything.
+    public static func grammarDeleteBlockers(grammarID: String, projectRoot: URL) throws -> [String] {
+        var blockers: [String] = []
+        let settings: ProjectSettings?
+        do {
+            settings = try ProjectSettingsStore.load(projectRoot: projectRoot)
+        } catch {
+            throw SafeDeleteError.dependentsUnreadable(
+                detail: "settings could not be inspected: \(error.localizedDescription)")
+        }
+        if let settings {
+            for view in settings.explorerViews where view.grammarID == grammarID {
+                blockers.append("Explorer view '\(view.variable)' uses grammar '\(grammarID)'")
+            }
+            for layout in settings.sourceLabels where layout.grammarID == grammarID {
+                for (index, row) in layout.rows.enumerated() {
+                    blockers.append(
+                        "source label row \(index + 1) (\(row.variables.joined(separator: ", "))) uses grammar '\(grammarID)'")
+                }
+            }
+        }
+        for dir in grammarReferenceScanDirs {
+            let dirURL = projectRoot.appendingPathComponent(dir, isDirectory: true)
+            var dirStat = stat()
+            guard lstat(dirURL.path, &dirStat) == 0 else {
+                guard errno == ENOENT else {
+                    throw SafeDeleteError.dependentsUnreadable(
+                        detail: "\(dir) could not be examined (\(String(cString: strerror(errno)))).")
+                }
+                continue
+            }
+            let entries: [URL]
+            do {
+                entries = try FileManager.default.contentsOfDirectory(
+                    at: dirURL, includingPropertiesForKeys: nil)
+            } catch {
+                throw SafeDeleteError.dependentsUnreadable(
+                    detail: "\(dir) could not be listed: \(error.localizedDescription)")
+            }
+            for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                let ext = entry.pathExtension.lowercased()
+                guard ext == "yaml" || ext == "yml" else { continue }
+                var entryStat = stat()
+                guard lstat(entry.path, &entryStat) == 0 else {
+                    throw SafeDeleteError.dependentsUnreadable(
+                        detail: "\(entry.lastPathComponent) could not be examined; references unknown.")
+                }
+                guard (entryStat.st_mode & S_IFMT) == S_IFREG
+                    || (entryStat.st_mode & S_IFMT) == S_IFLNK else {
+                    throw SafeDeleteError.dependentsUnreadable(
+                        detail: "\(entry.lastPathComponent) is not a readable file; references unknown.")
+                }
+                let text: String
+                do {
+                    text = try String(contentsOf: entry, encoding: .utf8)
+                } catch {
+                    throw SafeDeleteError.dependentsUnreadable(
+                        detail: "\(entry.lastPathComponent) could not be read: \(error.localizedDescription)")
+                }
+                if referencedGrammarID(in: text) == grammarID {
+                    blockers.append("profile '\(entry.lastPathComponent)' references grammar '\(grammarID)'")
+                }
+            }
+        }
+        return blockers.sorted()
+    }
+
+    /// Verifies a profile file may be deleted: it must be a regular,
+    /// non-symlink file whose opened object still sits in the project-owned
+    /// canonical `.rawviewer/instrument/` directory, and — when a baseline
+    /// is known — byte-identical to it (external change/rename rejected).
+    public static func verifyProfileDeleteTarget(
+        at fileURL: URL, projectRoot: URL, expectedBytes: Data?
+    ) throws {
+        let name = fileURL.lastPathComponent
+        let canonicalDir = SecureFile.kernelCanonical(
+            projectRoot.appendingPathComponent(".rawviewer/instrument", isDirectory: true).path)
+        var info = stat()
+        guard lstat(fileURL.path, &info) == 0 else {
+            throw SafeDeleteError.changedOnDisk(path: name)
+        }
+        guard (info.st_mode & S_IFMT) != S_IFLNK else {
+            throw SafeDeleteError.symlinkRefused(path: name)
+        }
+        guard (info.st_mode & S_IFMT) == S_IFREG else {
+            throw SafeDeleteError.notProjectOwned(path: name)
+        }
+        let handle: FileHandle
+        do {
+            handle = try SecureFile.openVerified(resolvedPath: fileURL.path, beneath: projectRoot.path)
+        } catch let error as SecureOpenError {
+            switch error {
+            case .symlink: throw SafeDeleteError.symlinkRefused(path: name)
+            case .missing: throw SafeDeleteError.changedOnDisk(path: name)
+            case .unreadable: throw SafeDeleteError.unreadableTarget(path: name)
+            case .escaped: throw SafeDeleteError.notProjectOwned(path: name)
+            }
+        }
+        defer { try? handle.close() }
+        guard let actual = SecureFile.canonicalPath(of: handle) else {
+            throw SafeDeleteError.unreadableTarget(path: name)
+        }
+        let actualParent = URL(fileURLWithPath: actual).deletingLastPathComponent().path
+        guard actualParent == canonicalDir else {
+            throw SafeDeleteError.notProjectOwned(path: name)
+        }
+        // ponytail: bounded single read; profiles are capped at 1 MiB elsewhere,
+        // so truncation can only mismatch (fail closed), never false-pass.
+        let current: Data
+        do {
+            current = try handle.read(upToCount: 2 * 1024 * 1024) ?? Data()
+        } catch {
+            throw SafeDeleteError.unreadableTarget(path: name)
+        }
+        if let expected = expectedBytes, current != expected {
+            throw SafeDeleteError.changedOnDisk(path: name)
+        }
+    }
+
+    /// Verifies then removes exactly one project-owned profile file. Any
+    /// failure throws with the file untouched.
+    public static func deleteVerifiedProfile(
+        at fileURL: URL, projectRoot: URL, expectedBytes: Data?
+    ) throws {
+        try verifyProfileDeleteTarget(at: fileURL, projectRoot: projectRoot, expectedBytes: expectedBytes)
+        try FileManager.default.removeItem(at: fileURL)
     }
 }

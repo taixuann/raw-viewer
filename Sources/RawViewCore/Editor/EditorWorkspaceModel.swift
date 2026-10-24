@@ -1,5 +1,15 @@
 import Foundation
 
+/// Status-capsule honesty (Task 3 L5): error text must never render with a
+/// success icon. Matches every failure message the workspace emits
+/// ("Save error:", "… FAILED (…)", "Failed …", "… error: …"); legacy-import
+/// and grammar-warning notes stay non-error.
+public func isErrorStatusMessage(_ message: String?) -> Bool {
+    guard let text = message, !text.isEmpty else { return false }
+    let lower = text.lowercased()
+    return lower.contains("error") || lower.contains("failed")
+}
+
 public enum LineRegionType: String, Sendable, CaseIterable, Equatable {
     case unassigned = "Unassigned"
     case metadata = "Key-Value Metadata"
@@ -101,6 +111,9 @@ public struct ColumnDefinition: Sendable, Equatable, Identifiable {
     public var isDefaultY: Bool
     public var isSkipped: Bool
     public var role: ColumnRole
+    /// Schema v3 `required: false`: the channel resolves when present and
+    /// stays absent otherwise. Never drives default axes.
+    public var isOptional: Bool
     public var progressionType: ProgressionType?
     public var progressionBehavior: ProgressionBehavior?
     public var customProgressionName: String?
@@ -115,6 +128,7 @@ public struct ColumnDefinition: Sendable, Equatable, Identifiable {
         isDefaultX: Bool = false,
         isDefaultY: Bool = false,
         isSkipped: Bool = false,
+        isOptional: Bool = false,
         role: ColumnRole? = nil,
         progressionType: ProgressionType? = nil,
         progressionBehavior: ProgressionBehavior? = nil,
@@ -129,6 +143,7 @@ public struct ColumnDefinition: Sendable, Equatable, Identifiable {
         self.isDefaultX = isDefaultX
         self.isDefaultY = isDefaultY
         self.isSkipped = isSkipped
+        self.isOptional = isOptional
         if let explicitRole = role {
             self.role = explicitRole
         } else if isSkipped {
@@ -952,5 +967,652 @@ public final class EditorWorkspaceModel: @unchecked Sendable {
             if parsedCols.count > 1 { parsedCols[1].isYAxis = true }
             self.columns = parsedCols
         }
+    }
+
+    // MARK: - Schema v3 document ownership
+
+    /// Profile identity, kept split from the instrument identity below:
+    /// one `.rawviewer/instrument/<profileID>.yaml` file owns one named
+    /// profile plus its variants, independent of the instrument it reads.
+    public var profileID: String = ""
+    public var profileName: String = ""
+    /// The full owned document. Variant switches never drop other variants;
+    /// only whole-document replacement prompts Save/Discard/Cancel (Task 3).
+    public var profileDocument: ProfileDocumentV3? = nil
+    public var selectedVariantID: String? = nil
+    /// Document-level dirty flag: true after any staged in-memory edit, false
+    /// after apply or successful whole-document save.
+    public private(set) var profileDirty: Bool = false
+    /// Last serialized bytes written by `saveDocument` (or loaded by
+    /// `applyProfileDocument`); used to detect external changes before save.
+    private var lastSavedYAML: String? = nil
+
+    public var selectedVariant: ProfileVariantV3? {
+        guard let document = profileDocument else { return nil }
+        if let id = selectedVariantID { return document.variants.first { $0.id == id } }
+        return document.variants.first
+    }
+
+    /// Stores the whole document, resolves the selection, and projects the
+    /// selected variant into the legacy editable fields above. Never invents
+    /// fallback X/Y: columns without defaults stay default-free.
+    public func applyProfileDocument(_ document: ProfileDocumentV3, selectedVariantID: String?) {
+        profileDocument = document
+        if let requested = selectedVariantID,
+           document.variants.contains(where: { $0.id == requested }) {
+            self.selectedVariantID = requested
+        } else {
+            self.selectedVariantID = document.variants.first?.id
+        }
+        profileID = document.profileID
+        profileName = document.profileName
+        instrumentID = document.instrumentID
+        instrumentName = document.instrumentName
+        projectCurrentVariant()
+        lastSavedYAML = try? document.serializedYAML()
+        profileDirty = false
+    }
+
+    /// Single baseline authority: records the exact bytes on disk after
+    /// every successful profile-file write (byte-save, serialized save,
+    /// import copy) or clears it (delete). Keeps the external-change
+    /// guard honest across both write paths.
+    public func rebaseSaveBaseline(to yaml: String?) {
+        lastSavedYAML = yaml
+    }
+
+    /// Projects the selected variant into the legacy editable fields.
+    /// Never traps: without a selection the fields stay untouched.
+    private func projectCurrentVariant() {
+        guard let variant = selectedVariant else { return }
+        modeID = variant.id
+        modeName = variant.name
+        delimiter = variant.rawStream.delimiter
+        decimalDelimiter = variant.rawStream.decimalSeparator
+        let plot = variant.defaultPlot
+        columns = variant.rawStream.columns.map { self.columnDefinition(for: $0, plot: plot) }
+    }
+
+    /// Explicitly marks the document dirty (for edits made directly to the
+    /// legacy fields outside `stageCurrentVariantEdits`).
+    public func markProfileDirty() {
+        guard profileDocument != nil else { return }
+        profileDirty = true
+    }
+
+    /// Stages legacy-field edits, then reports unsaved state. Guards that
+    /// check only `profileDirty` miss direct binding writes to the legacy
+    /// fields; call this before gating a document replacement on the flag.
+    @discardableResult
+    public func refreshDirtyFromStagedEdits() -> Bool {
+        stageCurrentVariantEdits()
+        return profileDirty
+    }
+
+    /// Folds identity plus the legacy editable fields back into the selected
+    /// variant without validating, so incomplete visual drafts survive in
+    /// memory across variant switches. Save validates all variants.
+    public func stageCurrentVariantEdits() {
+        guard var document = profileDocument,
+              let selection = selectedVariantID,
+              let index = document.variants.firstIndex(where: { $0.id == selection }) else { return }
+        let before = document
+        document.profileID = profileID
+        document.profileName = profileName
+        document.instrumentID = instrumentID
+        document.instrumentName = instrumentName
+        foldCurrentEdits(into: &document.variants[index])
+        profileDocument = document
+        if document != before { profileDirty = true }
+    }
+
+    /// Stages the current visual draft, then switches the selection and
+    /// re-projects. Never validates, so navigation never traps on incomplete
+    /// drafts; only whole-document replacement prompts Save/Discard/Cancel.
+    @discardableResult
+    public func selectVariant(id: String) -> Bool {
+        guard let document = profileDocument,
+              document.variants.contains(where: { $0.id == id }) else { return false }
+        stageCurrentVariantEdits()
+        selectedVariantID = id
+        projectCurrentVariant()
+        return true
+    }
+
+    /// Copies only the selected variant under a new ID. Key values are copied
+    /// verbatim; resolving key/selector collisions with sibling variants is an
+    /// explicit follow-up edit, never a silent rewrite here.
+    public func duplicateCurrentVariant(newID: String, newName: String) throws {
+        stageCurrentVariantEdits()
+        guard var document = profileDocument,
+              let selection = selectedVariantID,
+              let source = document.variants.first(where: { $0.id == selection }) else {
+            throw ProfileDocumentError.invalid(reason: "No variant is selected for duplication.")
+        }
+        guard !document.variants.contains(where: { $0.id == newID }) else {
+            throw ProfileDocumentError.invalid(reason: "Variant id \"\(newID)\" already exists; resolve the collision first.")
+        }
+        var copy = source
+        copy.id = newID
+        copy.name = newName
+        document.variants.append(copy)
+        try document.validate()
+        profileDocument = document
+        selectedVariantID = newID
+        projectCurrentVariant()
+        profileDirty = true
+    }
+
+    /// Copies the whole document under a new profile ID. Instrument identity
+    /// stays independent of the profile copy; every variant is preserved.
+    public func duplicateProfile(newProfileID: String, newProfileName: String) throws {
+        stageCurrentVariantEdits()
+        guard var document = profileDocument else {
+            throw ProfileDocumentError.invalid(reason: "No profile document is loaded; apply a v3 document first.")
+        }
+        document.profileID = newProfileID
+        document.profileName = newProfileName
+        try document.validate()
+        profileID = newProfileID
+        profileName = newProfileName
+        profileDocument = document
+        profileDirty = true
+    }
+
+    /// Task 6: one blank v3 variant from the live sample parse (delimiter,
+    /// decimal, header/data-start rows, columns incl. skip/X/Y, the sample
+    /// extension, caller match evidence) under a keyless key set. Loads it
+    /// as the dirty unsaved document and returns it. Never touches disk.
+    @discardableResult
+    public func newDocumentFromSample(
+        profileID: String, profileName: String,
+        grammarID: String, match: VariantMatchV3? = nil,
+        catalog: FilenameGrammarCatalog? = nil
+    ) throws -> ProfileDocumentV3 {
+        guard !columns.isEmpty else {
+            throw ProfileDocumentError.invalid(reason: "Load a sample before creating a profile: no parsed columns are available.")
+        }
+        let ext = sampleFileURL.map { "." + $0.pathExtension.lowercased() } ?? ""
+        guard ext.count > 1 else {
+            throw ProfileDocumentError.invalid(reason: "Load a sample file before creating a profile: no sample filename is available.")
+        }
+        // ponytail: brand-new columns keep the fold's header-source mapping; no defaults guessed.
+        let variantColumns: [ProfileColumnV3] = columns.map { definition in
+            var axes: [AxisV3] = []
+            if definition.isXAxis { axes.append(.x) }
+            if definition.isYAxis { axes.append(.y) }
+            return ProfileColumnV3(
+                id: definition.name,
+                source: ColumnSourceV3(header: definition.name),
+                label: definition.label,
+                quantity: definition.quantity,
+                unit: definition.unit.isEmpty ? nil : definition.unit,
+                required: !definition.isOptional,
+                role: definition.isSkipped ? .skip : (definition.role == .progression ? .progression : .channel),
+                axes: definition.isSkipped ? [] : axes,
+                progression: definition.isSkipped ? nil : v3Progression(for: definition, stored: nil))
+        }
+        let cleanName = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = cleanName.isEmpty ? profileID : cleanName
+        let cleanInstrument = instrumentID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanInstrumentName = instrumentName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let document = ProfileDocumentV3(
+            profileID: profileID, profileName: displayName,
+            instrumentID: cleanInstrument.isEmpty ? profileID : cleanInstrument,
+            instrumentName: cleanInstrumentName.isEmpty ? displayName : cleanInstrumentName,
+            grammarID: grammarID, variantKeys: [],
+            variants: [ProfileVariantV3(
+                id: "variant-1", name: displayName, keyValues: [:], match: match,
+                rawStream: RawStreamV3(
+                    extensions: [ext], encodings: ["utf-8"],
+                    delimiter: delimiter, decimalSeparator: decimalDelimiter,
+                    rows: RowLocatorsV3(
+                        header: headerLineIndex.map { HeaderLocatorV3.row($0 + 1) } ?? .none,
+                        dataStart: .row(dataStartLineIndex + 1),
+                        excludedMetadata: skippedMetadataLines.sorted()),
+                    columns: variantColumns))])
+        if let catalog { try document.validate(catalog: catalog) } else { try document.validate() }
+        applyProfileDocument(document, selectedVariantID: nil)
+        profileDirty = true
+        return document
+    }
+
+    /// Explicit key-set change: every variant needs exactly the new keys.
+    /// Throws on any missing variant or extra/missing key; incomplete drafts
+    /// cannot apply, and therefore cannot save.
+    public func setVariantKeys(_ keys: [String], valuesByVariantID: [String: [String: String]]) throws {
+        guard var document = profileDocument else {
+            throw ProfileDocumentError.invalid(reason: "No profile document is loaded; apply a v3 document first.")
+        }
+        let clean = keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard !clean.isEmpty, Set(clean).count == clean.count, clean.allSatisfy({ !$0.isEmpty }) else {
+            throw ProfileDocumentError.invalid(reason: "Variant keys must be unique nonempty names.")
+        }
+        let keySet = Set(clean)
+        for variant in document.variants {
+            guard let values = valuesByVariantID[variant.id] else {
+                throw ProfileDocumentError.invalid(reason: "Variant \"\(variant.id)\" needs explicit values for the new key set.")
+            }
+            guard Set(values.keys) == keySet else {
+                throw ProfileDocumentError.invalid(reason: "Variant \"\(variant.id)\" must supply exactly the selected keys.")
+            }
+        }
+        document.variantKeys = clean
+        for index in document.variants.indices {
+            document.variants[index].keyValues = valuesByVariantID[document.variants[index].id] ?? [:]
+        }
+        try document.validate()
+        profileDocument = document
+        profileDirty = true
+    }
+
+    /// Single-key toggle for the Variant Key checkbox. Deliberately
+    /// unvalidated: enabling stages empty values that block Save (not
+    /// navigation) until every variant carries a real value. Dirties the
+    /// profile only; the grammar catalog is never touched here.
+    public func setVariantKeyEnabled(_ key: String, enabled: Bool) throws {
+        guard var document = profileDocument else {
+            throw ProfileDocumentError.invalid(reason: "No profile document is loaded; apply a v3 document first.")
+        }
+        let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else {
+            throw ProfileDocumentError.invalid(reason: "Variant key names must be nonempty.")
+        }
+        if enabled {
+            if !document.variantKeys.contains(clean) { document.variantKeys.append(clean) }
+            for index in document.variants.indices where document.variants[index].keyValues[clean] == nil {
+                document.variants[index].keyValues[clean] = ""
+            }
+        } else {
+            document.variantKeys.removeAll { $0 == clean }
+            for index in document.variants.indices {
+                document.variants[index].keyValues.removeValue(forKey: clean)
+            }
+        }
+        profileDocument = document
+        profileDirty = true
+    }
+
+    /// Per-variant key-value edit on the selected variant only. Unvalidated
+    /// so navigation never traps; Save validates all variants.
+    /// Task 7 keeps this for programmatic staging; the Keys value-entry row
+    /// is gone from the UI, so key values only change through autofill below.
+    public func updateSelectedVariantKeyValue(key: String, value: String) throws {
+        guard var document = profileDocument,
+              let selection = selectedVariantID,
+              let index = document.variants.firstIndex(where: { $0.id == selection }) else {
+            throw ProfileDocumentError.invalid(reason: "No variant is selected.")
+        }
+        document.variants[index].keyValues[key] = value
+        profileDocument = document
+        profileDirty = true
+    }
+
+    /// Task 7: tick-only keys autofill read-only from the current sample's
+    /// extracted fields. Fills only empty values on the selected
+    /// (sample-matched) variant and dirties the profile; unmatched samples
+    /// never autofill, and existing values are never overwritten. Missing
+    /// extraction leaves the value empty, and Save then names the exact key.
+    /// Only marks dirty when a value actually changes.
+    public func autofillSelectedVariantKeyValues(from extractedFields: [String: String], isMatched: Bool) {
+        guard isMatched,
+              var document = profileDocument,
+              let selection = selectedVariantID,
+              let index = document.variants.firstIndex(where: { $0.id == selection }),
+              !document.variantKeys.isEmpty else { return }
+        var changed = false
+        for key in document.variantKeys {
+            let current = document.variants[index].keyValues[key] ?? ""
+            guard current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let filled = extractedFields[key], !filled.isEmpty else { continue }
+            document.variants[index].keyValues[key] = filled
+            changed = true
+        }
+        if changed {
+            profileDocument = document
+            profileDirty = true
+        }
+    }
+
+    /// Explicit Use as Profile Defaults: replaces the complete default X/Y
+    /// list on the selected variant's projection only. Sandbox axis pickers
+    /// stay preview-only until this is called.
+    public func usePreviewAsDefaults(x xID: String, y yIDs: [String]) throws {
+        guard profileDocument != nil, selectedVariantID != nil else {
+            throw ProfileDocumentError.invalid(reason: "No variant is selected.")
+        }
+        let names = Set(columns.map(\.name))
+        for id in [xID] + yIDs {
+            guard names.contains(id) else {
+                throw ProfileDocumentError.invalid(reason: "Column \"\(id)\" is not part of the selected variant.")
+            }
+        }
+        for index in columns.indices {
+            columns[index].isDefaultX = (columns[index].name == xID)
+            columns[index].isDefaultY = yIDs.contains(columns[index].name)
+        }
+        stageCurrentVariantEdits()
+    }
+
+    /// Generic selected-variant edit for Matching & Layout controls.
+    /// Stages first, applies without validation, marks dirty.
+    public func updateSelectedVariant(_ apply: (inout ProfileVariantV3) -> Void) throws {
+        stageCurrentVariantEdits()
+        guard var document = profileDocument,
+              let selection = selectedVariantID,
+              let index = document.variants.firstIndex(where: { $0.id == selection }) else {
+            throw ProfileDocumentError.invalid(reason: "No variant is selected.")
+        }
+        apply(&document.variants[index])
+        profileDocument = document
+        profileDirty = true
+    }
+
+    /// Rebinds the profile to another grammar and clears keys/values for
+    /// explicit review. Unvalidated in memory; Save blocks until keys resolve.
+    public func rebindProfile(grammarID: String) {
+        stageCurrentVariantEdits()
+        guard var document = profileDocument else { return }
+        document.grammarID = grammarID
+        document.variantKeys = []
+        for index in document.variants.indices { document.variants[index].keyValues = [:] }
+        profileDocument = document
+        profileDirty = true
+    }
+
+    /// Called after a non-v3 (legacy) profile load: the workspace matches
+    /// disk, so no document draft is pending.
+    public func didLoadExternalProfile() {
+        lastSavedYAML = nil
+        profileDirty = false
+    }
+    /// Writes the whole validated document to
+    /// `.rawviewer/instrument/<profileID>.yaml`. Validates every variant
+    /// before touching disk, so a failed save never replaces a valid file;
+    /// aborts on external changes instead of overwriting them.
+    @discardableResult
+    public func saveDocument(project: ProjectContext, catalog: FilenameGrammarCatalog? = nil) throws -> URL {
+        let document = try makeProfileDocument()
+        if let catalog { try document.validate(catalog: catalog) }
+        let text = try document.serializedYAML()
+        let dir = project.root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("\(document.profileID).yaml")
+        if let baseline = lastSavedYAML,
+           let existing = try? String(contentsOf: file, encoding: .utf8),
+           existing != baseline {
+            throw ProfileDocumentError.invalid(reason: "The profile file changed on disk; reconcile the external change before saving.")
+        }
+        try text.write(to: file, atomically: true, encoding: .utf8)
+        rebaseSaveBaseline(to: text)
+        profileDirty = false
+        return file
+    }
+
+    private func columnDefinition(for column: ProfileColumnV3, plot: DefaultPlotV3?) -> ColumnDefinition {
+        let role: ColumnRole?
+        if column.role == .skip {
+            role = .skip
+        } else if column.role == .progression {
+            role = .progression
+        } else {
+            role = nil
+        }
+        let progressionType: ProgressionType?
+        let progressionBehavior: ProgressionBehavior?
+        switch column.progression?.type {
+        case .index: progressionType = .index
+        case .time: progressionType = .time
+        case .custom: progressionType = .custom
+        case .none: progressionType = nil
+        }
+        switch column.progression?.behavior {
+        case .continuous: progressionBehavior = .continuous
+        case .discrete: progressionBehavior = .discrete
+        case .none: progressionBehavior = nil
+        }
+        return ColumnDefinition(
+            name: column.id,
+            label: column.label,
+            quantity: column.quantity,
+            unit: column.unit ?? "",
+            isXAxis: column.axes.contains(.x),
+            isYAxis: column.axes.contains(.y),
+            isDefaultX: plot?.x == column.id,
+            isDefaultY: plot?.y.contains(column.id) ?? false,
+            isSkipped: column.role == .skip,
+            isOptional: !column.required,
+            role: role,
+            progressionType: progressionType,
+            progressionBehavior: progressionBehavior,
+            customProgressionName: column.progression?.name)
+    }
+
+    /// Editor-explicit progression fields win; silent fields keep the stored
+    /// value so apply/make round-trips untouched. Fully silent keeps stored
+    /// as-is; brand-new columns fall back to type-appropriate defaults.
+    private func v3Progression(for definition: ColumnDefinition, stored: ColumnProgressionV3?) -> ColumnProgressionV3? {
+        guard definition.role == .progression else { return nil }
+        if definition.progressionType == nil && definition.progressionBehavior == nil
+            && (definition.customProgressionName?.isEmpty ?? true) {
+            return stored
+        }
+        let type: ProgressionTypeV3
+        switch definition.progressionType {
+        case .time: type = .time
+        case .custom: type = .custom
+        case .index: type = .index
+        case .none: type = stored?.type ?? .index
+        }
+        let behavior: ProgressionBehaviorV3?
+        switch definition.progressionBehavior {
+        case .continuous: behavior = .continuous
+        case .discrete: behavior = .discrete
+        // ponytail: silent editor keeps stored (even none); brand-new columns get type defaults.
+        case .none: behavior = stored?.behavior ?? (stored == nil ? (type == .time ? .continuous : .discrete) : nil)
+        }
+        let name = definition.customProgressionName?.isEmpty == false
+            ? definition.customProgressionName : stored?.name
+        return ColumnProgressionV3(type: type, name: name, behavior: behavior)
+    }
+
+    /// Folds the legacy editable fields back into the selected variant and
+    /// returns the whole validated document. Unaffected variants round-trip
+    /// untouched; variant columns missing from the workspace are preserved,
+    /// never dropped here. Variant IDs stay stable (renames are Task 3).
+    public func makeProfileDocument() throws -> ProfileDocumentV3 {
+        guard var document = profileDocument else {
+            throw ProfileDocumentError.invalid(reason: "No profile document is loaded; apply a v3 document first.")
+        }
+        document.profileID = profileID
+        document.profileName = profileName
+        document.instrumentID = instrumentID
+        document.instrumentName = instrumentName
+        guard let selection = selectedVariantID,
+              let index = document.variants.firstIndex(where: { $0.id == selection }) else {
+            throw ProfileDocumentError.invalid(reason: "The selected variant is not part of the profile document.")
+        }
+        foldCurrentEdits(into: &document.variants[index])
+        try document.validate()
+        profileDocument = document
+        return document
+    }
+
+    /// Shared fold for staging (unvalidated) and make/save (validated).
+    private func foldCurrentEdits(into variant: inout ProfileVariantV3) {
+        variant.name = modeName
+        variant.rawStream.delimiter = delimiter
+        variant.rawStream.decimalSeparator = decimalDelimiter
+        var merged: [ProfileColumnV3] = []
+        merged.reserveCapacity(columns.count)
+        for definition in columns {
+            if let existing = variant.rawStream.columns.first(where: { $0.id == definition.name }) {
+                var updated = existing
+                updated.label = definition.label
+                updated.quantity = definition.quantity
+                updated.unit = definition.unit.isEmpty ? nil : definition.unit
+                updated.required = !definition.isOptional
+                if definition.isSkipped {
+                    updated.role = .skip
+                    updated.axes = []
+                    updated.progression = nil
+                } else {
+                    updated.role = definition.role == .progression ? .progression : .channel
+                    var axes: [AxisV3] = []
+                    if definition.isXAxis { axes.append(.x) }
+                    if definition.isYAxis { axes.append(.y) }
+                    updated.axes = axes
+                    // Task 3(a): a role away from progression clears the
+                    // mapping; stale progression metadata must not survive.
+                    updated.progression = definition.role == .progression
+                        ? v3Progression(for: definition, stored: existing.progression)
+                        : nil
+                }
+                merged.append(updated)
+            } else {
+                var axes: [AxisV3] = []
+                if definition.isXAxis { axes.append(.x) }
+                if definition.isYAxis { axes.append(.y) }
+                merged.append(ProfileColumnV3(
+                    id: definition.name,
+                    source: ColumnSourceV3(header: definition.name),
+                    label: definition.label,
+                    quantity: definition.quantity,
+                    unit: definition.unit.isEmpty ? nil : definition.unit,
+                    required: !definition.isOptional,
+                    role: definition.isSkipped ? .skip : (definition.role == .progression ? .progression : .channel),
+                    axes: definition.isSkipped ? [] : axes,
+                    progression: definition.isSkipped ? nil : v3Progression(for: definition, stored: nil)))
+            }
+        }
+        // ponytail: workspace-absent variant columns are preserved, never dropped here.
+        for existing in variant.rawStream.columns where !columns.contains(where: { $0.name == existing.id }) {
+            merged.append(existing)
+        }
+        variant.rawStream.columns = merged
+        let defaultX = columns.first { $0.isDefaultX && !$0.isSkipped }?.name
+        let defaultY = columns.filter { $0.isDefaultY && !$0.isSkipped }.map(\.name)
+        if let defaultX, !defaultY.isEmpty {
+            variant.defaultPlot = DefaultPlotV3(x: defaultX, y: defaultY,
+                                                progression: variant.defaultPlot?.progression)
+        } else if defaultX == nil && defaultY.isEmpty {
+            variant.defaultPlot = nil
+        }
+        // ponytail: partial defaults keep the stored plot; never guess the missing half.
+    }
+
+    // MARK: - Task 5: legacy upgrade draft lifecycle (unsaved until finalize + save)
+
+    /// Pending strict-loaded legacy source for mode selection. Internal: views
+    /// see only `upgradeModeOptions`/`upgradeNeedsModeSelection` (the legacy
+    /// profile type stays module-internal).
+    var upgradeSourceProfile: InstrumentProfile? = nil
+    var upgradeSourcePath: String? = nil
+    var upgradeSourceSHA256: String? = nil
+    /// Unsaved conversion draft; originals and the live document are untouched
+    /// until `finalizeUpgrade`.
+    public var upgradeDraft: ProfileUpgradeDraft? = nil
+    /// Declared legacy mode IDs offered for selection (multi-mode only).
+    public var upgradeModeOptions: [String] = []
+
+    public var hasUpgradeDraft: Bool { upgradeDraft != nil }
+
+    public var upgradeNeedsModeSelection: Bool {
+        upgradeSourceProfile != nil && upgradeDraft == nil && !upgradeModeOptions.isEmpty
+    }
+
+    public var upgradeSourceLabel: String {
+        if let profile = upgradeSourceProfile {
+            return profile.instrumentName.isEmpty ? profile.instrumentID : profile.instrumentName
+        }
+        return upgradeSourcePath ?? ""
+    }
+
+    /// Stages visual edits, then strict-loads one legacy file and stages it
+    /// for upgrade. Single-mode profiles yield a draft immediately; multi-mode
+    /// profiles only offer `upgradeModeOptions` until explicit selection. The
+    /// live document is never touched here, so repeated preparation only
+    /// replaces upgrade state and preserves every draft.
+    public func prepareUpgradeFromLegacyFile(at url: URL, relativePath: String) throws {
+        stageCurrentVariantEdits()
+        let data = try Data(contentsOf: url)
+        guard data.count <= ProfileCatalog.maximumProfileBytes else {
+            throw ProfileDocumentError.invalid(reason: "\(relativePath): legacy profile exceeds the size limit.")
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ProfileDocumentError.invalid(reason: "\(relativePath): legacy profile is not readable text.")
+        }
+        let digest = sha256Hex(data)
+        let outcome = ProfileSchema.load(text: text, relativePath: relativePath, sha256: digest)
+        guard let profile = outcome.profile else {
+            throw ProfileDocumentError.invalid(reason: outcome.issues.first ?? "\(relativePath): legacy profile is not a supported v1/v2 document.")
+        }
+        upgradeSourceProfile = profile
+        upgradeSourcePath = relativePath
+        upgradeSourceSHA256 = digest
+        if profile.modes.count == 1 {
+            upgradeDraft = try LegacyProfileUpgrader.draft(
+                from: profile, modeIDs: nil, legacyPath: relativePath, sha256: digest)
+            upgradeModeOptions = []
+        } else {
+            upgradeDraft = nil
+            upgradeModeOptions = profile.modes.map(\.id)
+        }
+    }
+
+    /// Builds the single draft from explicitly selected modes. Empty or
+    /// unknown selections throw before assigning anything, so prior drafts
+    /// and the live document survive.
+    public func applyUpgradeModeSelection(_ modeIDs: [String]) throws {
+        guard let profile = upgradeSourceProfile,
+              let path = upgradeSourcePath,
+              let digest = upgradeSourceSHA256 else {
+            throw ProfileDocumentError.invalid(reason: "No legacy profile is staged for upgrade; choose Upgrade first.")
+        }
+        let draft = try LegacyProfileUpgrader.draft(
+            from: profile, modeIDs: modeIDs, legacyPath: path, sha256: digest)
+        upgradeDraft = draft
+        upgradeModeOptions = profile.modes.map(\.id)
+    }
+
+    /// Drops upgrade state; the live document and originals are untouched.
+    public func cancelUpgrade() {
+        upgradeSourceProfile = nil
+        upgradeSourcePath = nil
+        upgradeSourceSHA256 = nil
+        upgradeDraft = nil
+        upgradeModeOptions = []
+    }
+
+    /// Explicit Needs-definition review on the pending draft. Unvalidated by
+    /// design: incomplete drafts stay editable and navigable; Save validates.
+    public func resolveUpgrade(
+        grammarID: String,
+        variantKeys: [String],
+        valuesByVariantID: [String: [String: String]]
+    ) {
+        guard var draft = upgradeDraft else { return }
+        draft.resolve(grammarID: grammarID, variantKeys: variantKeys, valuesByVariantID: valuesByVariantID)
+        upgradeDraft = draft
+    }
+
+    /// Finalizes the draft into the live document WITHOUT saving: the result
+    /// is an unsaved v3 draft (dirty) that still needs an explicit Save.
+    /// A colliding canonical file aborts later at `saveDocument` via the
+    /// external-change guard, preserving the file and this draft.
+    @discardableResult
+    public func finalizeUpgrade(catalog: FilenameGrammarCatalog) throws -> ProfileDocumentV3 {
+        guard let draft = upgradeDraft else {
+            throw ProfileDocumentError.invalid(reason: "No upgrade draft is pending; choose Upgrade first.")
+        }
+        let document = try draft.finalize(catalog: catalog)
+        applyProfileDocument(document, selectedVariantID: nil)
+        profileDirty = true
+        upgradeDraft = nil
+        upgradeSourceProfile = nil
+        upgradeSourcePath = nil
+        upgradeSourceSHA256 = nil
+        upgradeModeOptions = []
+        return document
     }
 }
