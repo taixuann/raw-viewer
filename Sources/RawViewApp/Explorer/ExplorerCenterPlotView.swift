@@ -970,25 +970,6 @@ struct ProjectGallery: View {
                 .controlSize(.small)
                 .help("Export figure, data table, or snapshot package")
 
-                Divider().frame(height: 16)
-
-                Button {
-                    if let targetID = focusedSourceID ?? selectedIDs.first {
-                        onBuildProfile?(targetID)
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "wrench.and.screwdriver")
-                        Text("Build Profile")
-                        ShortcutBadge("buildProfile")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(focusedSourceID == nil && selectedIDs.isEmpty)
-                .help("Open selected file in Profile Editor Studio to configure parsing rules")
-
                 if isLoading {
                     HStack(spacing: 6) {
                         ProgressView()
@@ -1021,7 +1002,6 @@ struct ProjectGallery: View {
             }
             .padding(.horizontal, 20)
             .frame(height: 44)
-            Divider()
             pane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack {

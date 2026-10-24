@@ -1,0 +1,395 @@
+import Foundation
+
+/// Hand-written half of the sidecar protocol. JSONL over stdio, LF-delimited.
+///
+/// `BackendCommand` and `BackendEvent` are NOT here — they are generated from
+/// protocol/schema.ts into BackendProtocol.generated.swift, together with the
+/// backend's zod schemas, so the two sides cannot drift. What stays here are
+/// the types whose Swift and TypeScript shapes genuinely differ: WireMessage
+/// encodes through a custom `Encodable`, and JSONFragment/AnyJSONObject are
+/// Swift-specific JSON passthroughs.
+///
+/// v2: the backend owns the provider catalog, credentials, OAuth, endpoint
+/// overrides, and the agentic chat loop. Swift sends provider/model ids and
+/// executes tools when the backend asks (`tool_exec` → `tool_result`).
+// MARK: - Wire messages (Turn history → backend)
+
+enum WirePart: Encodable {
+    case text(String)
+    case image(data: String, mimeType: String)
+
+    private enum CodingKeys: String, CodingKey { case type, text, data, mimeType }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .image(let data, let mimeType):
+            try container.encode("image", forKey: .type)
+            try container.encode(data, forKey: .data)
+            try container.encode(mimeType, forKey: .mimeType)
+        }
+    }
+}
+
+struct WireToolCall: Encodable {
+    var id: String
+    var name: String
+    var args: AnyJSONObject
+}
+
+enum WireMessage: Encodable {
+    case user(parts: [WirePart])
+    case assistant(text: String, thinking: String?, toolCalls: [WireToolCall])
+    case toolResult(callId: String, name: String, content: String, isError: Bool)
+
+    private enum CodingKeys: String, CodingKey {
+        case role, parts, text, thinking, toolCalls, callId, name, content, isError
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .user(let parts):
+            try container.encode("user", forKey: .role)
+            try container.encode(parts, forKey: .parts)
+        case .assistant(let text, let thinking, let toolCalls):
+            try container.encode("assistant", forKey: .role)
+            try container.encode(text, forKey: .text)
+            try container.encodeIfPresent(thinking, forKey: .thinking)
+            try container.encode(toolCalls, forKey: .toolCalls)
+        case .toolResult(let callId, let name, let content, let isError):
+            try container.encode("toolResult", forKey: .role)
+            try container.encode(callId, forKey: .callId)
+            try container.encode(name, forKey: .name)
+            try container.encode(content, forKey: .content)
+            try container.encode(isError, forKey: .isError)
+        }
+    }
+}
+
+struct WireToolDef: Encodable {
+    var name: String
+    var description: String
+    var inputSchema: AnyJSONObject
+}
+
+/// Encodes an arbitrary `[String: Any]` JSON object (tool schemas / arguments).
+struct AnyJSONObject: Encodable {
+    var object: [String: Any]
+
+    init(_ object: [String: Any]) { self.object = object }
+
+    func encode(to encoder: Encoder) throws {
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(JSONFragment.self, from: data)
+        try decoded.encode(to: encoder)
+    }
+}
+
+/// Codable passthrough for arbitrary JSON.
+indirect enum JSONFragment: Codable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONFragment])
+    case object([String: JSONFragment])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { self = .null }
+        else if let b = try? container.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? container.decode(Double.self) { self = .number(n) }
+        else if let s = try? container.decode(String.self) { self = .string(s) }
+        else if let a = try? container.decode([JSONFragment].self) { self = .array(a) }
+        else { self = .object(try container.decode([String: JSONFragment].self)) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null: try container.encodeNil()
+        case .bool(let b): try container.encode(b)
+        case .number(let n): try container.encode(n)
+        case .string(let s): try container.encode(s)
+        case .array(let a): try container.encode(a)
+        case .object(let o): try container.encode(o)
+        }
+    }
+
+    var anyValue: Any {
+        switch self {
+        case .null: return NSNull()
+        case .bool(let b): return b
+        case .number(let n): return n == n.rounded() && abs(n) < 1e15 ? Int(n) as Any : n
+        case .string(let s): return s
+        case .array(let a): return a.map(\.anyValue)
+        case .object(let o): return o.mapValues(\.anyValue)
+        }
+    }
+}
+
+/// A saved word lookup on the wire.
+///
+/// `Codable` both ways because it travels in both directions — out on save,
+/// back on list. Dates are ISO 8601 strings, matching both the column and the
+/// core's view of it; the conversion to `Date` happens at the call site, so
+/// this stays a transport type with no Foundation date semantics baked in.
+struct CatalogWordLookup: Codable {
+    var id: String
+    /// Null once the document is deleted: the column is ON DELETE SET NULL.
+    var itemId: String?
+    /// Denormalised, so a global list needs no join.
+    var itemTitle: String
+    var word: String
+    var sentence: String
+    var explanation: String
+    var createdAt: String
+}
+
+/// An annotation on the wire.
+///
+/// `Codable` both ways: read on list, written on upsert. `sortIndex` is
+/// computed in this process from PDF geometry and is opaque to the core,
+/// which only orders by it — page layout stays PDFKit's.
+struct CatalogAnnotation: Codable {
+    var id: String
+    var itemId: String
+    var attachmentId: String
+    var key: String
+    var type: String
+    var authorName: String?
+    var text: String?
+    var comment: String?
+    var color: String
+    var pageLabel: String?
+    /// `PPPPP|YYYYYY|XXXXXX`, from `AnnotationStore.makeSortIndex`.
+    var sortIndex: String
+    var positionKind: String
+    var positionJson: String
+    var styleJson: String?
+    var source: String
+    var sourceKey: String?
+    var createdAt: String
+    var updatedAt: String
+    /// Tombstone marker; nil while live.
+    var deletedAt: String?
+}
+
+// MARK: - Event payloads
+
+struct BackendToolCall: Decodable {
+    var id: String
+    var name: String
+    var args: [String: JSONFragment]
+}
+
+struct BackendPromptOption: Decodable, Identifiable {
+    var id: String
+    var label: String
+}
+
+// MARK: - Provider catalog payloads
+
+struct BackendModelSummary: Decodable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var reasoning: Bool
+    var contextWindow: Int?
+    var maxTokens: Int?
+    var vision: Bool
+    var supportedReasoningEfforts: [String]?
+    var inputModalities: [String]?
+}
+
+struct BackendProviderAuth: Decodable, Hashable {
+    var kind: String  // "api-key" | "oauth" | "none"
+    var oauthAvailable: Bool
+    var configured: Bool
+    var source: String?
+}
+
+struct BackendProviderSummary: Decodable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var models: [BackendModelSummary]
+    var defaultModel: String?
+    var auth: BackendProviderAuth
+    var isLocal: Bool
+    /// Defined by the user's models.json rather than shipped with the build.
+    var custom: Bool
+    var baseUrlOverride: String?
+    var localUrl: String?
+}
+
+/// A chat session's metadata on the wire. The transcript is a JSONL file the
+/// shell owns; this row is the index over it.
+struct CatalogConversation: Codable {
+    var id: String
+    /// Null for chats not about one document.
+    var itemId: String?
+    /// The collection a library chat is scoped to; nil for the whole library.
+    var collectionId: String?
+    var title: String
+    var messageCount: Int
+    var createdAt: String
+    var updatedAt: String
+}
+
+/// A collection on the wire. `filterRules` is an opaque string — the rule
+/// language belongs to whoever evaluates it, which is this side.
+struct CatalogCollection: Codable {
+    var id: String
+    var name: String
+    var icon: String
+    var sortOrder: Int
+    /// Nil at the top level.
+    var parentId: String?
+    var isSmart: Bool
+    var isSystem: Bool
+    var filterRules: String?
+    var source: String?
+    var sourceKey: String?
+    var createdAt: String
+    var updatedAt: String
+}
+
+/// One file attached to an item.
+struct CatalogAttachment: Codable {
+    var id: String
+    var itemId: String
+    var storageKey: String
+    var fileName: String
+    var contentType: String
+    var linkMode: String
+    var sourceUrl: String?
+    var fileSize: Int
+    var pageCount: Int
+    var isPrimary: Bool
+}
+
+/// A tag or status value, joined with its property definition.
+struct CatalogPropertyValue: Codable {
+    var id: String
+    var propertyId: String
+    var propertyName: String
+    var propertyType: String
+    var optionId: String?
+    var optionName: String?
+    var optionColorHex: String?
+    var textValue: String?
+}
+
+/// One allowed value of a select-type property.
+struct CatalogPropertyOption: Codable {
+    var id: String
+    var propertyId: String
+    var name: String
+    var colorHex: String
+    var position: Int
+}
+
+/// A tag or status column. `type` is one of the `PropertyType` raw values.
+struct CatalogProperty: Codable {
+    var id: String
+    var name: String
+    var type: String
+    var icon: String
+    var position: Int
+    /// Built in; the UI refuses to delete these.
+    var isSystem: Bool
+    var options: [CatalogPropertyOption]
+}
+
+/// A library item with everything hanging off it.
+///
+/// Covers are absent by design — at ten thousand items, carrying image data
+/// here would pin hundreds of megabytes. Views load a cover lazily by storage
+/// key instead. `citationJson` is CSL JSON, opaque on the wire.
+struct CatalogItem: Codable {
+    var id: String
+    var storageKey: String
+    var title: String
+    var author: String
+    var lastOpenedAt: String?
+    var lastPosition: Double?
+    var citeKey: String?
+    var source: String?
+    var sourceKey: String?
+    var extra: String?
+    var processingStatus: String
+    /// Tombstone while in the trash.
+    var deletedAt: String?
+    var createdAt: String
+    var updatedAt: String
+    var attachments: [CatalogAttachment]
+    var collectionIds: [String]
+    var citationJson: String?
+    var propertyValues: [CatalogPropertyValue]
+}
+
+/// A tool a skill needs, and whether this machine has it.
+struct BackendSkillBin: Codable {
+    var name: String
+    var description: String?
+    /// Absolute path, or nil when the tool is not installed.
+    var path: String?
+    /// Package-manager coordinates, keyed by manager ("brew", "cargo", …).
+    var install: [String: String]?
+}
+
+/// An environment variable a skill needs, held in this machine's keychain.
+struct BackendSkillEnv: Codable {
+    var name: String
+    var description: String?
+    var required: Bool
+}
+
+/// A skill as the settings UI shows it.
+///
+/// Resolved by the core, including whether each required tool is present: the
+/// row a person reads and the listing the model gets come from one reading of
+/// the same directories, so they cannot disagree.
+struct BackendSkill: Codable {
+    var name: String
+    /// Display name from the frontmatter's `title`, falling back to `name`.
+    var title: String
+    var description: String
+    /// How much of the document to attach while this skill is active.
+    var contextMode: String
+    /// Sort position in the chat picker; 99 when unstated.
+    var order: Int
+    var filePath: String
+    var baseDir: String
+    /// "bundled" or "user".
+    var source: String
+    var enabled: Bool
+    /// Invoked only on request; kept out of the model's listing.
+    var disableModelInvocation: Bool
+    var version: String?
+    /// "symbol" (an SF Symbol) or "url".
+    var iconType: String?
+    var iconValue: String?
+    var authorName: String?
+    var bins: [BackendSkillBin]
+    var envs: [BackendSkillEnv]
+}
+
+/// A malformed or duplicate skill, reported rather than silently dropped.
+struct BackendSkillAdvisory: Codable {
+    var path: String
+    var message: String
+}
+
+/// A tool the core implements, as the shell must declare it to the model.
+struct BackendToolDefinition: Codable {
+    var name: String
+    var description: String
+    /// "readOnly", "write" or "dangerous" — what the permission level gates on.
+    var category: String
+    /// JSON Schema for the tool's arguments, passed through untouched.
+    var inputSchema: JSONFragment
+}

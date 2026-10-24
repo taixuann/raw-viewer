@@ -1,0 +1,445 @@
+import Foundation
+import OSLog
+
+/// Owns the sidecar process and speaks JSON-RPC 2.0 to it over stdio.
+///
+/// The peer is symmetric: both sides send requests, and a reverse call
+/// (`tool/execute`, `oauth/prompt`) is an ordinary request that happens to
+/// arrive rather than depart. That is why there is one `pending` map instead
+/// of the three bespoke correlation tables the previous protocol needed, and
+/// why cancellation is one notification rather than a prefix scan over
+/// string-concatenated keys.
+///
+/// Three call shapes, matching the spec rather than our old ad-hoc scheme:
+///  - `call(_:params:as:)`   — request, awaits a typed result or throws RPCErrorObject
+///  - `stream(_:params:as:)` — request whose progress notifications are yielded
+///                             until the response finishes the stream
+///  - `notify(_:params:)`    — notification, no reply expected
+/// Inbound requests are answered only when they are scoped to a streaming
+/// request of ours (`tool/execute`); anything else gets methodNotFound.
+actor NodeBackend {
+    static let shared = NodeBackend()
+
+    private static let log = Logger(subsystem: "com.rawview.RawView", category: "NodeBackend")
+    private static let maxSpawnAttempts = 3
+    private static let writeQueue = DispatchQueue(label: "com.rawview.NodeBackend.stdin")
+    /// Ceiling for a plain request. Generous: model-catalog refreshes and OAuth
+    /// token exchanges both hit the network. Streaming calls are exempt — a chat
+    /// turn may idle while the user decides on a tool confirmation.
+    private static let requestTimeout = Duration.seconds(30)
+
+    private var process: Process?
+    private var stdinHandle: FileHandle?
+    private var nextId = 0
+    private var spawnAttempts = 0
+    private var handshaken = false
+
+    /// Requests we sent, awaiting their response. Both plain and streaming
+    /// calls live here; a streaming one also has an entry in `progress`.
+    private var pending: [String: CheckedContinuation<JSONFragment?, Error>] = [:]
+    /// Streaming calls, by request id, fed by notifications carrying that token.
+    private var progress: [String: AsyncThrowingStream<RPCStreamEvent, Error>.Continuation] = [:]
+    /// Handlers for requests the sidecar sends us.
+
+    // MARK: - Public
+
+    private func nextRequestId() -> String {
+        nextId += 1
+        return "c\(nextId)"
+    }
+
+    /// How many catalog migrations the sidecar knows, from the handshake.
+    /// Recorded in a backup so an older build can refuse a newer library.
+    private(set) var schemaVersion: Int = 0
+
+    /// One start at a time, however many callers ask at once.
+    ///
+    /// `refresh()` asks for items, trashed items, collections and properties
+    /// concurrently, and every one of them calls `ensureRunning`. Without this
+    /// they each spawn — and since `spawn()` terminates whatever is already
+    /// running, the second kills the first's process out from under its
+    /// handshake, the third kills the second's, and the library comes up empty
+    /// with "backend is not running" three times in the same second.
+    private var starting: Task<Bool, Never>?
+
+    /// True when the sidecar is running and answered the ping handshake.
+    func ensureRunning() async -> Bool {
+        if handshaken, process?.isRunning == true { return true }
+        if let starting { return await starting.value }
+
+        guard spawnAttempts < Self.maxSpawnAttempts else { return false }
+        let task = Task { await self.start() }
+        starting = task
+        let started = await task.value
+        starting = nil
+        return started
+    }
+
+    private func start() async -> Bool {
+        spawnAttempts += 1
+        do {
+            try spawn()
+        } catch {
+            Self.log.error("sidecar spawn failed: \(error.localizedDescription)")
+            return false
+        }
+        handshaken = await pingHandshake()
+        if handshaken {
+            spawnAttempts = 0
+            Self.log.info("sidecar handshake OK")
+        } else {
+            Self.log.error("sidecar handshake failed")
+            terminate()
+        }
+        return handshaken
+    }
+
+    /// A request that returns once. Throws `RPCErrorObject` when the sidecar
+    /// answers with an error — the code is what lets callers branch.
+    func call<P: Encodable, R: Decodable>(
+        _ method: String, params: P, as: R.Type
+    ) async throws -> R {
+        guard await ensureRunning() else { throw NodeBackendError.notRunning }
+        let id = nextRequestId()
+        let deadline = Task {
+            try await Task.sleep(for: Self.requestTimeout)
+            self.failPending(id: id, with: NodeBackendError.timedOut)
+        }
+        defer { deadline.cancel() }
+        let result = try await send(id: id, method: method, params: params)
+        return try RPCCoding.decode(R.self, from: result)
+    }
+
+    /// A request whose only outcome is success or an error.
+    func call<P: Encodable>(_ method: String, params: P) async throws {
+        _ = try await call(method, params: params, as: RPCEmpty.self)
+    }
+
+    /// A request whose progress notifications are delivered as they arrive.
+    /// The stream finishes when the response lands and throws when it is an
+    /// error. Cancelling the consumer sends `$/cancelRequest`.
+    func stream<P: Encodable>(
+        _ method: String, params: P
+    ) async -> AsyncThrowingStream<RPCStreamEvent, Error> {
+        guard await ensureRunning() else {
+            return AsyncThrowingStream { $0.finish(throwing: NodeBackendError.notRunning) }
+        }
+        let id = nextRequestId()
+        return AsyncThrowingStream { continuation in
+            continuation.onTermination = { termination in
+                if case .cancelled = termination {
+                    Task { await self.cancel(id: id) }
+                }
+            }
+            Task {
+                self.attachProgress(id: id, continuation: continuation)
+                do {
+                    _ = try await self.send(id: id, method: method, params: params)
+                    self.finishProgress(id: id, error: nil)
+                } catch {
+                    self.finishProgress(id: id, error: error)
+                }
+            }
+        }
+    }
+
+    /// Answer a reverse call that arrived on a stream.
+    func respond<R: Encodable>(to id: String, with result: R) {
+        guard let fragment = try? RPCCoding.fragment(result) else {
+            respondError(to: id, code: RPC.ErrorCode.internalError, message: "could not encode result")
+            return
+        }
+        try? write(.response(id: id, result: fragment))
+    }
+
+    func respondError(to id: String, code: Int, message: String) {
+        try? write(.failure(id: id, code: code, message: message))
+    }
+
+    /// Fire-and-forget. No id, so the peer must not reply.
+    func notify<P: Encodable>(_ method: String, params: P) async {
+        guard let fragment = try? RPCCoding.fragment(params) else { return }
+        try? write(.notification(method: method, params: fragment))
+    }
+
+    func shutdown() { terminate() }
+
+    // MARK: - Request plumbing
+
+    private func send<P: Encodable>(id: String, method: String, params: P) async throws -> JSONFragment? {
+        let fragment = try RPCCoding.fragment(params)
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[id] = continuation
+            do {
+                try write(.request(id: id, method: method, params: fragment))
+            } catch {
+                pending.removeValue(forKey: id)
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    private func attachProgress(
+        id: String, continuation: AsyncThrowingStream<RPCStreamEvent, Error>.Continuation
+    ) {
+        progress[id] = continuation
+    }
+
+    private func finishProgress(id: String, error: Error?) {
+        guard let continuation = progress.removeValue(forKey: id) else { return }
+        if let error { continuation.finish(throwing: error) } else { continuation.finish() }
+    }
+
+    private func failPending(id: String, with error: Error) {
+        pending.removeValue(forKey: id)?.resume(throwing: error)
+    }
+
+    /// One notification replaces the previous protocol's per-request abort
+    /// command plus the prefix scan that cleaned up its children.
+    private func cancel(id: String) async {
+        guard pending[id] != nil else { return }
+        await notify(RPC.Method.cancelRequest, params: RPC.CancelRequestParams(id: id))
+    }
+
+    private func pingHandshake() async -> Bool {
+        do {
+            let id = nextRequestId()
+            let deadline = Task {
+                try await Task.sleep(for: .seconds(5))
+                self.failPending(id: id, with: NodeBackendError.timedOut)
+            }
+            defer { deadline.cancel() }
+            let raw = try await send(id: id, method: RPC.Method.ping, params: RPC.PingParams())
+            let result = try RPCCoding.decode(RPC.PingResult.self, from: raw)
+            if result.protocol != RPC.version {
+                Self.log.error("protocol mismatch: sidecar \(result.protocol), shell \(RPC.version)")
+                return false
+            }
+            schemaVersion = result.schemaVersion
+            Self.log.info("sidecar \(result.backend)")
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func write(_ envelope: RPCEnvelope) throws {
+        guard let stdinHandle else { throw NodeBackendError.notRunning }
+        var data = try JSONEncoder().encode(envelope)
+        data.append(0x0A)
+        let handle = stdinHandle
+        // Off the actor: a pipe blocks its writer once the reader is ~64 KB
+        // behind, and one frame can exceed that on its own. Blocking here would
+        // stall every other call into this actor, including the response the
+        // sidecar is waiting for before it drains its input. The queue is
+        // serial, so frames still arrive in order.
+        Self.writeQueue.async {
+            do { try handle.write(contentsOf: data) }
+            catch { Self.log.error("stdin write failed: \(error.localizedDescription)") }
+        }
+    }
+
+    // MARK: - Incoming
+
+    private func dispatch(_ envelope: RPCEnvelope) {
+        switch envelope.kind {
+        case .response(let id):
+            pending.removeValue(forKey: id)?.resume(returning: envelope.result)
+
+        case .failure(let id, let error):
+            pending.removeValue(forKey: id)?.resume(throwing: error)
+
+        case .notification(let method):
+            // Progress is addressed by the token naming the request it belongs to.
+            guard case .object(let fields)? = envelope.params,
+                  case .string(let token)? = fields["token"],
+                  let continuation = progress[token] else { return }
+            continuation.yield(.notification(method: method, params: envelope.params))
+
+        case .request(let id, let method):
+            // Scoped reverse call: if the params name a request of ours that is
+            // still streaming, its consumer owns the answer.
+            if case .object(let fields)? = envelope.params,
+               case .string(let token)? = fields["token"],
+               let continuation = progress[token] {
+                continuation.yield(.request(id: id, method: method, params: envelope.params))
+                return
+            }
+            try? write(.failure(id: id, code: RPC.ErrorCode.methodNotFound,
+                                message: "no handler for \(method)"))
+
+        case .malformed:
+            Self.log.error("malformed envelope")
+        }
+    }
+
+    // MARK: - Process lifecycle
+
+    private func spawn() throws {
+        terminate()
+        guard let binary = Self.findBinary() else { throw NodeBackendError.scriptNotFound }
+
+        let proc = Process()
+        proc.executableURL = binary
+        let agentDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".rawviewer/agent")
+        try? FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+        let dummyLibrary = agentDir.appendingPathComponent("library.sqlite")
+
+        proc.arguments = [
+            "--data-dir", agentDir.path,
+            "--library", dummyLibrary.path,
+        ]
+        // Prompt and skill files, when the bundle carries them. Absent in a
+        // checkout build, where the sidecar finds them by walking up from its
+        // own source path.
+        if let prompts = Bundle.main.url(forResource: "prompts", withExtension: nil) {
+            proc.arguments? += ["--prompts", prompts.path]
+        }
+        if let skills = Bundle.main.url(forResource: "skills", withExtension: nil) {
+            proc.arguments? += ["--skills", skills.path]
+        }
+        let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
+        proc.standardInput = stdin
+        proc.standardOutput = stdout
+        proc.standardError = stderr
+
+        // Split into lines HERE, on the reader's own serial queue, and hand the
+        // actor whole messages.
+        //
+        // The obvious version — `Task { await self.receive(chunk) }` per read —
+        // is wrong, and was wrong quietly for months: tasks enqueued on an actor
+        // do not run in the order they were created, so two chunks of one
+        // response can be appended back to front. It never showed while the
+        // largest thing crossing this pipe was a chat delta. The library moved
+        // into the sidecar and `items/list` became a megabyte — 65 chunks, and
+        // losing the order of any one of them corrupts the whole message.
+        let assembler = LineAssembler()
+        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let lines = assembler.take(handle.availableData)
+            guard let self, !lines.isEmpty else { return }
+            Task { await self.receive(lines) }
+        }
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            if let line = String(data: handle.availableData, encoding: .utf8), !line.isEmpty {
+                Self.log.debug("\(line.trimmingCharacters(in: .newlines))")
+            }
+        }
+        proc.terminationHandler = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.processDied() }
+        }
+
+        try proc.run()
+        process = proc
+        stdinHandle = stdin.fileHandleForWriting
+        Self.log.info("sidecar spawned: \(binary.path)")
+    }
+
+    private func processDied() {
+        handshaken = false
+        stdinHandle = nil
+        process = nil
+        let waitingRequests = pending
+        pending = [:]
+        for (_, continuation) in waitingRequests {
+            continuation.resume(throwing: NodeBackendError.crashed)
+        }
+        let waitingStreams = progress
+        progress = [:]
+        for (_, continuation) in waitingStreams {
+            continuation.finish(throwing: NodeBackendError.crashed)
+        }
+        Self.log.error("sidecar exited")
+    }
+
+    private func terminate() {
+        guard let process else { return }
+        process.terminationHandler = nil
+        try? stdinHandle?.close()
+        if process.isRunning { process.terminate() }
+        self.process = nil
+        stdinHandle = nil
+        handshaken = false
+    }
+
+    // MARK: - Framing
+
+    /// Decode and dispatch whole messages. Order between them does not matter:
+    /// a JSON-RPC answer is correlated by its id, not by when it arrived.
+    private func receive(_ lines: [Data]) {
+        for line in lines {
+            guard let envelope = try? JSONDecoder().decode(RPCEnvelope.self, from: line) else {
+                Self.log.error("undecodable envelope: \(String(data: line, encoding: .utf8) ?? "?")")
+                continue
+            }
+            dispatch(envelope)
+        }
+    }
+
+    // MARK: - Discovery
+
+    /// The sidecar is a self-contained executable produced by `bun build
+    /// --compile` (backend/scripts/build-binary.sh), so the Bun runtime is
+    /// inside it. Nothing is probed on the user's machine: there is no `node`
+    /// lookup and no minimum runtime version. This is what Dia ships too — its
+    /// agent-server, handler and claude binaries are all compiled the same way.
+    private static func findBinary() -> URL? {
+        if let url = Bundle.main.url(forResource: "oak-backend", withExtension: nil),
+           FileManager.default.isExecutableFile(atPath: url.path) {
+            return url
+        }
+        let candidates = [
+            "/tmp/RawView.app/Contents/Resources/oak-backend",
+            "/Users/tai/oakreader-src/backend/dist/oak-backend"
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return nil
+    }
+}
+
+enum NodeBackendError: LocalizedError {
+    case scriptNotFound
+    case notRunning
+    case crashed
+    case timedOut
+    case commandFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .scriptNotFound: return "The AI backend executable is missing from the app bundle."
+        case .notRunning: return "AI backend is not running"
+        case .crashed: return "AI backend exited unexpectedly"
+        case .timedOut: return "AI backend stopped responding"
+        case .commandFailed(let message): return message
+        }
+    }
+}
+
+/// Reassembles newline-delimited messages from arbitrary pipe reads.
+///
+/// Owned by one `FileHandle.readabilityHandler`, which macOS serialises per
+/// handle, so the buffer needs no lock — and, more to the point, the bytes
+/// cannot be reordered. That is the whole job: a 16 KB read is not a message,
+/// and a message is not a read.
+private final class LineAssembler {
+    private var buffer = Data()
+
+    /// Append a read and return whatever complete lines it completed.
+    /// Strict JSONL: split on LF only, never on U+2028/U+2029.
+    func take(_ data: Data) -> [Data] {
+        guard !data.isEmpty else { return [] }
+        buffer.append(data)
+
+        var lines: [Data] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<newline)
+            buffer.removeSubrange(buffer.startIndex...newline)
+            if !line.isEmpty { lines.append(line) }
+        }
+        return lines
+    }
+}

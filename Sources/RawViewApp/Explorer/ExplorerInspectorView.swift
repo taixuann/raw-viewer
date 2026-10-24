@@ -32,6 +32,19 @@ struct InspectorPane: View {
     var activeSnapshotID: UUID? = nil
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
     var onBuildProfile: ((String?) -> Void)? = nil
+    /// Task 7: variant-declared axis choices for the focused source. Menus
+    /// appear only when multiple choices exist; a nil selectedY means the
+    /// Default series (variant multi-Y defaults). Missing IDs surface via
+    /// axisNote with an explicit reset; never substituted.
+    var eligibleX: [String] = []
+    var eligibleY: [String] = []
+    var defaultY: [String] = []
+    var selectedX: String? = nil
+    var selectedY: [String]? = nil
+    var axisNote: String? = nil
+    var onSelectX: ((String) -> Void)? = nil
+    var onSelectY: (([String]?) -> Void)? = nil
+    var onResetAxes: (() -> Void)? = nil
 
     @State private var isSeriesExpanded = true
     @State private var isDataMappingExpanded = true
@@ -50,8 +63,6 @@ struct InspectorPane: View {
             }
             .padding(.horizontal, 14)
             .frame(height: 44)
-
-            Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -411,10 +422,54 @@ struct InspectorPane: View {
     private var axesSection: some View {
         DisclosureGroup(isExpanded: $isAxesExpanded) {
             VStack(alignment: .leading, spacing: 8) {
+                if eligibleX.count >= 2 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("X CHANNEL")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        Picker("X Channel", selection: Binding(
+                            get: { selectedX ?? measurement?.view.x ?? "" },
+                            set: { onSelectX?($0) }
+                        )) {
+                            ForEach(eligibleX, id: \.self) { id in
+                                Text(channelOptionLabel(id)).tag(id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                }
+                if eligibleY.count >= 2 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Y CHANNEL")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        Picker("Y Channel", selection: Binding(
+                            get: { selectedY?.first ?? "default" },
+                            set: { key in onSelectY?(key == "default" ? nil : [key]) }
+                        )) {
+                            Text(defaultSeriesLabel).tag("default")
+                            ForEach(eligibleY, id: \.self) { id in
+                                Text(channelOptionLabel(id)).tag(id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                }
                 axisControl("X", absolute: $xAbsolute, scale: $xScale)
                 axisControl("Y", absolute: $yAbsolute, scale: $yScale)
                 Text("Absolute applies before the scale; log needs positive values.")
                     .font(.caption2).foregroundStyle(.secondary)
+                if let axisNote {
+                    Text(axisNote)
+                        .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    Button("Reset to Variant Defaults") { onResetAxes?() }
+                        .font(.caption2).buttonStyle(.bordered).controlSize(.small)
+                } else if selectedX != nil || selectedY != nil {
+                    Button("Reset to Variant Defaults") { onResetAxes?() }
+                        .font(.caption2).buttonStyle(.bordered).controlSize(.small)
+                }
             }
             .padding(.top, 4)
         } label: {
@@ -422,6 +477,21 @@ struct InspectorPane: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.primary.opacity(0.85))
         }
+    }
+
+    /// Channel menu label. Stable duplicate labels (same text, distinct IDs)
+    /// stay selectable via the ID qualifier.
+    private func channelOptionLabel(_ id: String) -> String {
+        guard let channel = measurement?.channel(named: id) else { return id }
+        let collisions = measurement?.channels.filter { $0.label == channel.label }.count ?? 0
+        return collisions > 1 ? "\(channel.label) (\(id))" : channel.label
+    }
+
+    /// The preserved multi-Y defaults, shown as one Default-series choice.
+    private var defaultSeriesLabel: String {
+        let ids = defaultY.isEmpty ? (measurement?.view.y ?? []) : defaultY
+        let labels = ids.map { measurement?.channel(named: $0)?.label ?? $0 }
+        return labels.isEmpty ? "Default series" : "Default series (\(labels.joined(separator: " + ")))"
     }
 
     private func axisControl(_ name: String, absolute: Binding<Bool>, scale: Binding<AxisScale>) -> some View {

@@ -6,7 +6,7 @@ struct ExplorerToolbarCommands: Commands {
     @ObservedObject var model: RawViewModel
 
     var body: some Commands {
-        CommandGroup(replacing: .newItem) {
+        CommandGroup(after: .newItem) {
             Button("Open Project…") {
                 model.openProject()
             }
@@ -46,6 +46,11 @@ struct ExplorerToolbarCommands: Commands {
                 model.toggleInspector()
             }
             .keyboardShortcut("i", modifiers: [.command])
+
+            Button("Toggle AI Assistant") {
+                model.toggleAIAssistant()
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
         }
 
         CommandMenu("Project") {

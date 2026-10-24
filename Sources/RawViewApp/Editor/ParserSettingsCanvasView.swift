@@ -14,6 +14,18 @@ struct ParserSettingsCanvasView: View {
     var onUpdateColumn: ((Int, ColumnDefinition) -> Void)? = nil
     var onRunAutoDetect: (() -> Void)?
     var onApplyCustomStructure: ((String, String, Int?, Int, Set<Int>) -> Void)?
+    // MARK: - Task 3: selected-variant Matching & Layout (all optional)
+    var variantRows: RowLocatorsV3? = nil
+    var variantMatch: VariantMatchV3? = nil
+    var variantExtensions: [String] = []
+    var variantEncodings: [String] = []
+    var variantColumns: [ProfileColumnV3] = []
+    var onSetVariantHeader: ((HeaderLocatorV3) -> Void)? = nil
+    var onSetVariantDataStart: ((DataStartV3) -> Void)? = nil
+    var onSetVariantPrefixes: ((String?, String?) -> Void)? = nil
+    var onSetVariantStream: (([String], [String]) -> Void)? = nil
+    var onSetVariantMatch: (([String]?, [String]?) -> Void)? = nil
+    var onSetVariantExcluded: (([Int]) -> Void)? = nil
 
     @State private var selectedDelimiter: String = ","
     @State private var customDelimiterText: String = ""
@@ -29,12 +41,36 @@ struct ParserSettingsCanvasView: View {
     @State private var selectedLines: Set<Int> = [] // 1-based line numbers for Shift/Cmd selection
     @State private var lastClickedLine: Int? = nil // Selection anchor for Shift+Click range
     @State private var isDataExpanded: Bool = false // Toggle between head+tail inspection and full stream
-    @State private var previewRowCount: Int = 50 // Number of data preview rows before folding
+    @State private var previewRowCount: Int = 25 // Number of data preview rows before folding
 
     @State private var activeCellPopover: CellTarget? = nil
 
     @State private var selectedColumns: Set<Int> = [] // 0-based column indices
     @State private var lastClickedColumn: Int? = nil // Selection anchor for Shift+Click range
+    // MARK: - Task 3: Matching & Layout draft fields
+    private enum HeaderMode: String, CaseIterable, Identifiable {
+        case none = "None"
+        case row = "Fixed row"
+        case firstNonBlank = "First non-blank"
+        case prefix = "Marker prefix"
+        var id: String { rawValue }
+    }
+    private enum DataStartMode: String, CaseIterable, Identifiable {
+        case afterHeader = "After header"
+        case row = "Fixed row"
+        var id: String { rawValue }
+    }
+    @State private var headerMode: HeaderMode = .firstNonBlank
+    @State private var headerValueText: String = ""
+    @State private var dataStartMode: DataStartMode = .afterHeader
+    @State private var dataStartRowText: String = ""
+    @State private var dataPrefixText: String = "(none)"
+    @State private var commentPrefixText: String = ""
+    @State private var excludedText: String = ""
+    @State private var extensionsText: String = ""
+    @State private var encodingsText: String = ""
+    @State private var matchFileText: String = ""
+    @State private var matchContentText: String = ""
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @State private var hoveredColumn: Int? = nil
     @State private var hoveredToolbarRole: ColumnRole? = nil
@@ -252,23 +288,20 @@ struct ParserSettingsCanvasView: View {
                 onSetSelectedColumnsRole: { isX, isY in setSelectedColumnsRole(isX: isX, isY: isY) },
                 onSetSelectedColumnsProgression: { type, behavior in setSelectedColumnsProgression(type: type, behavior: behavior) },
                 rolePillText: rolePillText,
-                onRunAutoDetect: {
-                    onRunAutoDetect?()
-                    selectedDelimiter = delimiter
-                    selectedDecimal = decimalSeparator
-                    headerLineChoice = currentHeaderLine ?? 0
-                    headerLineText = headerLineChoice <= 0 ? "" : "\(headerLineChoice)"
-                    dataStartLineChoice = currentDataStartLine
-                    dataStartLineText = "\(dataStartLineChoice)"
-                    skippedMetadataLines.removeAll()
-                    selectedColumns.removeAll()
-                    selectedLines.removeAll()
-                },
                 onApplyCustomStructure: {
-                    let finalDelim = selectedDelimiter == "CUSTOM" ? customDelimiterText : selectedDelimiter
-                    onApplyCustomStructure?(finalDelim, selectedDecimal, effectiveHeaderLine, effectiveDataStartLine, skippedMetadataLines)
+                    applyLiveReparse()
                 }
             )
+
+            Divider()
+
+            // MARK: - Matching & Layout (selected variant, collapsed by default)
+            DisclosureGroup("Matching & Layout") {
+                matchingLayoutSection
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
 
             Divider()
 
@@ -363,7 +396,45 @@ struct ParserSettingsCanvasView: View {
             headerLineText = headerLineChoice <= 0 ? "" : "\(headerLineChoice)"
             dataStartLineChoice = currentDataStartLine
             dataStartLineText = "\(dataStartLineChoice)"
+            syncLayoutFields()
         }
+        .onChange(of: selectedDelimiter) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: customDelimiterText) { _, _ in
+            if selectedDelimiter == "CUSTOM" {
+                applyLiveReparse()
+            }
+        }
+        .onChange(of: selectedDecimal) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: headerLineChoice) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: dataStartLineChoice) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: skippedMetadataLines) { _, _ in
+            applyLiveReparse()
+        }
+        .onChange(of: variantRows) { _, _ in
+            syncLayoutFields()
+        }
+        .onChange(of: variantMatch) { _, _ in
+            syncLayoutFields()
+        }
+        .onChange(of: variantExtensions) { _, _ in
+            syncLayoutFields()
+        }
+        .onChange(of: variantEncodings) { _, _ in
+            syncLayoutFields()
+        }
+    }
+
+    private func applyLiveReparse() {
+        let finalDelim = selectedDelimiter == "CUSTOM" ? customDelimiterText : selectedDelimiter
+        onApplyCustomStructure?(finalDelim, selectedDecimal, effectiveHeaderLine, effectiveDataStartLine, skippedMetadataLines)
     }
 
     // MARK: - Column Skipping & Metadata Helpers
@@ -472,10 +543,13 @@ struct ParserSettingsCanvasView: View {
     private func rolePillText(col: ColumnDefinition) -> String {
         if col.isSkipped || col.role == .skip { return "⊘ Skip" }
         if col.role == .progression {
+            let behaviorTag = (col.progressionBehavior == .continuous) ? "Cont" : "Disc"
             switch col.progressionType {
-            case .time: return "Time"
-            case .index: return "Scan"
-            case .custom: return col.customProgressionName?.isEmpty == false ? col.customProgressionName! : "Custom"
+            case .time: return "⏱️ Time • \(behaviorTag)"
+            case .index: return "⏱️ Scan • \(behaviorTag)"
+            case .custom:
+                let name = col.customProgressionName?.isEmpty == false ? col.customProgressionName! : "Custom"
+                return "⏱️ \(name) • \(behaviorTag)"
             case .none: return "Prog"
             }
         }
@@ -637,5 +711,259 @@ struct ParserSettingsCanvasView: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
+    }
+
+    // MARK: - Task 3: Matching & Layout section
+
+    private func syncLayoutFields() {
+        if let rows = variantRows {
+            switch rows.header {
+            case .none: headerMode = .none; headerValueText = ""
+            case .row(let r): headerMode = .row; headerValueText = "\(r)"
+            case .firstNonBlank: headerMode = .firstNonBlank; headerValueText = ""
+            case .prefix(let p): headerMode = .prefix; headerValueText = p
+            }
+            switch rows.dataStart {
+            case .afterHeader: dataStartMode = .afterHeader; dataStartRowText = ""
+            case .row(let r): dataStartMode = .row; dataStartRowText = "\(r)"
+            }
+            dataPrefixText = rows.dataPrefix ?? "(none)"
+            commentPrefixText = rows.commentPrefix ?? ""
+            excludedText = rows.excludedMetadata.map(String.init).joined(separator: ", ")
+        }
+        extensionsText = variantExtensions.joined(separator: ", ")
+        encodingsText = variantEncodings.joined(separator: ", ")
+        matchFileText = variantMatch?.filenameContainsAll?.joined(separator: ", ") ?? ""
+        matchContentText = variantMatch?.contentContainsAny?.joined(separator: ", ") ?? ""
+    }
+
+    private func splitList(_ text: String) -> [String] {
+        text.components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func applyHeaderMode() {
+        switch headerMode {
+        case .none: onSetVariantHeader?(.none)
+        case .firstNonBlank: onSetVariantHeader?(.firstNonBlank)
+        case .row:
+            let fallback: Int
+            if case .row(let r) = variantRows?.header { fallback = r } else { fallback = currentHeaderLine ?? 1 }
+            onSetVariantHeader?(.row(max(1, Int(headerValueText) ?? fallback)))
+        case .prefix:
+            let p = headerValueText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !p.isEmpty { onSetVariantHeader?(.prefix(p)) }
+        }
+    }
+
+    private func applyDataStartMode() {
+        switch dataStartMode {
+        case .afterHeader: onSetVariantDataStart?(.afterHeader)
+        case .row:
+            let fallback: Int
+            if case .row(let r) = variantRows?.dataStart { fallback = r } else { fallback = currentDataStartLine }
+            onSetVariantDataStart?(.row(max(1, Int(dataStartRowText) ?? fallback)))
+        }
+    }
+
+    private func applyPrefixes() {
+        let data: String? = (dataPrefixText == "(none)") ? nil : dataPrefixText
+        let comment: String? = commentPrefixText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil : commentPrefixText.trimmingCharacters(in: .whitespacesAndNewlines)
+        onSetVariantPrefixes?(data, comment)
+    }
+
+    private func columnSourceSummary(_ column: ProfileColumnV3) -> String {
+        var parts: [String] = []
+        if let pos = column.source.column { parts.append("col \(pos)") }
+        if let header = column.source.header { parts.append("header \"\(header)\"") }
+        for alias in column.source.aliases { parts.append("aka \"\(alias)\"") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func isColumnRequired(_ column: ProfileColumnV3) -> Bool {
+        if let idx = columns.firstIndex(where: { $0.name == column.id }) {
+            return !columns[idx].isOptional
+        }
+        return column.required
+    }
+
+    private func setColumnRequired(_ column: ProfileColumnV3, required: Bool) {
+        guard let idx = columns.firstIndex(where: { $0.name == column.id }) else { return }
+        var updated = columns[idx]
+        updated.isOptional = !required
+        onUpdateColumn?(idx, updated)
+    }
+
+    private var matchingLayoutSection: some View {
+        Group {
+            if variantRows == nil {
+                Text("Load a v3 profile to edit matching and layout for the selected variant.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Row boundaries
+                    HStack(spacing: 8) {
+                        Text("Header:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        Picker("", selection: $headerMode) {
+                            ForEach(HeaderMode.allCases) { m in Text(m.rawValue).tag(m) }
+                        }
+                        .pickerStyle(.menu)
+                        .font(.system(size: 10))
+                        .frame(width: 130)
+                        if headerMode == .row || headerMode == .prefix {
+                            TextField(headerMode == .row ? "row" : "marker", text: $headerValueText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 10, design: .monospaced))
+                                .frame(width: 90)
+                                .onSubmit { applyHeaderMode() }
+                        }
+                        Button("Apply") { applyHeaderMode() }
+                            .controlSize(.mini)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Data start:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        Picker("", selection: $dataStartMode) {
+                            ForEach(DataStartMode.allCases) { m in Text(m.rawValue).tag(m) }
+                        }
+                        .pickerStyle(.menu)
+                        .font(.system(size: 10))
+                        .frame(width: 130)
+                        if dataStartMode == .row {
+                            TextField("row", text: $dataStartRowText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 10, design: .monospaced))
+                                .frame(width: 90)
+                                .onSubmit { applyDataStartMode() }
+                        }
+                        Button("Apply") { applyDataStartMode() }
+                            .controlSize(.mini)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Data prefix:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        TextField("(none) = absent", text: $dataPrefixText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 120)
+                            .onSubmit { applyPrefixes() }
+                        Text("Comment:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. #", text: $commentPrefixText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 80)
+                            .onSubmit { applyPrefixes() }
+                        Button("Apply") { applyPrefixes() }
+                            .controlSize(.mini)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Excluded rows:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        TextField("e.g. 1, 2", text: $excludedText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 120)
+                            .onSubmit {
+                                let rows = Array(Set(splitList(excludedText).compactMap(Int.init).filter { $0 >= 1 })).sorted()
+                                onSetVariantExcluded?(rows)
+                            }
+                        Button("Apply") {
+                            let rows = Array(Set(splitList(excludedText).compactMap(Int.init).filter { $0 >= 1 })).sorted()
+                            onSetVariantExcluded?(rows)
+                        }
+                        .controlSize(.mini)
+                    }
+                    // Stream identity
+                    HStack(spacing: 8) {
+                        Text("Extensions:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        TextField(".txt, .csv", text: $extensionsText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 140)
+                        Text("Encoding:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        TextField("utf-8", text: $encodingsText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 140)
+                        Button("Apply") {
+                            let exts = splitList(extensionsText)
+                            let encs = splitList(encodingsText)
+                            if !exts.isEmpty && !encs.isEmpty { onSetVariantStream?(exts, encs) }
+                        }
+                        .controlSize(.mini)
+                    }
+                    // Compatibility selectors
+                    HStack(spacing: 8) {
+                        Text("Filename all:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 70, alignment: .trailing)
+                        TextField("comma list, empty = none", text: $matchFileText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 140)
+                        Text("Content any:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        TextField("comma list, empty = none", text: $matchContentText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(width: 140)
+                        Button("Apply") {
+                            let files = splitList(matchFileText)
+                            let contents = splitList(matchContentText)
+                            onSetVariantMatch?(files.isEmpty ? nil : files, contents.isEmpty ? nil : contents)
+                        }
+                        .controlSize(.mini)
+                    }
+                    // Column properties: position/header/aliases (read-only source) + required
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Columns: position, header, aliases and required")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(variantColumns, id: \.id) { column in
+                            HStack(spacing: 8) {
+                                Text(column.id)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .frame(width: 110, alignment: .leading)
+                                Text(columnSourceSummary(column))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                Toggle("Required", isOn: Binding(
+                                    get: { isColumnRequired(column) },
+                                    set: { setColumnRequired(column, required: $0) }
+                                ))
+                                .toggleStyle(.checkbox)
+                                .font(.system(size: 10))
+                                .disabled(columns.firstIndex(where: { $0.name == column.id }) == nil)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
     }
 }

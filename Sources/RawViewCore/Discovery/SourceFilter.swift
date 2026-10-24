@@ -19,6 +19,12 @@ public struct SourceFilter: Sendable, Equatable {
         selections[facet, default: []].remove(value)
     }
 
+    /// Task 7 fix: drop selections for facets no longer present (e.g. a
+    /// removed Explorer view) so stale chips neither render nor filter.
+    public mutating func removeFacets(notIn allowed: Set<String>) {
+        selections = selections.filter { allowed.contains($0.key) }
+    }
+
     public mutating func clear() {
         selections = [:]
     }

@@ -29,7 +29,7 @@ public final class HotkeyManager: ObservableObject {
 
     public static let defaultHotkeys: [AppHotkey] = [
         AppHotkey(id: "openProject", name: "Open Project", category: "Navigation", key: "o", modifiers: ["command"], description: "Choose and open a research project folder"),
-        AppHotkey(id: "buildProfile", name: "Build Profile", category: "Profile Studio", key: "s", modifiers: ["command"], description: "Save instrument profile YAML & category rules"),
+        AppHotkey(id: "buildProfile", name: "Save Focused Document", category: "Profile Studio", key: "s", modifiers: ["command"], description: "Save the focused editor document (profile or grammar)"),
         AppHotkey(id: "matrixMode", name: "Data Matrix View", category: "View", key: "1", modifiers: ["command"], description: "Switch center canvas to spreadsheet Data Matrix"),
         AppHotkey(id: "streamMode", name: "Raw Stream & Parser", category: "View", key: "2", modifiers: ["command"], description: "Switch center canvas to color-coded Raw Stream"),
         AppHotkey(id: "autoDetect", name: "Run Auto Detect", category: "Profile Studio", key: "d", modifiers: ["command"], description: "Run smart heuristics on active target file"),
@@ -63,6 +63,13 @@ public final class HotkeyManager: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([AppHotkey].self, from: data) {
             self.hotkeys = decoded
+            // Task 6: the single ⌘S command replaced per-button bindings;
+            // migrate the stored label so the Hotkeys tab matches.
+            if let idx = hotkeys.firstIndex(where: { $0.id == "buildProfile" }),
+               hotkeys[idx].name == "Build Profile" {
+                hotkeys[idx].name = "Save Focused Document"
+                hotkeys[idx].description = "Save the focused editor document (profile or grammar)"
+            }
         } else {
             self.hotkeys = Self.defaultHotkeys
         }

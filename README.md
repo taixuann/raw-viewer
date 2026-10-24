@@ -35,7 +35,7 @@ RawView provides instant, offline, publication-grade visualization and inspectio
 
 ## Supported Instruments & Reader Families
 
-RawView reads declarative instrument profiles (`schema_version: 1` or `2`) from `data/instruments/` (or `data/instruments/rawview/`):
+RawView reads declarative instrument profiles (`schema_version: 1`, `2`, or variant-based `3` with key-routed variants in one file) from `data/instruments/` (or `data/instruments/rawview/`):
 
 | Instrument / Family | Supported Layouts | Plotted Channels |
 | :--- | :--- | :--- |
@@ -93,8 +93,8 @@ Exit codes: `0` complete, `1` incomplete/fatal, `2` configuration error, `3` wri
 ## Architecture & Security Contract
 
 1. **In-Process Reading**: All parsing occurs within `RawViewCore` using standard Swift Foundation. No subprocesses or shell scripts are executed.
-2. **Configurable Data Root**: Configured via `.rawviewer/setting/setting.yaml` (`schema_version: 1`). Supports `.` (project root) or any contained regular directory. Symlinked components and escaping paths are rejected fail-closed.
-3. **Tree Navigator**: Native folder disclosure tree preserving directory ancestors and project-relative source identities.
+2. **Configurable Data Root**: Configured via `.rawviewer/setting/setting.yaml` (`schema_version: 3`, with `data_root`, `developer_mode`, and `explorer_views`). Supports `.` (project root) or any contained regular directory. Symlinked components and escaping paths are rejected fail-closed.
+3. **Tree Navigator**: Native folder disclosure tree preserving directory ancestors and project-relative source identities. Filename grammars (`.rawviewer/grammar.yaml`, schema 1) drive Explorer views; variant-based profiles (schema 3) route each source to exactly one variant.
 4. **App-Local Writable Index**: Writable SQLite indexes are stored in owner-private Application Support (`~/Library/Application Support/RawView/<project-digest>/index.db`). Zero project-local SQLite writes ensure immutable projects and eliminate VFS race risks. Legacy `data/.rawview/index.db` is preserved read-only as advisory hints and rollback.
 5. **Fail-Closed Parsing**: Corrupt rows, malformed YAML, or unsupported versions produce actionable diagnostic banners rather than silent misinterpretations.
 

@@ -126,6 +126,151 @@ V2 additions over v1 (all fail-closed; v1 documents reject the new fields):
 | No `rows` for `comment-tsv` | A `rows` mapping under `comment-tsv` is rejected: the layout is headerless by definition. |
 | No `rows` for `first-row-header` | A `rows` mapping under `first-row-header` is rejected: the first non-blank line is the header row by definition, and every later non-blank line is a data row. |
 
+## Filename grammar catalog and project settings
+
+`.rawviewer/grammar.yaml` owns the schema-version-1 grammar catalog.
+Root keys: `schema_version` (`1`), `grammars` list. Each grammar: `id`
+(unique), `name`, `template` with `{field}` variables, optional
+`description`, `fields` list. Each field: `name` (unique per grammar,
+exactly matching the template variables), `role` (stable metadata key;
+custom non-empty roles allowed), `type` (`string`/`number`/`datetime`),
+optional `format`, optional `optional` (default false). New grammar
+serialization carries no variant-key flags, no `is_facet`/grouping, and no
+active-grammar selection; legacy `is_facet`/`default`/`scope`/active
+state loads as compatibility state only. Legacy field mapping is
+explicit: `format_hint` to `format`, `is_optional` to `optional`; bracket
+captures keep tested extraction values; roles map through an explicit
+label table, never name-substring inference. The canonical file loads
+only when present; a malformed canonical file is an error with no silent
+fallback to legacy, and legacy imports run only when canonical is
+absent. Missing legacy types need reviewed migration, never guessed
+semantics. Optional-field delimiter behavior is explicit: partial
+filenames never route.
+
+`.rawviewer/setting/setting.yaml` schema v3 owns `schema_version` (`3`),
+`data_root` (quoted project-relative path), `default_view`,
+`default_preset`, `developer_mode` (default false), and `explorer_views`
+(a list of `grammar_id`/`variable` references, unique per pair).
+Explorer views persist references only; grammar key fields stay unrelated
+to view eligibility. Settings round-trips preserve project
+configure/data-root changes and Explorer view updates.
+
+## Instrument profile schema v3 (variants)
+
+One `.rawviewer/instrument/<profileID>.yaml` holds one named profile with
+multiple key-routed variants (for example CV/CA/EIS plus layout
+alternatives). Structural parse is separate from `validate(catalog:)`; an
+incomplete conversion lives as an editable `ProfileUpgradeDraft` with
+blocking diagnostics and becomes a document only through `finalize`.
+`ProfileUpgradeDraft` diagnostics never guess missing values. Profile
+identity (`identity.id`/`name`) stays separate from instrument identity
+(`instrument.id`/`name`, optional `vendor`/`model`).
+
+Root keys: `schema_version` (`3`), `identity`, `filename`, `variants`,
+optional `legacy_origin` (`path` project-relative plus exact source
+`sha256`). `filename` holds `grammar_id` and ordered unique
+`variant_keys` (required field names of that grammar). Variant Key
+controls live in the Filename Grammar UI for the active profile but
+persist in the profile file only; a key set change requires reviewing
+every variant's values, and incomplete drafts block Save, not variant
+navigation. Key values compare exact extracted raw strings,
+case-sensitive; no type coercion or role-to-selector conversion.
+
+Each variant: unique `id`/`name`, `key_values` containing exactly all
+selected keys, optional `match` (`filename_contains_all` /
+`content_contains_any` with legacy case-insensitive semantics; unknown
+selectors fail, empty lists are rejected), `raw_stream`, `metadata` list,
+optional `metadata_capture`, `default_plot` (null or `x` plus non-empty
+`y` of column IDs plus optional `progression`). Repeated key tuples are
+allowed only with distinguishable stream/header selectors; runtime still
+requires exactly one candidate, never first-match wins. Partial filename
+matches never route, and no generic fallback can claim v3 success.
+
+Raw stream: `extensions`, `encoding` (declared reader names, tried in
+order), `delimiter`, `decimal_separator`, `rows`, `columns`. All
+coordinates are one-based physical rows/tokens; empty cells keep their
+positions. `rows.header` is null, `{row: N}`, `{first_nonblank: true}`,
+or `{prefix: S}`; `data_start` is `{row: N}` or `{after_header: true}`;
+optional `data_prefix` (empty string means no prefix filter) and
+`comment_prefix`; `excluded_metadata` is a unique list of positive rows
+affecting metadata only, never data rows. Header/data prefixes compare
+equality with the first trimmed/unquoted delimiter token; the marker
+token stays in physical column coordinates. First matching header wins;
+blank data lines are skipped; declared comment lines are filtered before
+decoding. Legacy marker-row semantics are preserved, never frozen from
+one sample.
+
+Columns: stable `id` independent of header names and labels; `source`
+with `column` (positiveInt) and/or `header` plus `aliases` (aliases
+require `header`; when both are given they must agree, never silently
+relocate); `label`, `quantity`, optional `unit`, `required` (default
+true), `role` (`channel`/`progression`/`skip`; no Aux), `axes` subset of
+`[x, y]`, optional `progression` (`type` `index`/`time`/`custom`,
+optional `name`, `behavior` `continuous`/`discrete`). Header lookup is
+case-insensitive, primary header first then alias fallback; ambiguous
+headers and two semantic columns resolving to one source column fail.
+`skip` keeps its definition but disables decoding and axes/default
+eligibility. Optional missing columns stay absent, never fabricated.
+Default axes must be required non-skipped declared axis-capable columns;
+Explorer offers optional axis-capable columns only when present.
+
+Metadata: `key`, `role`, `source.row`/`source.column`, optional `format`,
+optional `parameter.name`/`source.row`/`source.column`. Role `ignore`
+marks ignored tags. Every value is read per source; sample raw values
+never become constants. Extraction tags on excluded rows are rejected.
+Filename/header conflicts keep source qualification plus diagnostics,
+never silent precedence. `metadata_capture` adds lossless acquisition
+rules: `pre_header_fields` (ordered pre-header records) and
+`comment_key_value` with `prefix` (ordered comment key=value records);
+repeated keys and record order are preserved. Fixed coordinates are never
+synthesized from samples; adapter comparison includes acquisition
+metadata.
+
+Resolution: full grammar parse → raw key tuple candidates →
+compatibility selectors and declared stream/header checks → exactly one
+variant. Provenance records `profile_id`, `variant_id`, grammar and
+document fingerprints (`grammar_id`, `grammar_sha256`, `profile_hash`,
+`profile_schema_version: 3`). Cache identity includes the complete
+document, variant, and grammar; grammar-only, key, or variant edits
+invalidate. Catalog merges canonical and legacy peers without hiding
+unrelated profiles; archive directories are excluded where present.
+
+The v1/v2 upgrade adapter maps selected legacy modes into variants of
+one unsaved draft; originals stay immutable. It preserves markers,
+encodings, row selectors, aliases, optional columns, matching selectors,
+and axis sets, and bypasses the lenient first-mode loader. Missing
+grammar, key values, or unsupported semantics are actionable Needs
+definition blockers, never guesses. The schema badge is read-only
+(`Profile schema v2 Legacy` / `v3`); migration draft status reads
+`v2 → v3 Draft`. Canonical imports record `legacy_origin`; shadowing
+suppresses only the exact unchanged original, preserves unrelated legacy
+peers, and reports changed-origin conflicts. The companion-directory
+boundary is retained: Study profiles are never imported.
+
+Developer Mode adds Profile YAML (the complete variants document) and
+Edit YAML inside Filename Grammar (the complete project catalog), with
+visible paths/scope, monospaced editing, exact byte/comment-preserving
+drafts, and actionable diagnostics. Save validates all variants, not
+only the selected one. Apply moves a valid draft to visual state and is
+not save; invalid drafts stay intact. Source-to-visual regeneration over
+comment-bearing text warns first with a cancel path. One Save command
+per focused window; no duplicate command-S bindings. Dirty
+replacement/workspace/window/quit transitions are guarded (failed Save
+aborts, Cancel keeps state); external rename/delete/change requires
+explicit reconciliation. Direct writes stay restricted to canonical
+viewer-owned paths; legacy/Study sources are read-only.
+
+The Sandbox previews shared normalized reader output from the in-memory
+draft: no separate numeric parsing, no axis guessing. Null defaults show
+No default axes. Use as Profile Defaults previews and replaces the
+complete X/Y list, never silently truncates multi-Y. Explorer axis
+choices are the selected variant's declared available columns; overrides
+are per-source/session, keyed by profile/variant/stable column IDs, and
+never write profiles. Status grouping and status filter chips were
+removed with hardcoded facets per owner direction; status
+badges/diagnostics are kept. Software completion is not scientific
+acceptance.
+
 ## Project profile ownership
 
 Instrument profiles remain YAML data; RawView never executes project code or

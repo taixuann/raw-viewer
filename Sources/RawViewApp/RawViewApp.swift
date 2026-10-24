@@ -7,6 +7,7 @@ import RawViewCore
 struct RawViewApp: App {
     @StateObject private var model = RawViewModel()
     @AppStorage("appTheme") private var appTheme: String = "System"
+    @NSApplicationDelegateAdaptor(RawViewAppDelegate.self) private var appDelegate
 
     private var preferredScheme: ColorScheme? {
         switch appTheme {
@@ -20,16 +21,124 @@ struct RawViewApp: App {
         WindowGroup("RawView") {
             RawViewShell(model: model)
                 .preferredColorScheme(preferredScheme)
+                .task {
+                    _ = await NodeBackend.shared.ensureRunning()
+                    await AIProviderCatalog.shared.refresh()
+                }
         }
         .defaultSize(width: 1320, height: 820)
         .windowToolbarStyle(.unified)
         .commands {
             ExplorerToolbarCommands(model: model)
+            EditorSaveCommands()
         }
 
         Settings {
             SettingsView(model: model)
                 .preferredColorScheme(preferredScheme)
+        }
+    }
+}
+
+// MARK: - Task 6: one focused-window Save command (no duplicate ⌘S).
+
+/// Vended by the focused editor workspace; the single ⌘S command calls it.
+/// Scene-scoped, so sidebar focus never retargets the Save target.
+struct EditorSaveActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var editorSaveAction: (() -> Void)? {
+        get { self[EditorSaveActionKey.self] }
+        set { self[EditorSaveActionKey.self] = newValue }
+    }
+}
+
+struct EditorSaveCommands: Commands {
+    @FocusedValue(\.editorSaveAction) private var saveAction
+
+    var body: some Commands {
+        CommandGroup(replacing: .saveItem) {
+            Button("Save") { saveAction?() }
+                .keyboardShortcut("s", modifiers: [.command])
+                .disabled(saveAction == nil)
+        }
+    }
+}
+
+// MARK: - Task 6: window-close/quit dirty guard (Save/Discard/Cancel).
+
+/// Per-window editor registrations. Entries hold the owner weakly and are
+/// pruned on read, so switching workspace modes never strands a guard.
+@MainActor
+final class EditorDirtyTracker: ObservableObject {
+    static let shared = EditorDirtyTracker()
+
+    private struct Entry {
+        weak var owner: AnyObject?
+        let label: String
+        let hasWork: () -> Bool
+        /// Attempts Save; returns false when the save failed (abort).
+        let save: () -> Bool
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+
+    func register(_ owner: AnyObject, label: String, hasWork: @escaping () -> Bool, save: @escaping () -> Bool) {
+        entries[ObjectIdentifier(owner)] = Entry(owner: owner, label: label, hasWork: hasWork, save: save)
+    }
+
+    private func liveEntries() -> [Entry] {
+        entries = entries.filter { $0.value.owner != nil }
+        return Array(entries.values)
+    }
+
+    var hasUnsavedWork: Bool { liveEntries().contains(where: { $0.hasWork() }) }
+
+    var dirtyLabels: [String] { liveEntries().filter { $0.hasWork() }.map(\.label) }
+
+    /// Saves every dirty document; a failed Save aborts (returns false).
+    func saveAll() -> Bool {
+        for entry in liveEntries() where entry.hasWork() {
+            if !entry.save() { return false }
+        }
+        return !hasUnsavedWork
+    }
+}
+
+final class RawViewAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard EditorDirtyTracker.shared.hasUnsavedWork else { return .terminateNow }
+        let names = EditorDirtyTracker.shared.dirtyLabels.joined(separator: ", ")
+        let alert = NSAlert()
+        alert.messageText = "Unsaved profile changes"
+        alert.informativeText = "Save \(names.isEmpty ? "the profile document" : names), discard the drafts, or cancel and keep editing."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            // Failed Save aborts termination; Cancel keeps everything.
+            return EditorDirtyTracker.shared.saveAll() ? .terminateNow : .terminateCancel
+        case .alertSecondButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
         }
     }
 }
@@ -47,6 +156,9 @@ struct PlotSnapshot: Identifiable, Equatable {
     let yScale: AxisScale
     let xAbsolute: Bool
     let yAbsolute: Bool
+    /// Task 7: session axis overrides captured with the snapshot so a
+    /// restored comparison replots the effective selection.
+    var axisOverrides: [String: AxisOverride] = [:]
 
     init(
         id: UUID = UUID(),
@@ -142,8 +254,253 @@ final class RawViewModel: ObservableObject {
     @Published var yAbsolute = false
     @Published var xScale: AxisScale = .linear
     @Published var yScale: AxisScale = .linear
+    /// Project-scoped Developer Mode (Task 6): read from the active
+    /// project's setting.yaml, never from a global default. Older settings
+    /// default to false.
+    @Published var developerMode: Bool = false
+
+    /// Project-scoped toggle with rollback: the visible state reverts when
+    /// the settings write fails, and every other setting is preserved.
+    func setDeveloperMode(_ enabled: Bool) {
+        guard let project else { return }
+        let previous = developerMode
+        developerMode = enabled
+        do {
+            let current = try ProjectSettingsStore.load(projectRoot: project.root)
+            let updated = ProjectSettings(
+                dataRoot: current?.dataRoot ?? project.dataRootRelativePath,
+                defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: enabled,
+                explorerViews: current?.explorerViews ?? [],
+                sourceLabels: current?.sourceLabels ?? [])
+            try ProjectSettingsStore.save(updated, projectRoot: project.root)
+        } catch {
+            developerMode = previous
+            self.error = "Failed to save Developer Mode: \(error.localizedDescription)"
+        }
+    }
+    @Published var showAIAssistant = false
+    @Published var aiChatSessionId: UUID = UUID()
+    @Published var aiChatTurns: [ChatTurn] = []
+    func toggleAIAssistant() { showAIAssistant.toggle() }
     @Published var showInspector = true
     func toggleInspector() { showInspector.toggle() }
+
+    // MARK: - Task 7: session axis overrides (display-only, never profile writes).
+
+    /// Per-source axis override, keyed by the loaded measurement's
+    /// profile/variant provenance plus stable column IDs. A nil x/y keeps
+    /// the variant default. Session-only: cleared on project change.
+    @Published var axisOverrides: [String: AxisOverride] = [:]
+
+    /// Measurement with the session override applied when its provenance
+    /// still matches; otherwise the variant defaults. New sources have no
+    /// override and use their own defaults.
+    func effectiveMeasurement(for id: String) -> NormalizedMeasurement? {
+        guard let base = sourceStates[id]?.measurement else { return nil }
+        guard let override = axisOverrides[id],
+              override.profileID == base.provenance["profile_id"],
+              override.variantID == base.provenance["variant_id"] else { return base }
+        return base.withAxisView(x: override.x, y: override.y)
+    }
+
+    /// Override IDs no longer declared for this source. Kept (never
+    /// substituted); the inspector requires an explicit reset.
+    func staleAxisIDs(for id: String) -> [String] {
+        guard let base = sourceStates[id]?.measurement, let override = axisOverrides[id],
+              override.profileID == base.provenance["profile_id"],
+              override.variantID == base.provenance["variant_id"] else { return [] }
+        let names = Set(base.channels.map(\.name))
+        var stale: [String] = []
+        if let x = override.x, !names.contains(x) { stale.append(x) }
+        for y in override.y ?? [] where !names.contains(y) { stale.append(y) }
+        return stale
+    }
+
+    func axisNote(for id: String) -> String? {
+        let stale = staleAxisIDs(for: id)
+        guard !stale.isEmpty else { return nil }
+        return "Axis selection \(stale.joined(separator: ", ")) is not declared for this source. Reset to the variant defaults to continue."
+    }
+
+    func setAxisX(_ x: String, for id: String) {
+        guard let base = sourceStates[id]?.measurement else { return }
+        var override = activeOverride(for: base, id: id)
+        override.x = x
+        axisOverrides[id] = override
+    }
+
+    /// A nil y restores the Default series (variant multi-Y defaults).
+    func setAxisY(_ y: [String]?, for id: String) {
+        guard let base = sourceStates[id]?.measurement else { return }
+        var override = activeOverride(for: base, id: id)
+        override.y = y
+        axisOverrides[id] = override
+    }
+
+    /// Reset restores the selected variant defaults for this source.
+    func resetAxes(for id: String) { axisOverrides.removeValue(forKey: id) }
+
+    /// The session override currently in effect for this source, or nil when
+    /// none exists or its provenance no longer matches the loaded variant.
+    func activeAxisOverride(for id: String) -> AxisOverride? {
+        guard let base = sourceStates[id]?.measurement, let override = axisOverrides[id],
+              override.profileID == base.provenance["profile_id"],
+              override.variantID == base.provenance["variant_id"] else { return nil }
+        return override
+    }
+
+    private func activeOverride(for base: NormalizedMeasurement, id: String) -> AxisOverride {
+        var override = axisOverrides[id]
+        // A re-resolved variant retires the old selection instead of
+        // misapplying its column IDs.
+        if override?.profileID != base.provenance["profile_id"] || override?.variantID != base.provenance["variant_id"] {
+            override = nil
+        }
+        return override ?? AxisOverride(
+            profileID: base.provenance["profile_id"] ?? "",
+            variantID: base.provenance["variant_id"] ?? "",
+            x: nil, y: nil)
+    }
+
+    /// Display states with effective measurements. Loading and error state
+    /// pass through untouched.
+    var displayStates: [String: GallerySourceState] {
+        var out = sourceStates
+        for id in out.keys where out[id]?.measurement != nil {
+            out[id]?.measurement = effectiveMeasurement(for: id)
+        }
+        return out
+    }
+
+    // MARK: - Task 7: grammar-driven Explorer views (settings-owned references).
+
+    /// Discriminated selection identity: "tree", "" (None), or a qualified
+    /// grammar-variable reference. Never a bare variable name.
+    @Published var selectedExplorerView = "tree"
+    @Published var explorerViews: [ExplorerViewDefinition] = []
+    @Published var explorerCatalog: FilenameGrammarCatalog? = nil
+    @Published var explorerViewError: String? = nil
+    @Published var sourceLabelLayouts: [SourceLabelLayout] = []
+
+    static func explorerViewKey(grammarID: String, variable: String) -> String {
+        "view\0\(grammarID)\0\(variable)"
+    }
+
+    static func explorerViewReference(forKey key: String) -> ExplorerViewDefinition? {
+        guard key.hasPrefix("view\0") else { return nil }
+        let parts = key.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3, !parts[1].isEmpty, !parts[2].isEmpty else { return nil }
+        return ExplorerViewDefinition(grammarID: parts[1], variable: parts[2])
+    }
+
+    /// Reloads view references and the grammar catalog after project open and
+    /// after every view save. An unresolvable selection returns to Tree with
+    /// a visible explanation; the menu otherwise stays intact.
+    func refreshExplorerViews() {
+        guard let project else {
+            explorerViews = []
+            explorerCatalog = nil
+            explorerViewError = nil
+            sourceLabelLayouts = []
+            return
+        }
+        let saved = try? ProjectSettingsStore.load(projectRoot: project.root)
+        explorerViews = saved?.explorerViews ?? []
+        sourceLabelLayouts = saved?.sourceLabels ?? []
+        do {
+            explorerCatalog = try FilenameGrammarEngine.load(project: project)
+            if explorerViewError?.hasPrefix("Filename grammar") == true { explorerViewError = nil }
+        } catch {
+            explorerCatalog = nil
+            explorerViewError = "Filename grammar unavailable (\(error.localizedDescription)). Explorer views are unavailable; Tree remains."
+            selectedExplorerView = "tree"
+            return
+        }
+        validateExplorerSelection()
+    }
+
+    /// Adds one grammar-variable view reference. Settings save first; the
+    /// visible menu only changes on success. Grammar saves never touch this.
+    func addExplorerView(grammarID: String, variable: String) {
+        guard let project else { return }
+        let ref = ExplorerViewDefinition(grammarID: grammarID, variable: variable)
+        do {
+            let current = try ProjectSettingsStore.load(projectRoot: project.root)
+            var views = current?.explorerViews ?? []
+            guard !views.contains(ref) else { return }
+            views.append(ref)
+            try ProjectSettingsStore.save(ProjectSettings(
+                dataRoot: current?.dataRoot ?? project.dataRootRelativePath,
+                defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: current?.developerMode ?? developerMode,
+                explorerViews: views,
+                sourceLabels: current?.sourceLabels ?? []), projectRoot: project.root)
+            explorerViews = views
+            selectedExplorerView = Self.explorerViewKey(grammarID: grammarID, variable: variable)
+            validateExplorerSelection()
+        } catch {
+            self.error = "Failed to save Explorer view: \(error.localizedDescription)"
+        }
+    }
+
+    func removeExplorerView(_ ref: ExplorerViewDefinition) {
+        guard let project else { return }
+        do {
+            let current = try ProjectSettingsStore.load(projectRoot: project.root)
+            let views = (current?.explorerViews ?? []).filter { $0 != ref }
+            try ProjectSettingsStore.save(ProjectSettings(
+                dataRoot: current?.dataRoot ?? project.dataRootRelativePath,
+                defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: current?.developerMode ?? developerMode,
+                explorerViews: views,
+                sourceLabels: current?.sourceLabels ?? []), projectRoot: project.root)
+            explorerViews = views
+            if Self.explorerViewReference(forKey: selectedExplorerView) == ref {
+                selectedExplorerView = "tree"
+            }
+            validateExplorerSelection()
+        } catch {
+            self.error = "Failed to remove Explorer view: \(error.localizedDescription)"
+        }
+    }
+
+    /// Saves source-label layouts. Settings write first; the visible
+    /// configuration only changes on success. Returns nil on success, or
+    /// the failure message so the customizer can report it without
+    /// claiming a save.
+    func saveSourceLabels(_ layouts: [SourceLabelLayout]) -> String? {
+        guard let project else { return "No project is open." }
+        do {
+            let current = try ProjectSettingsStore.load(projectRoot: project.root)
+            try ProjectSettingsStore.save(ProjectSettings(
+                dataRoot: current?.dataRoot ?? project.dataRootRelativePath,
+                defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: current?.developerMode ?? developerMode,
+                explorerViews: current?.explorerViews ?? [],
+                sourceLabels: layouts), projectRoot: project.root)
+            sourceLabelLayouts = layouts
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func validateExplorerSelection() {
+        guard let ref = Self.explorerViewReference(forKey: selectedExplorerView) else { return }
+        guard explorerViews.contains(ref),
+              let grammar = explorerCatalog?.grammars.first(where: { $0.id == ref.grammarID }),
+              grammar.fields.contains(where: { $0.name == ref.variable }) else {
+            selectedExplorerView = "tree"
+            explorerViewError = "Explorer view “\(ref.variable)” is unavailable (renamed or deleted grammar reference). Returned to Tree."
+            return
+        }
+        if explorerViewError?.hasPrefix("Explorer view") == true { explorerViewError = nil }
+    }
     @Published var showLegend = true
     @Published var customSeriesLabels: [String: String] = [:]
     @Published var legendOffset: CGSize = .zero
@@ -212,7 +569,7 @@ final class RawViewModel: ObservableObject {
         } else {
             name = "Snapshot \(snapshots.count + 1) · \(timeStr)"
         }
-        let snap = PlotSnapshot(
+        var snap = PlotSnapshot(
             name: name,
             selectedSourceIDs: selectedSourceIDs,
             focusedSourceID: focusedSourceID,
@@ -224,6 +581,7 @@ final class RawViewModel: ObservableObject {
             xAbsolute: xAbsolute,
             yAbsolute: yAbsolute
         )
+        snap.axisOverrides = axisOverrides
         snapshots.append(snap)
         activeSnapshotID = snap.id
         comparisonTitle = name
@@ -241,6 +599,7 @@ final class RawViewModel: ObservableObject {
         yScale = snap.yScale
         xAbsolute = snap.xAbsolute
         yAbsolute = snap.yAbsolute
+        axisOverrides = snap.axisOverrides
         if selectedSourceIDs.count >= 2 {
             ensureSelectedLoaded()
         } else {
@@ -268,12 +627,12 @@ final class RawViewModel: ObservableObject {
 
         let exportSize = CGSize(width: 800, height: 800 / selectedPreset.aspectRatio)
         if selectedSourceIDs.count >= 2 {
-            let cohort = selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
+            let cohort = selectedSourceIDs.sorted().compactMap { effectiveMeasurement(for: $0) }
             let visible = cohort.filter { !hiddenSeries.contains($0.source.path) }
             let exportView = OverlayPlot(
                 measurements: visible,
                 selectedSourceIDs: selectedSourceIDs,
-                focused: focusedSourceID.flatMap { sourceStates[$0]?.measurement },
+                focused: focusedSourceID.flatMap { effectiveMeasurement(for: $0) },
                 lineWidth: lineWidth,
                 renderStyle: renderStyle,
                 markType: markType,
@@ -291,7 +650,7 @@ final class RawViewModel: ObservableObject {
                 legendOffset: .constant(.zero)
             )
             FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize)
-        } else if let focused = focusedSourceID, let measurement = sourceStates[focused]?.measurement {
+        } else if let focused = focusedSourceID, let measurement = effectiveMeasurement(for: focused) {
             let exportView = NativePlot(
                 measurement: measurement,
                 xAbsolute: xAbsolute,
@@ -320,7 +679,7 @@ final class RawViewModel: ObservableObject {
         } else {
             name = "data_export.csv"
         }
-        let measurement = focusedSourceID.flatMap { sourceStates[$0]?.measurement }
+        let measurement = focusedSourceID.flatMap { effectiveMeasurement(for: $0) }
         FigureExporter.promptExportData(measurement: measurement, defaultName: name)
     }
 
@@ -368,12 +727,12 @@ final class RawViewModel: ObservableObject {
         do {
             let exportSize = CGSize(width: 800, height: 800 / selectedPreset.aspectRatio)
             if selectedSourceIDs.count >= 2 {
-                let cohort = selectedSourceIDs.sorted().compactMap { sourceStates[$0]?.measurement }
+                let cohort = selectedSourceIDs.sorted().compactMap { effectiveMeasurement(for: $0) }
                 let visible = cohort.filter { !hiddenSeries.contains($0.source.path) }
                 let exportView = OverlayPlot(
                     measurements: visible,
                     selectedSourceIDs: selectedSourceIDs,
-                    focused: focusedSourceID.flatMap { sourceStates[$0]?.measurement },
+                    focused: focusedSourceID.flatMap { effectiveMeasurement(for: $0) },
                     lineWidth: lineWidth,
                     renderStyle: renderStyle,
                     markType: markType,
@@ -399,7 +758,7 @@ final class RawViewModel: ObservableObject {
                 )
                 refreshProjectSnapshotPackages()
                 NSWorkspace.shared.activateFileViewerSelecting([savedDir])
-            } else if let focused = focusedSourceID, let measurement = sourceStates[focused]?.measurement {
+            } else if let focused = focusedSourceID, let measurement = effectiveMeasurement(for: focused) {
                 let exportView = NativePlot(
                     measurement: measurement,
                     xAbsolute: xAbsolute,
@@ -624,8 +983,13 @@ final class RawViewModel: ObservableObject {
         if let savedRecent = UserDefaults.standard.stringArray(forKey: "rawView.recentProjects.v1") {
             recentProjects = savedRecent.compactMap { URL(fileURLWithPath: $0) }
         }
-        // Never auto-reopen previous project on launch.
-        // User explicitly opens via the "Open Project" button.
+        if let firstArg = CommandLine.arguments.dropFirst().first(where: { !$0.starts(with: "-") }),
+           FileManager.default.fileExists(atPath: firstArg) {
+            let argURL = URL(fileURLWithPath: firstArg)
+            openRecentProject(url: argURL)
+        } else if let firstRecent = recentProjects.first, FileManager.default.fileExists(atPath: firstRecent.path) {
+            openRecentProject(url: firstRecent)
+        }
     }
 
     func openProject() {
@@ -702,7 +1066,15 @@ final class RawViewModel: ObservableObject {
         cancelLoad()
         let token = sessionState.beginRootChange()
         if persist {
-            let settings = ProjectSettings(dataRoot: dataRoot, defaultView: "tree")
+            // Read-modify-write: a configure preserves Developer Mode,
+            // Explorer views and the preset instead of resetting them.
+            let current = try? ProjectSettingsStore.load(projectRoot: root)
+            let settings = ProjectSettings(
+                dataRoot: dataRoot, defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: current?.developerMode ?? false,
+                explorerViews: current?.explorerViews ?? [],
+                sourceLabels: current?.sourceLabels ?? [])
             try ProjectSettingsStore.save(settings, projectRoot: root)
         }
         let opened = try ProjectContext.open(root, dataRootRelativePath: dataRoot)
@@ -718,7 +1090,15 @@ final class RawViewModel: ObservableObject {
         cancelLoad()
         let token = sessionState.beginRootChange()
         if persist {
-            let settings = ProjectSettings(dataRoot: relativePath, defaultView: "tree")
+            // Read-modify-write: only the root moves; Developer Mode,
+            // Explorer views and the preset survive the change.
+            let current = try? ProjectSettingsStore.load(projectRoot: currentProj.root)
+            let settings = ProjectSettings(
+                dataRoot: relativePath, defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: current?.developerMode ?? developerMode,
+                explorerViews: current?.explorerViews ?? [],
+                sourceLabels: current?.sourceLabels ?? [])
             try ProjectSettingsStore.save(settings, projectRoot: currentProj.root)
         }
         let updated = try ProjectContext.open(currentProj.root, dataRootRelativePath: relativePath)
@@ -804,7 +1184,7 @@ final class RawViewModel: ObservableObject {
                 return .blocked(reason: "Source \(id) is not loaded yet. The focused source remains shown until all finish.")
             }
         }
-        let measurements = ids.compactMap { sourceStates[$0]?.measurement }
+        let measurements = ids.compactMap { effectiveMeasurement(for: $0) }
         guard measurements.count == ids.count else {
             return .blocked(reason: "Not every selected source finished loading. The focused source remains shown.")
         }
@@ -982,15 +1362,26 @@ final class RawViewModel: ObservableObject {
         sourceTree = nil
         expandedDirectoryIDs.removeAll()
         inspectionCancelled = false
+        axisOverrides = [:]
+        selectedExplorerView = "tree"
+        explorerViewError = nil
         rebuildCache()
         let loadedPresets = PresetCatalog.load(project: context)
         availablePresets = loadedPresets
-        if let settings = try? ProjectSettingsStore.load(projectRoot: context.root),
-           let matched = loadedPresets.first(where: { $0.id == settings.defaultPreset }) {
-            selectedPreset = matched
-        } else if let defaultNature = loadedPresets.first(where: { $0.id == "nature-single" }) {
-            selectedPreset = defaultNature
+        if let settings = try? ProjectSettingsStore.load(projectRoot: context.root) {
+            developerMode = settings.developerMode
+            if let matched = loadedPresets.first(where: { $0.id == settings.defaultPreset }) {
+                selectedPreset = matched
+            } else if let defaultNature = loadedPresets.first(where: { $0.id == "nature-single" }) {
+                selectedPreset = defaultNature
+            }
+        } else {
+            developerMode = false
+            if let defaultNature = loadedPresets.first(where: { $0.id == "nature-single" }) {
+                selectedPreset = defaultNature
+            }
         }
+        refreshExplorerViews()
         refreshProjectSnapshotPackages()
         // Discovery runs through the cancellable core seam off the main actor so
         // large raw directories never block the UI. Cancellation propagates to
@@ -1273,37 +1664,78 @@ struct GallerySourceState {
     var isLoading = false
 }
 
+// MARK: - Task 7: per-source session axis override (display-only).
+
+/// Display-only axis selection for one source: variant defaults when x/y are
+/// nil, an explicit channel otherwise. Keyed by loaded profile/variant
+/// provenance plus stable column IDs; never written to profiles.
+struct AxisOverride: Equatable {
+    var profileID: String
+    var variantID: String
+    var x: String?
+    var y: [String]?
+}
+
 struct RawViewShell: View {
     @ObservedObject var model: RawViewModel
 
     var body: some View {
-        Group {
-            if model.activeWorkspaceMode == .editor, let project = model.project {
-                EditorWorkspaceView(project: project, sources: model.sources, initialSelectedSource: model.editorInitialSource)
-            } else {
-                HSplitView {
-                    sidebarPane
-                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
-                        .frame(maxHeight: .infinity)
-                    galleryPane
-                    if model.showInspector {
-                        inspector
-                            .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
-                            .frame(maxHeight: .infinity)
+        HStack(spacing: 0) {
+            HSplitView {
+                sidebarPane
+                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
+                    .frame(maxHeight: .infinity)
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
                     }
+
+                Group {
+                    if model.activeWorkspaceMode == .editor, let project = model.project {
+                        EditorWorkspaceView(
+                            project: project,
+                            sources: model.sources,
+                            initialSelectedSource: model.editorInitialSource,
+                            developerMode: model.developerMode
+                        )
+                    } else {
+                        galleryPane
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if model.activeWorkspaceMode == .explorer && model.showInspector {
+                    inspector
+                        .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
+                        .frame(maxHeight: .infinity)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
+                        }
                 }
             }
-        }
-        .frame(minWidth: 880, minHeight: 560)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Workspace Mode", selection: $model.activeWorkspaceMode) {
-                    ForEach(RawViewModel.WorkspaceMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+
+            if model.showAIAssistant {
+                AIAssistantPane(model: model)
+                    .frame(width: 360)
+                    .frame(maxHeight: .infinity)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
                     }
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .frame(minWidth: 900, minHeight: 600)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        model.showAIAssistant.toggle()
+                    }
+                }) {
+                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                        .foregroundStyle(model.showAIAssistant ? Color.accentColor : Color.primary)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
+                .help("Toggle AI Assistant (⌘⌥A)")
+                .keyboardShortcut("a", modifiers: [.command, .option])
             }
         }
         .sheet(isPresented: $model.isProjectSetupPresented) {
@@ -1342,7 +1774,7 @@ struct RawViewShell: View {
 
     @ViewBuilder
     private var galleryPane: some View {
-        ProjectGallery(sources: model.sources, states: model.sourceStates,
+        ProjectGallery(sources: model.sources, states: model.displayStates,
                        focusedSourceID: $model.focusedSourceID,
                        selectedIDs: model.selectedSourceIDs, hidden: model.hiddenSeries,
                        lineWidth: model.lineWidth,
@@ -1382,90 +1814,82 @@ struct RawViewShell: View {
 
     private var sidebarPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("PROJECT SOURCES")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if !model.recentProjects.isEmpty {
-                    Menu {
-                        ForEach(model.recentProjects, id: \.self) { url in
-                            Button(url.lastPathComponent) {
-                                model.openRecentProject(url: url)
-                            }
-                        }
-                        Divider()
-                        Button("Clear Recent", action: model.clearRecentProjects)
-                    } label: {
-                        Image(systemName: "clock.arrow.circlepath")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("Recent projects")
-                }
-                Button(action: model.openProject) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "folder.badge.plus")
-                        ShortcutBadge("openProject")
-                    }
-                }
-                .buttonStyle(.borderless)
-                .help("Open project (⌘O)")
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
+            // OakReader-style Workspace Modes (Explorer & Profile Studio)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("WORKSPACE")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color(nsColor: .labelColor).opacity(0.55))
+                        .tracking(0.5)
 
-            Divider()
+                    Spacer()
+
+                    if !model.recentProjects.isEmpty {
+                        Menu {
+                            ForEach(model.recentProjects, id: \.self) { url in
+                                Button(url.lastPathComponent) {
+                                    model.openRecentProject(url: url)
+                                }
+                            }
+                            Divider()
+                            Button("Clear Recent", action: model.clearRecentProjects)
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .help("Recent projects")
+                    }
+
+                    Button(action: model.openProject) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open project (⌘O)")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+
+                workspaceRow(title: "Explorer", icon: "chart.xyaxis.line", isSelected: model.activeWorkspaceMode == .explorer) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        model.activeWorkspaceMode = .explorer
+                    }
+                }
+
+                workspaceRow(title: "Profile Studio", icon: "slider.horizontal.3", isSelected: model.activeWorkspaceMode == .editor) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        model.activeWorkspaceMode = .editor
+                    }
+                }
+            }
+
+            Spacer().frame(height: 12)
 
             if let project = model.project {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(project.root.lastPathComponent).font(.caption).bold().foregroundStyle(.primary).lineLimit(1)
-                    if model.isInspecting {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
-                                HStack {
-                                    Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal) sources")
-                                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button("Cancel", action: model.cancelLoad)
-                                        .buttonStyle(.plain)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.red)
-                                }
-                            }
-                        }
-                        .padding(.top, 4)
-                    } else if model.isLoading && model.loadingPhase == "Discovering" {
-                        ProgressView {
-                            Text("Discovering sources under data/raw…")
-                                .font(.system(size: 11))
-                        }
-                        Button("Cancel Discovery", action: model.cancelLoad).buttonStyle(.bordered)
-                    } else if model.inspectionCancelled {
-                        let remaining = model.unindexedCount
-                        if remaining > 0 {
-                            Text("Inspection cancelled · \(remaining) remaining")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Button("Resume Inspection", action: { _ = model.resumeInspection() }).buttonStyle(.bordered)
-                        }
-                    } else if !model.isLazyInspectionEnabled {
-                        let remaining = model.unindexedCount
-                        if remaining > 0, !model.isInspecting {
+                // Section switcher: [ Sources ]  [ Categories ]
+                sectionSwitcher
+
+                if model.isInspecting {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
                             HStack {
-                                Text("\(remaining) unindexed")
+                                Text("Inspecting \(model.inspectedSources) of \(model.inspectionTotal)")
                                     .font(.system(size: 10)).foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Index All") {
-                                    _ = model.resumeInspection()
-                                }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.accentColor)
+                                Button("Cancel", action: model.cancelLoad)
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.red)
                             }
-                            .padding(.top, 2)
                         }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 4)
                 }
-                .padding(.horizontal, 14).padding(.top, 8)
 
                 ProjectSourcesSidebar(
                     sources: model.sources,
@@ -1477,85 +1901,187 @@ struct RawViewShell: View {
                     inventoryIssues: model.inventoryIssues,
                     dataRoot: project.dataRootRelativePath,
                     expandedDirectoryIDs: $model.expandedDirectoryIDs,
-                    onBuildProfile: { model.buildProfileForSource($0) }
+                    onBuildProfile: { model.buildProfileForSource($0) },
+                    facet: $model.selectedExplorerView,
+                    explorerViews: model.explorerViews,
+                    catalog: model.explorerCatalog,
+                    viewError: model.explorerViewError,
+                    onAddView: { model.addExplorerView(grammarID: $0, variable: $1) },
+                    onRemoveView: { model.removeExplorerView($0) },
+                    sourceLabels: model.sourceLabelLayouts,
+                    onSaveSourceLabels: { model.saveSourceLabels($0) }
                 )
                 .id("\(project.root.path):\(project.dataRootRelativePath)")
+
                 if !model.profileIssues.isEmpty {
                     profileIssueList
                         .padding(.horizontal, 12)
                 }
-                Text("RawView's built-in readers parse sources. Raw files and instrument profiles are never modified.")
+
+                Text("Built-in readers parse sources. Raw files are strictly read-only.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding([.bottom, .horizontal], 12)
             } else {
-                VStack(spacing: 16) {
-                    Spacer()
-                    ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
-                    Button(action: model.openProject) {
-                        HStack(spacing: 6) {
-                            Text("Open Project…")
-                            ShortcutBadge("openProject")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-
-                    if !model.recentProjects.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("RECENT PROJECTS")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Clear", action: model.clearRecentProjects)
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 4)
-
-                            VStack(spacing: 4) {
-                                ForEach(model.recentProjects.prefix(5), id: \.self) { url in
-                                    Button {
-                                        model.openRecentProject(url: url)
-                                    } label: {
-                                        HStack(spacing: 8) {
-                                            Image(systemName: "folder")
-                                                .foregroundStyle(Color.accentColor)
-                                                .font(.system(size: 12))
-                                            VStack(alignment: .leading, spacing: 1) {
-                                                Text(url.lastPathComponent)
-                                                    .font(.system(size: 12, weight: .medium))
-                                                    .foregroundStyle(.primary)
-                                                    .lineLimit(1)
-                                                Text(url.path)
-                                                    .font(.system(size: 10))
-                                                    .foregroundStyle(.tertiary)
-                                                    .lineLimit(1)
-                                                    .truncationMode(.middle)
-                                            }
-                                            Spacer()
-                                        }
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 6)
-                                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: 280)
-                        .padding(.top, 10)
-                    }
-
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(16)
+                noProjectSidebarContent
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func workspaceRow(title: String, icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    .frame(width: 18, height: 18)
+
+                Text(title)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.primary.opacity(0.08) : Color.clear)
+                    .padding(.horizontal, 8)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var sectionSwitcher: some View {
+        HStack(spacing: 2) {
+            let isTree = model.selectedExplorerView == "tree"
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    model.selectedExplorerView = "tree"
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11))
+                    Text("Tree")
+                        .font(.system(size: 11, weight: isTree ? .semibold : .medium))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 22)
+                .foregroundStyle(isTree ? .primary : .secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isTree ? Color(nsColor: .textBackgroundColor) : .clear)
+                        .shadow(color: isTree ? .black.opacity(0.12) : .clear, radius: 2, y: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+
+            let isCategories = model.selectedExplorerView != "tree"
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    if let firstView = model.explorerViews.first {
+                        model.selectedExplorerView = RawViewModel.explorerViewKey(grammarID: firstView.grammarID, variable: firstView.variable)
+                    } else {
+                        model.selectedExplorerView = ""
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "tag")
+                        .font(.system(size: 11))
+                    Text("Categories")
+                        .font(.system(size: 11, weight: isCategories ? .semibold : .medium))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 22)
+                .foregroundStyle(isCategories ? .primary : .secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isCategories ? Color(nsColor: .textBackgroundColor) : .clear)
+                        .shadow(color: isCategories ? .black.opacity(0.12) : .clear, radius: 2, y: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 3)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
+    }
+
+    private var noProjectSidebarContent: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            ContentUnavailableView("No Project", systemImage: "folder", description: Text("Open the research project that owns the raw files."))
+            Button(action: model.openProject) {
+                HStack(spacing: 6) {
+                    Text("Open Project…")
+                    ShortcutBadge("openProject")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+
+            if !model.recentProjects.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("RECENT PROJECTS")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Clear", action: model.clearRecentProjects)
+                            .buttonStyle(.plain)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 4)
+
+                    VStack(spacing: 4) {
+                        ForEach(model.recentProjects.prefix(5), id: \.self) { url in
+                            Button {
+                                model.openRecentProject(url: url)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder")
+                                        .foregroundStyle(Color.accentColor)
+                                        .font(.system(size: 12))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(url.lastPathComponent)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Text(url.path)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxWidth: 280)
+                .padding(.top, 10)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
     }
 
     private var profileIssueList: some View {
@@ -1572,14 +2098,16 @@ struct RawViewShell: View {
     private var inspector: some View {
         let focusedID = model.focusedSourceID
         var currentState: GallerySourceState? = nil
-        if let focusedID { currentState = model.sourceStates[focusedID] }
+        if let focusedID { currentState = model.displayStates[focusedID] }
         var currentSource: RawSource? = nil
         if let focusedID {
             currentSource = model.sources.first(where: { $0.id == focusedID })
         }
+        let baseMeasurement = focusedID.flatMap { model.sourceStates[$0]?.measurement }
+        let override = focusedID.flatMap { model.activeAxisOverride(for: $0) }
         return InspectorPane(measurement: currentState?.measurement, inspection: currentState?.inspection,
                              source: currentSource?.url, sourceID: currentSource?.id, error: currentState?.error ?? model.error,
-                             states: model.sourceStates,
+                             states: model.displayStates,
                              selectedIDs: model.selectedSourceIDs, focusedID: $model.focusedSourceID,
                              hidden: $model.hiddenSeries, lineWidth: $model.lineWidth,
                              renderStyle: $model.renderStyle,
@@ -1602,6 +2130,21 @@ struct RawViewShell: View {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
                                  }
                              },
-                             onBuildProfile: { model.buildProfileForSource($0) })
+                             onBuildProfile: { model.buildProfileForSource($0) },
+                             eligibleX: currentState?.measurement?.eligibleXIDs ?? [],
+                             eligibleY: currentState?.measurement?.eligibleYIDs ?? [],
+                             defaultY: baseMeasurement?.view.y ?? [],
+                             selectedX: override?.x,
+                             selectedY: override?.y,
+                             axisNote: focusedID.flatMap { model.axisNote(for: $0) },
+                             onSelectX: { x in
+                                 if let id = model.focusedSourceID { model.setAxisX(x, for: id) }
+                             },
+                             onSelectY: { y in
+                                 if let id = model.focusedSourceID { model.setAxisY(y, for: id) }
+                             },
+                             onResetAxes: {
+                                 if let id = model.focusedSourceID { model.resetAxes(for: id) }
+                             })
     }
 }

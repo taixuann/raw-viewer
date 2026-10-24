@@ -180,6 +180,21 @@ struct StreamHeaderCardView: View {
         selectedColumns.contains(colIdx)
     }
 
+    @State private var showingCustomProgressionPopover = false
+    @State private var customProgressionInput = ""
+    @State private var customProgressionBehavior: ProgressionBehavior = .discrete
+
+    private func excelColumnLetter(_ index: Int) -> String {
+        var n = index
+        var result = ""
+        while n >= 0 {
+            let rem = n % 26
+            result = String(UnicodeScalar(65 + rem)!) + result
+            n = (n / 26) - 1
+        }
+        return result
+    }
+
     var body: some View {
         if headerRowMode == .raw {
             rawHeaderModeView
@@ -190,13 +205,22 @@ struct StreamHeaderCardView: View {
 
     // MARK: - State 1: Raw Header Mode
     private var rawHeaderModeView: some View {
-        HStack(spacing: 3) {
-            Text(token.isEmpty ? "—" : token)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Color.primary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Text(excelColumnLetter(colIdx))
+                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(isColSelected ? Color.accentColor : Color.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.06))
+                    .cornerRadius(2)
+
+                Text(token.isEmpty ? "—" : token)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -225,15 +249,23 @@ struct StreamHeaderCardView: View {
     // MARK: - State 2: Configured Column Card Mode
     private var configuredCardModeView: some View {
         VStack(alignment: .leading, spacing: 3) {
-            // Row 1: # Index Badge & Role Pill Menu
+            // Row 1: Excel Coordinate Badge & Index Badge & Role Pill Menu
             HStack(spacing: 4) {
                 Circle()
                     .fill(isColSelected ? Color.accentColor : colColor)
                     .frame(width: 5.5, height: 5.5)
 
-                Text("#\(colIdx + 1)")
-                    .font(.system(size: 8.5, weight: .heavy, design: .monospaced))
+                Text(excelColumnLetter(colIdx))
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
                     .foregroundStyle(isColSelected ? Color.accentColor : colColor)
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1)
+                    .background((isColSelected ? Color.accentColor : colColor).opacity(0.12))
+                    .cornerRadius(2.5)
+
+                Text("#\(colIdx + 1)")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
 
                 Spacer(minLength: 2)
 
@@ -276,23 +308,17 @@ struct StreamHeaderCardView: View {
                         }
 
                         Menu("Custom Progression…") {
-                            Button("Discrete (Cycle / Stage)") {
-                                onSetColumnProgression(colIdx, .custom, .discrete)
+                            Button("Discrete (e.g. Cycle, pH, Stage)…") {
+                                customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                                customProgressionBehavior = .discrete
+                                showingCustomProgressionPopover = true
                             }
-                            Button("Continuous (Range)") {
-                                onSetColumnProgression(colIdx, .custom, .continuous)
+                            Button("Continuous (e.g. Concentration, Temp)…") {
+                                customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                                customProgressionBehavior = .continuous
+                                showingCustomProgressionPopover = true
                             }
                         }
-                    }
-
-                    Button("Set as Data Channel (Aux)") {
-                        var updated = col
-                        updated.isXAxis = false
-                        updated.isYAxis = false
-                        updated.isSkipped = false
-                        updated.role = .channel
-                        updated.progressionType = nil
-                        onUpdateColumn?(colIdx, updated)
                     }
                     Divider()
                     if col.isSkipped || col.role == .skip {
@@ -396,6 +422,55 @@ struct StreamHeaderCardView: View {
         .contextMenu {
             columnContextMenu
         }
+        .popover(isPresented: $showingCustomProgressionPopover) {
+            customProgressionPopoverView
+        }
+    }
+
+    private var customProgressionPopoverView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Custom Progression Dimension")
+                .font(.system(size: 11, weight: .bold))
+
+            Text("Enter dimension name (e.g. pH, Concentration, Cycle, Temperature):")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+
+            TextField("Dimension Name", text: $customProgressionInput)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+                .frame(width: 180)
+
+            HStack {
+                Button("Cancel") {
+                    showingCustomProgressionPopover = false
+                }
+                .controlSize(.small)
+
+                Spacer()
+
+                Button("Set Progression") {
+                    let clean = customProgressionInput.trimmingCharacters(in: .whitespaces)
+                    var updated = col
+                    updated.isXAxis = false
+                    updated.isYAxis = false
+                    updated.isDefaultX = false
+                    updated.isDefaultY = false
+                    updated.role = .progression
+                    updated.progressionType = .custom
+                    updated.progressionBehavior = customProgressionBehavior
+                    updated.customProgressionName = clean.isEmpty ? (col.label.isEmpty ? col.name : col.label) : clean
+                    updated.isSkipped = false
+                    columns[colIdx] = updated
+                    onUpdateColumn?(colIdx, updated)
+                    showingCustomProgressionPopover = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .frame(width: 220)
     }
 
     // MARK: - Helpers
@@ -551,16 +626,17 @@ struct StreamHeaderCardView: View {
                     }
                 }
                 Menu("Custom Progression…") {
-                    Button("Discrete (Cycle / Stage)") {
-                        onSetColumnProgression(colIdx, .custom, .discrete)
+                    Button("Discrete (e.g. Cycle, pH, Stage)…") {
+                        customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                        customProgressionBehavior = .discrete
+                        showingCustomProgressionPopover = true
                     }
-                    Button("Continuous (Range)") {
-                        onSetColumnProgression(colIdx, .custom, .continuous)
+                    Button("Continuous (e.g. Concentration, Temp)…") {
+                        customProgressionInput = col.customProgressionName ?? (col.label.isEmpty ? col.name : col.label)
+                        customProgressionBehavior = .continuous
+                        showingCustomProgressionPopover = true
                     }
                 }
-            }
-            Button("Set as Data Channel (Aux)") {
-                onSetColumnRole(colIdx, false, false)
             }
             Divider()
             if col.isSkipped {

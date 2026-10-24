@@ -140,7 +140,10 @@ public enum IndexCommand {
 
         if let explicitRoot = options.dataRoot {
             if options.saveSettings {
-                let settings = ProjectSettings(dataRoot: explicitRoot, defaultView: "tree")
+                let preserved = try? ProjectSettingsStore.load(projectRoot: projectRoot)
+                let settings = ProjectSettings(
+                    dataRoot: explicitRoot, defaultView: "tree",
+                    sourceLabels: preserved?.sourceLabels ?? [])
                 try ProjectSettingsStore.save(settings, projectRoot: projectRoot)
             }
             return try ProjectContext.open(projectRoot, dataRootRelativePath: explicitRoot)

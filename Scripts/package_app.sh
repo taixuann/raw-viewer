@@ -7,7 +7,7 @@ if [ -z "${RAWVIEW_BUILD_DIR:-}" ] || [ -z "${RAWVIEW_APP_PATH:-}" ] || [ -z "${
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/RawView-XXXXXX")
 fi
 build="${RAWVIEW_BUILD_DIR:-$scratch/build}"
-app="${RAWVIEW_APP_PATH:-$scratch/RawView.app}"
+app="${RAWVIEW_APP_PATH:-/tmp/RawView.app}"
 bundle_id="${RAWVIEW_BUNDLE_ID:-org.taixuann.rawview}"
 cache="${CLANG_MODULE_CACHE_PATH:-$scratch/module-cache}"
 mkdir -p "$cache"
@@ -24,6 +24,11 @@ cp "$binary" "$app/Contents/MacOS/RawView"
 cp "$root/Sources/RawViewApp/Resources/NativePlotStyle.json" "$app/Contents/Resources/NativePlotStyle.json"
 if [ -f "$root/Sources/RawViewApp/Resources/AppIcon.icns" ]; then
   cp "$root/Sources/RawViewApp/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+fi
+if [ -x "/Users/tai/oakreader-src/backend/dist/oak-backend" ]; then
+  cp "/Users/tai/oakreader-src/backend/dist/oak-backend" "$app/Contents/Resources/oak-backend"
+  chmod +x "$app/Contents/Resources/oak-backend"
+  codesign --force --sign - "$app/Contents/Resources/oak-backend"
 fi
 python3 - "$app/Contents/Info.plist" "$bundle_id" <<'PY'
 import plistlib, sys

@@ -10,11 +10,72 @@ public struct ProjectSettings: Sendable, Equatable {
     public let dataRoot: String
     public let defaultView: String
     public let defaultPreset: String
+    /// Project-scoped Developer Mode. Older settings files predate the key
+    /// and load as false; it is never a global default.
+    public let developerMode: Bool
+    /// Ordered project-only Explorer view references ((grammarID, variable)
+    /// identity lives here, never in the grammar catalog). Empty means no
+    /// semantic grouping views; Tree/None stay structural.
+    public let explorerViews: [ExplorerViewDefinition]
+    /// Optional per-grammar Explorer source-label rows. Absent in older
+    /// files means no customization (exact filename display).
+    public let sourceLabels: [SourceLabelLayout]
 
-    public init(dataRoot: String, defaultView: String = "tree", defaultPreset: String = "nature-single") {
+    public init(
+        dataRoot: String, defaultView: String = "tree", defaultPreset: String = "nature-single",
+        developerMode: Bool = false, explorerViews: [ExplorerViewDefinition] = [],
+        sourceLabels: [SourceLabelLayout] = []
+    ) {
         self.dataRoot = dataRoot
         self.defaultView = defaultView
         self.defaultPreset = defaultPreset
+        self.developerMode = developerMode
+        self.explorerViews = explorerViews
+        self.sourceLabels = sourceLabels
+    }
+}
+
+/// One Explorer view reference: a grammar variable shown as a grouping
+/// view, in menu order. Labels reuse the variable name; no custom labels.
+public struct ExplorerViewDefinition: Sendable, Equatable {
+    public let grammarID: String
+    public let variable: String
+
+    public init(grammarID: String, variable: String) {
+        self.grammarID = grammarID
+        self.variable = variable
+    }
+}
+
+/// One source-label row: ordered variable references joined with ` · `,
+/// plus bounded presentation style. No template language, no free colors.
+public struct SourceLabelRow: Sendable, Equatable {
+    public let variables: [String]
+    public let fontSize: Int
+    public let weight: String
+    public let font: String
+    public let emphasis: String
+
+    public init(
+        variables: [String], fontSize: Int = 12,
+        weight: String = "regular", font: String = "normal", emphasis: String = "primary"
+    ) {
+        self.variables = variables
+        self.fontSize = fontSize
+        self.weight = weight
+        self.font = font
+        self.emphasis = emphasis
+    }
+}
+
+/// One grammar's label configuration, shared across Explorer views.
+public struct SourceLabelLayout: Sendable, Equatable {
+    public let grammarID: String
+    public let rows: [SourceLabelRow]
+
+    public init(grammarID: String, rows: [SourceLabelRow]) {
+        self.grammarID = grammarID
+        self.rows = rows
     }
 }
 
@@ -37,8 +98,8 @@ public enum ProjectSettingsStore {
     public static let maximumFileBytes = 64 * 1024
     public static let relativePath = ".rawviewer/setting.yaml"
     public static let legacyRelativePath = ".rawviewer/setting/setting.yaml"
-    static let supportedSchemaVersions: Set<Int> = [1, 2]
-    static let currentSchemaVersion = 2
+    static let supportedSchemaVersions: Set<Int> = [1, 2, 3]
+    static let currentSchemaVersion = 3
     /// Schema v1 and v2 define exactly one navigator view.
     static let supportedDefaultViews: Set<String> = ["tree"]
 
@@ -131,6 +192,15 @@ public enum ProjectSettingsStore {
         guard supportedDefaultViews.contains(settings.defaultView) else {
             throw ProjectSettingsError(reason: "default_view \"\(settings.defaultView)\" is not supported; use \"tree\".")
         }
+        for view in settings.explorerViews {
+            try validateViewToken(view.grammarID, field: "explorer_views grammar_id")
+            try validateViewToken(view.variable, field: "explorer_views variable")
+        }
+        let seen = settings.explorerViews.map { "\($0.grammarID)\0\($0.variable)" }
+        guard Set(seen).count == seen.count else {
+            throw ProjectSettingsError(reason: "explorer_views must not repeat a (grammar_id, variable) reference.")
+        }
+        try validateSourceLabels(settings.sourceLabels)
         let data = Data(serialize(settings).utf8)
         guard data.count <= maximumFileBytes else {
             throw ProjectSettingsError(reason: "serialized settings exceed the 64 KiB settings limit.")
@@ -189,11 +259,91 @@ public enum ProjectSettingsStore {
         }
     }
 
+    /// A view reference identifier must survive a YAML round-trip unchanged:
+    /// nonempty, single-line, without quotes, backslashes or controls that
+    /// would re-read as a different scalar.
+    static func validateViewToken(_ value: String, field: String) throws {
+        guard !value.isEmpty, !value.contains("\""), !value.contains("\\"),
+              !value.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }),
+              !value.contains("\n"), !value.contains("\r") else {
+            throw ProjectSettingsError(reason: "\(field) must be a nonempty single-line identifier without quotes, backslashes, or control characters.")
+        }
+    }
+
+    /// Fail-closed source-label validation, shared by save and parse so
+    /// invalid payloads are rejected before any write.
+    static func validateSourceLabels(_ labels: [SourceLabelLayout]) throws {
+        var seen = Set<String>()
+        for layout in labels {
+            try validateViewToken(layout.grammarID, field: "source_labels grammar_id")
+            guard !layout.grammarID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ProjectSettingsError(reason: "source_labels grammar_id must not be blank.")
+            }
+            guard seen.insert(layout.grammarID).inserted else {
+                throw ProjectSettingsError(reason: "source_labels must not repeat grammar_id \"\(layout.grammarID)\".")
+            }
+            guard !layout.rows.isEmpty else {
+                throw ProjectSettingsError(reason: "source_labels rows for grammar_id \"\(layout.grammarID)\" must not be empty.")
+            }
+            for row in layout.rows {
+                guard !row.variables.isEmpty else {
+                    throw ProjectSettingsError(reason: "each source_labels row needs at least one variable.")
+                }
+                for variable in row.variables {
+                    try validateViewToken(variable, field: "source_labels variable")
+                    guard !variable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw ProjectSettingsError(reason: "source_labels variable must not be blank.")
+                    }
+                }
+                guard (10...18).contains(row.fontSize) else {
+                    throw ProjectSettingsError(reason: "source_labels font_size must be 10-18; found \"\(row.fontSize)\".")
+                }
+                guard row.weight == "regular" || row.weight == "medium" || row.weight == "semibold" else {
+                    throw ProjectSettingsError(reason: "source_labels weight must be regular, medium or semibold; found \"\(row.weight)\".")
+                }
+                guard row.font == "normal" || row.font == "monospace" else {
+                    throw ProjectSettingsError(reason: "source_labels font must be normal or monospace; found \"\(row.font)\".")
+                }
+                guard row.emphasis == "primary" || row.emphasis == "secondary" else {
+                    throw ProjectSettingsError(reason: "source_labels emphasis must be primary or secondary; found \"\(row.emphasis)\".")
+                }
+            }
+        }
+    }
+
     static func serialize(_ settings: ProjectSettings) -> String {
-        "schema_version: \(currentSchemaVersion)\n"
+        var text = "schema_version: \(currentSchemaVersion)\n"
             + "data_root: \"\(settings.dataRoot)\"\n"
             + "default_view: \"\(settings.defaultView)\"\n"
             + "default_preset: \"\(settings.defaultPreset)\"\n"
+            + "developer_mode: \(settings.developerMode ? "true" : "false")\n"
+        if settings.explorerViews.isEmpty {
+            text += "explorer_views: []\n"
+        } else {
+            text += "explorer_views:\n"
+            for view in settings.explorerViews {
+                text += "  - grammar_id: \"\(view.grammarID)\"\n"
+                    + "    variable: \"\(view.variable)\"\n"
+            }
+        }
+        // Absent when empty: older files and older binaries keep their
+        // meaning (no customization), and label-free files stay readable.
+        if !settings.sourceLabels.isEmpty {
+            text += "source_labels:\n"
+            for layout in settings.sourceLabels {
+                text += "  - grammar_id: \"\(layout.grammarID)\"\n"
+                    + "    rows:\n"
+                for row in layout.rows {
+                    let vars = row.variables.map { "\"\($0)\"" }.joined(separator: ", ")
+                    text += "      - variables: [\(vars)]\n"
+                        + "        font_size: \(row.fontSize)\n"
+                        + "        weight: \"\(row.weight)\"\n"
+                        + "        font: \"\(row.font)\"\n"
+                        + "        emphasis: \"\(row.emphasis)\"\n"
+                }
+            }
+        }
+        return text
     }
 
     static func parse(text: String) throws -> ProjectSettings {
@@ -208,16 +358,23 @@ public enum ProjectSettingsStore {
         guard root.mapEntries != nil else {
             throw ProjectSettingsError(reason: "settings must be a YAML mapping.")
         }
-        // Duplicate keys already fail closed inside YAMLParser; unknown keys
-        // fail closed here against the schema key set.
-        let allowedKeys: Set<String> = ["schema_version", "data_root", "default_view", "default_preset"]
-        for entry in root.mapEntries ?? [] where !allowedKeys.contains(entry.key) {
-            throw ProjectSettingsError(reason: "unknown settings key \"\(entry.key)\"; expected schema_version, data_root, default_view, default_preset.")
-        }
         guard let versionStr = root.value(for: "schema_version")?.scalarValue,
               let version = Int(versionStr),
               supportedSchemaVersions.contains(version) else {
-            throw ProjectSettingsError(reason: "schema_version must be 1 or 2; found \"\(root.value(for: "schema_version")?.scalarValue ?? "")\".")
+            throw ProjectSettingsError(reason: "schema_version must be 1, 2 or 3; found \"\(root.value(for: "schema_version")?.scalarValue ?? "")\".")
+        }
+        // Duplicate keys already fail closed inside YAMLParser; unknown keys
+        // fail closed here against the per-version schema key set. The v3
+        // keys are unknown outside v3, so older files keep their meaning and
+        // older settings default to developerMode false with no views.
+        var allowedKeys: Set<String> = ["schema_version", "data_root", "default_view", "default_preset"]
+        if version == 3 {
+            allowedKeys.insert("developer_mode")
+            allowedKeys.insert("explorer_views")
+            allowedKeys.insert("source_labels")
+        }
+        for entry in root.mapEntries ?? [] where !allowedKeys.contains(entry.key) {
+            throw ProjectSettingsError(reason: "unknown settings key \"\(entry.key)\" for schema_version \(version).")
         }
         guard let dataRoot = root.value(for: "data_root")?.scalarValue else {
             throw ProjectSettingsError(reason: "data_root is required and must be a quoted project-relative path.")
@@ -227,6 +384,93 @@ public enum ProjectSettingsStore {
             throw ProjectSettingsError(reason: "default_view must be \"tree\"; found \"\(root.value(for: "default_view")?.scalarValue ?? "")\".")
         }
         let defaultPreset = root.value(for: "default_preset")?.scalarValue ?? "nature-single"
-        return ProjectSettings(dataRoot: dataRoot, defaultView: defaultView, defaultPreset: defaultPreset)
+        var developerMode = false
+        if let modeNode = root.value(for: "developer_mode") {
+            guard let raw = modeNode.scalarValue, raw == "true" || raw == "false" else {
+                throw ProjectSettingsError(reason: "developer_mode must be true or false.")
+            }
+            developerMode = (raw == "true")
+        }
+        var explorerViews: [ExplorerViewDefinition] = []
+        if let viewsNode = root.value(for: "explorer_views") {
+            guard let items = viewsNode.listItems else {
+                throw ProjectSettingsError(reason: "explorer_views must be a YAML list of grammar_id/variable references.")
+            }
+            for item in items {
+                guard let entries = item.mapEntries else {
+                    throw ProjectSettingsError(reason: "each explorer_views entry must be a mapping with grammar_id and variable.")
+                }
+                for entry in entries where entry.key != "grammar_id" && entry.key != "variable" {
+                    throw ProjectSettingsError(reason: "unknown explorer_views key \"\(entry.key)\"; expected grammar_id, variable.")
+                }
+                guard let grammarID = item.value(for: "grammar_id")?.scalarValue,
+                      let variable = item.value(for: "variable")?.scalarValue else {
+                    throw ProjectSettingsError(reason: "each explorer_views entry needs grammar_id and variable.")
+                }
+                try validateViewToken(grammarID, field: "explorer_views grammar_id")
+                try validateViewToken(variable, field: "explorer_views variable")
+                explorerViews.append(ExplorerViewDefinition(grammarID: grammarID, variable: variable))
+            }
+            let seen = explorerViews.map { "\($0.grammarID)\0\($0.variable)" }
+            guard Set(seen).count == seen.count else {
+                throw ProjectSettingsError(reason: "explorer_views must not repeat a (grammar_id, variable) reference.")
+            }
+        }
+        var sourceLabels: [SourceLabelLayout] = []
+        if let labelsNode = root.value(for: "source_labels") {
+            guard let items = labelsNode.listItems else {
+                throw ProjectSettingsError(reason: "source_labels must be a YAML list of grammar layouts.")
+            }
+            for item in items {
+                guard item.mapEntries != nil else {
+                    throw ProjectSettingsError(reason: "each source_labels entry must be a mapping with grammar_id and rows.")
+                }
+                for entry in item.mapEntries ?? [] where entry.key != "grammar_id" && entry.key != "rows" {
+                    throw ProjectSettingsError(reason: "unknown source_labels key \"\(entry.key)\"; expected grammar_id, rows.")
+                }
+                guard let grammarID = item.value(for: "grammar_id")?.scalarValue,
+                      let rowsNode = item.value(for: "rows"),
+                      let rowItems = rowsNode.listItems else {
+                    throw ProjectSettingsError(reason: "each source_labels entry needs grammar_id and rows.")
+                }
+                var rows: [SourceLabelRow] = []
+                for rowItem in rowItems {
+                    guard rowItem.mapEntries != nil else {
+                        throw ProjectSettingsError(reason: "each source_labels row must be a mapping with variables, font_size, weight, font, emphasis.")
+                    }
+                    for entry in rowItem.mapEntries ?? []
+                        where entry.key != "variables" && entry.key != "font_size" && entry.key != "weight"
+                            && entry.key != "font" && entry.key != "emphasis" {
+                        throw ProjectSettingsError(reason: "unknown source_labels row key \"\(entry.key)\"; expected variables, font_size, weight, font, emphasis.")
+                    }
+                    guard let varsNode = rowItem.value(for: "variables"),
+                          let varItems = varsNode.listItems else {
+                        throw ProjectSettingsError(reason: "each source_labels row needs variables, font_size, weight, font, emphasis.")
+                    }
+                    var variables: [String] = []
+                    for varItem in varItems {
+                        guard let name = varItem.scalarValue else {
+                            throw ProjectSettingsError(reason: "source_labels variable must be a nonempty identifier.")
+                        }
+                        variables.append(name)
+                    }
+                    guard let sizeStr = rowItem.value(for: "font_size")?.scalarValue,
+                          let fontSize = Int(sizeStr),
+                          let weight = rowItem.value(for: "weight")?.scalarValue,
+                          let font = rowItem.value(for: "font")?.scalarValue,
+                          let emphasis = rowItem.value(for: "emphasis")?.scalarValue else {
+                        throw ProjectSettingsError(reason: "each source_labels row needs variables, font_size, weight, font, emphasis.")
+                    }
+                    rows.append(SourceLabelRow(
+                        variables: variables, fontSize: fontSize,
+                        weight: weight, font: font, emphasis: emphasis))
+                }
+                sourceLabels.append(SourceLabelLayout(grammarID: grammarID, rows: rows))
+            }
+            try validateSourceLabels(sourceLabels)
+        }
+        return ProjectSettings(
+            dataRoot: dataRoot, defaultView: defaultView, defaultPreset: defaultPreset,
+            developerMode: developerMode, explorerViews: explorerViews, sourceLabels: sourceLabels)
     }
 }
