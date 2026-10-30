@@ -6,7 +6,7 @@ mod types;
 mod v3;
 
 pub use v3::{
-    parse as parse_profile_v3, ColumnRoleV3, DataStartLocatorV3, HeaderLocatorV3,
+    parse as parse_profile_v3, AxisV3, ColumnRoleV3, DataStartLocatorV3, HeaderLocatorV3,
     MetadataCaptureRuleV3, ProfileColumnV3, ProfileDocumentError, ProfileDocumentV3,
     ProfileVariantV3,
 };

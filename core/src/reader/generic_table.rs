@@ -5,7 +5,6 @@ use crate::measurement::{
 };
 use crate::profile::sha256_hex;
 use crate::reader::tabular;
-use crate::reader::READER_VERSION;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -231,7 +230,6 @@ pub fn load_measurement(
         support_status: "supported".into(),
         provenance: BTreeMap::from([
             ("reader".into(), "GenericTableReader".into()),
-            ("reader_version".into(), READER_VERSION.into()),
             ("delimiter".into(), inspection.delimiter.to_string()),
         ]),
     })

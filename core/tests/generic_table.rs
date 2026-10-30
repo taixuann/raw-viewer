@@ -49,11 +49,11 @@ fn generic_table_loads_unprofiled_delimited_csv() {
     assert!((y[2] - 3e-9).abs() < 1e-15);
 
     assert_eq!(
-        measurement.provenance.get("reader_version"),
-        Some(&raw_viewer_core::reader::READER_VERSION.to_string())
-    );
-    assert_eq!(
         measurement.provenance.get("reader"),
         Some(&"GenericTableReader".to_string())
+    );
+    assert_eq!(
+        measurement.provenance.get("delimiter"),
+        Some(&",".to_string())
     );
 }

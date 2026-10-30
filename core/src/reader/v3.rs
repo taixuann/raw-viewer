@@ -6,7 +6,7 @@ use crate::measurement::{
     MetadataSection, NormalizedMeasurement, SourceIdentity,
 };
 use crate::profile::{
-    ColumnRoleV3, DataStartLocatorV3, HeaderLocatorV3, ProfileCatalog, ProfileColumn,
+    AxisV3, ColumnRoleV3, DataStartLocatorV3, HeaderLocatorV3, ProfileCatalog, ProfileColumn,
     ProfileColumnV3, ProfileDocumentV3, ProfileResolution, ProfileVariantV3,
 };
 use crate::reader::cell::{append_cell, CellLedger};
@@ -871,14 +871,30 @@ pub fn measurement_from_v3(
             },
         ],
     });
-    let eligible_x: Vec<_> = variant
+    let mut eligible_x: Vec<_> = variant
         .raw_stream
         .columns
         .iter()
-        .filter(|c| c.role != ColumnRoleV3::Skip && channel_names.contains(c.id.as_str()))
+        .filter(|c| {
+            c.role != ColumnRoleV3::Skip
+                && c.axes.contains(&AxisV3::X)
+                && channel_names.contains(c.id.as_str())
+        })
         .map(|c| c.id.clone())
         .collect();
-    let eligible_y = eligible_x.clone();
+    eligible_x.sort();
+    let mut eligible_y: Vec<_> = variant
+        .raw_stream
+        .columns
+        .iter()
+        .filter(|c| {
+            c.role != ColumnRoleV3::Skip
+                && c.axes.contains(&AxisV3::Y)
+                && channel_names.contains(c.id.as_str())
+        })
+        .map(|c| c.id.clone())
+        .collect();
+    eligible_y.sort();
     Ok(NormalizedMeasurement {
         source: SourceIdentity {
             path: relative_path.to_string(),
