@@ -1,0 +1,9 @@
+[package]
+name = "raw-viewer-bindings"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Placeholder for a future UniFFI bridge to raw-viewer-core."
+
+[dependencies]

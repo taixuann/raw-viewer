@@ -1,0 +1,14 @@
+[package]
+name = "raw-viewer-tauri"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Minimal Tauri 2 shell that calls raw-viewer-core."
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+raw-viewer-core = { path = "../../../core" }
+tauri = { version = "2", features = [] }

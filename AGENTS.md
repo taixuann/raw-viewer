@@ -10,6 +10,8 @@ Raw scientific data files under project data roots are strictly read-only and im
 
 ## Knowledge Graph and Component Map (Graphify)
 
+The Swift package lives in `apps/macos/`. Paths in the map below are relative to that package.
+
 RawView is organized into five decoupled core layers and two app workspaces.
 
 ```mermaid
@@ -65,4 +67,4 @@ graph TD
 2. **Settings Invariant**: Project configuration is declarative and resides at `<project>/.rawviewer/setting.yaml`. Default view is `tree`. Default preset is `nature-single`.
 3. **Profile Fallback**: Profiles are loaded from `<project>/.rawviewer/instrument/`. If missing, fallback to `data/.rawview/instrument/` and `data/instruments/` (ignoring empty directories).
 4. **Editor Performance**: The raw data canvas displays a virtualized window of the first 500 lines to guarantee 120 FPS UI performance.
-5. **Verification**: Always run `./Scripts/check_core.sh` and `./Scripts/check_index_cli.sh` before declaring completion.
+5. **Verification**: Always run `./apps/macos/Scripts/check_core.sh` and `./apps/macos/Scripts/check_index_cli.sh` before declaring completion. Rust workspace checks are `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` from the repository root.
