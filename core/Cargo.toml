@@ -8,4 +8,6 @@ description = "Shared RawView core. Resolves config paths and loads TOML setting
 
 [dependencies]
 directories = "6.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 toml = "1.1.8"
