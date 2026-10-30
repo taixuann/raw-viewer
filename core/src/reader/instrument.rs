@@ -1,45 +1,23 @@
+use super::ReaderError;
 use crate::measurement::{
-    GapReason, InstrumentIdentity, JSONValue, MeasurementChannel, MeasurementView,
-    MetadataField, MetadataSection, NormalizedMeasurement, SourceIdentity,
+    InstrumentIdentity, JSONValue, MeasurementChannel, MeasurementView, MetadataField,
+    MetadataSection, NormalizedMeasurement, SourceIdentity,
 };
 use crate::profile::{
-    load_catalog, ProfileCatalog, ProfileMatch, ProfileResolution, ProfileFormat,
+    load_catalog, ProfileCatalog, ProfileFormat, ProfileMatch, ProfileResolution,
 };
 use crate::project::ProjectContext;
 use crate::reader::comment_tsv::extract_comment_tsv;
 use crate::reader::first_row::extract_first_row_header;
 use crate::reader::line_puller::{decode_with_format, TextEncoding};
-use crate::reader::tabular::{extract_tabular, open_source_at_prefix, read_prefix, TabularExtraction};
-use crate::reader::ReaderError;
+use crate::reader::tabular::{
+    extract_tabular, open_source_at_prefix, read_prefix, TabularExtraction,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const READER_VERSION: &str = "1.3.0";
 const HEADER_SAMPLE_BYTES: usize = 64 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReaderError {
-    InvalidProject,
-    SourceOutsideRaw { path: String, data_root: String },
-    InvalidSource(String),
-}
-
-impl std::fmt::Display for ReaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReaderError::InvalidProject => {
-                f.write_str("Choose a project containing a readable data/raw directory.")
-            }
-            ReaderError::SourceOutsideRaw { path, data_root } => write!(
-                f,
-                "{path}: resolves outside this project's data root (\"{data_root}\")."
-            ),
-            ReaderError::InvalidSource(message) => f.write_str(message),
-        }
-    }
-}
-
-impl std::error::Error for ReaderError {}
 
 pub fn load_measurement(
     project_root: &Path,
@@ -82,18 +60,20 @@ pub fn load_measurement(
     let encoded = resolve_encoded(&prefix, &catalog, &extension, &basename);
     let (profile_match, encoding, sample, pending) = match encoded {
         EncodedResolution::Failed(message) => {
-            return Err(ReaderError::InvalidSource(if message.contains("could not be decoded") {
-                format!("{relative_path}: {message}")
-            } else {
-                message
-            }));
+            return Err(ReaderError::InvalidSource(
+                if message.contains("could not be decoded") {
+                    format!("{relative_path}: {message}")
+                } else {
+                    message
+                },
+            ));
         }
         EncodedResolution::Matched {
             profile_match,
             encoding,
             text,
             pending,
-        } => (profile_match, encoding, text, pending),
+        } => (*profile_match, encoding, text, pending),
     };
 
     let prefix_consumed = prefix.len() - pending.len();
@@ -109,18 +89,13 @@ pub fn load_measurement(
         &prefix[..prefix_consumed],
     )?;
 
-    measurement_from_extraction(
-        &relative_path,
-        &basename,
-        &profile_match,
-        extracted,
-    )
+    measurement_from_extraction(&relative_path, &basename, &profile_match, extracted)
 }
 
 enum EncodedResolution {
     Failed(String),
     Matched {
-        profile_match: ProfileMatch,
+        profile_match: Box<ProfileMatch>,
         encoding: TextEncoding,
         text: String,
         pending: Vec<u8>,
@@ -159,7 +134,8 @@ fn resolve_encoded(
     let mut first_sample = String::new();
     let mut first_decoded = false;
     for (profile, format) in candidates {
-        let Some((encoding, text, pending)) = decode_with_format(prefix, &format.encoding_names) else {
+        let Some((encoding, text, pending)) = decode_with_format(prefix, &format.encoding_names)
+        else {
             continue;
         };
         if !first_decoded {
@@ -169,15 +145,15 @@ fn resolve_encoded(
         decoded_any = true;
         let sample_lower = text.to_lowercase();
         let base_lower = basename.to_lowercase();
-        for mode in profile
-            .modes
-            .iter()
-            .filter(|m| m.format_id == format.id)
-        {
+        for mode in profile.modes.iter().filter(|m| m.format_id == format.id) {
             let filename_ok = mode
                 .filename_contains_all
                 .as_ref()
-                .map(|tokens| tokens.iter().all(|t| base_lower.contains(&t.to_lowercase())))
+                .map(|tokens| {
+                    tokens
+                        .iter()
+                        .all(|t| base_lower.contains(&t.to_lowercase()))
+                })
                 .unwrap_or(true);
             let header_ok = mode
                 .detect
@@ -206,7 +182,7 @@ fn resolve_encoded(
             .collect();
         if blocking.is_empty() {
             return EncodedResolution::Matched {
-                profile_match: unique.profile_match,
+                profile_match: Box::new(unique.profile_match),
                 encoding: unique.encoding,
                 text: unique.text,
                 pending: unique.pending,
@@ -256,6 +232,7 @@ fn resolve_encoded(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_for_kind(
     relative_path: &str,
     format: &ProfileFormat,
@@ -357,7 +334,10 @@ fn measurement_from_extraction(
         support_status: "supported".into(),
         provenance: BTreeMap::from([
             ("reader_version".into(), READER_VERSION.into()),
-            ("profile_id".into(), profile_match.profile.instrument_id.clone()),
+            (
+                "profile_id".into(),
+                profile_match.profile.instrument_id.clone(),
+            ),
             ("profile_hash".into(), profile_match.profile.sha256.clone()),
             (
                 "profile_schema_version".into(),
@@ -387,7 +367,10 @@ pub fn parse_filename(filename: &str) -> (Option<String>, Option<String>, Option
     if category.is_none() {
         let parts: Vec<&str> = filename.split('_').collect();
         if parts.len() >= 4 {
-            category = parts.last().and_then(|last| last.split('.').next()).map(str::to_string);
+            category = parts
+                .last()
+                .and_then(|last| last.split('.').next())
+                .map(str::to_string);
         }
     }
     (timestamp, device_id, category)
@@ -396,7 +379,10 @@ pub fn parse_filename(filename: &str) -> (Option<String>, Option<String>, Option
 fn regex_timestamp(filename: &str) -> Option<String> {
     let bytes = filename.as_bytes();
     if bytes.len() >= 6 && bytes[..6].iter().all(|b| b.is_ascii_digit()) {
-        let token = if bytes.len() >= 13 && bytes[6] == b'-' && bytes[7..13].iter().all(|b| b.is_ascii_digit()) {
+        let token = if bytes.len() >= 13
+            && bytes[6] == b'-'
+            && bytes[7..13].iter().all(|b| b.is_ascii_digit())
+        {
             &filename[..13]
         } else {
             &filename[..6]
@@ -418,7 +404,10 @@ fn regex_category_suffix(after: &str) -> Option<String> {
     if stem.is_empty() {
         return None;
     }
-    if stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
+    if stem
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
         Some(stem.to_string())
     } else {
         None
@@ -433,25 +422,48 @@ fn is_valid_filename_timestamp(token: &str) -> bool {
     if bytes.len() == 13 && bytes[6] != b'-' {
         return false;
     }
-    let number = |from: usize, to: usize| -> Option<u32> {
-        token.get(from..to)?.parse().ok()
+    let number = |from: usize, to: usize| -> Option<u32> { token.get(from..to)?.parse().ok() };
+    let Some(day) = number(0, 2) else {
+        return false;
     };
-    let day = number(0, 2)?;
-    let month = number(2, 4)?;
-    let year_suffix = number(4, 6)?;
+    let Some(month) = number(2, 4) else {
+        return false;
+    };
+    let Some(year_suffix) = number(4, 6) else {
+        return false;
+    };
     if !(1..=12).contains(&month) {
         return false;
     }
     let year = 2000 + year_suffix;
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_lengths = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_lengths = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     if day < 1 || day > month_lengths[(month - 1) as usize] {
         return false;
     }
     if bytes.len() == 13 {
-        let hour = number(7, 9)?;
-        let minute = number(9, 11)?;
-        let second = number(11, 13)?;
+        let Some(hour) = number(7, 9) else {
+            return false;
+        };
+        let Some(minute) = number(9, 11) else {
+            return false;
+        };
+        let Some(second) = number(11, 13) else {
+            return false;
+        };
         if hour > 23 || minute > 59 || second > 59 {
             return false;
         }

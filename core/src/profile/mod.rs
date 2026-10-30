@@ -14,8 +14,6 @@ pub fn validate_document(text: &str, relative_path: &str) -> ProfileLoadOutcome 
     schema::load_document(text, relative_path, &sha256)
 }
 
-use sha2::{Digest, Sha256};
-
 pub fn sha256_hex(data: &[u8]) -> String {
     let digest = Sha256::digest(data);
     digest.iter().map(|b| format!("{b:02x}")).collect()

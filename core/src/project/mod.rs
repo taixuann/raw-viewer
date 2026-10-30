@@ -35,9 +35,7 @@ impl ProjectContext {
                 "invalid data root \"{data_root}\""
             )));
         }
-        let canonical_root = root
-            .canonicalize()
-            .unwrap_or_else(|_| root.to_path_buf());
+        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let raw = if data_root == "." {
             canonical_root.clone()
         } else {
@@ -66,7 +64,9 @@ impl ProjectContext {
     }
 
     pub fn source_relative_path(&self, source: &Path) -> Option<String> {
-        let claimed = source.canonicalize().unwrap_or_else(|_| source.to_path_buf());
+        let claimed = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.to_path_buf());
         let relative = if claimed.starts_with(&self.root) {
             claimed
                 .strip_prefix(&self.root)

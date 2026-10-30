@@ -54,7 +54,7 @@ pub struct InstrumentProfile {
     pub schema_version: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileMatch {
     pub profile: InstrumentProfile,
     pub format: ProfileFormat,
@@ -63,7 +63,7 @@ pub struct ProfileMatch {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfileResolution {
-    Matched(ProfileMatch),
+    Matched(Box<ProfileMatch>),
     Failed(String),
 }
 
@@ -93,11 +93,7 @@ impl BrokenClaim {
             let filename_mismatch = mode
                 .filenames
                 .as_ref()
-                .map(|tokens| {
-                    !tokens
-                        .iter()
-                        .all(|t| base.contains(&t.to_lowercase()))
-                })
+                .map(|tokens| !tokens.iter().all(|t| base.contains(&t.to_lowercase())))
                 .unwrap_or(false);
             let header_mismatch = !mode.signatures.is_empty()
                 && !mode

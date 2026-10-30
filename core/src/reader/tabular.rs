@@ -1,8 +1,8 @@
+use super::ReaderError;
 use crate::measurement::GapReason;
 use crate::profile::{ProfileColumn, ProfileFormat, ProfileMode};
 use crate::reader::cell::{append_cell, CellLedger};
-use crate::reader::line_puller::{LinePuller, TextEncoding, MAXIMUM_SOURCE_LINE_BYTES};
-use crate::reader::ReaderError;
+use crate::reader::line_puller::{LinePuller, TextEncoding};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -20,7 +20,9 @@ pub fn gap_reason(raw: &str) -> Option<GapReason> {
     }
     match raw.to_lowercase().as_str() {
         "nan" | "+nan" | "-nan" => Some(GapReason::Nan),
-        "inf" | "+inf" | "-inf" | "infinity" | "+infinity" | "-infinity" => Some(GapReason::Infinite),
+        "inf" | "+inf" | "-inf" | "infinity" | "+infinity" | "-infinity" => {
+            Some(GapReason::Infinite)
+        }
         _ => None,
     }
 }
@@ -91,12 +93,10 @@ pub fn split_line(line: &str, delimiter: char, context: &str) -> Result<Vec<Stri
     let mut chars = line.chars().peekable();
     while let Some(character) = chars.next() {
         if character == '"' {
-            if in_quotes {
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    current.push_str("\"\"");
-                    continue;
-                }
+            if in_quotes && chars.peek() == Some(&'"') {
+                chars.next();
+                current.push_str("\"\"");
+                continue;
             }
             in_quotes = !in_quotes;
             current.push(character);
@@ -206,7 +206,10 @@ pub fn resolve_columns(
         }
     }
     if !columns.iter().any(|(c, _)| c.key == mode.x)
-        || !mode.y.iter().all(|y| columns.iter().any(|(c, _)| c.key == *y))
+        || !mode
+            .y
+            .iter()
+            .all(|y| columns.iter().any(|(c, _)| c.key == *y))
     {
         return Err(ReaderError::InvalidSource(format!(
             "{relative_path}: profile mode \"{}\" references a column missing from format \"{}\".",
@@ -216,6 +219,7 @@ pub fn resolve_columns(
     Ok(columns)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn extract_tabular(
     relative_path: &str,
     format: &ProfileFormat,
@@ -223,7 +227,7 @@ pub fn extract_tabular(
     encoding: TextEncoding,
     initial_text: &str,
     initial_pending: &[u8],
-    mut file: File,
+    file: File,
     prefix_hashed: &[u8],
 ) -> Result<TabularExtraction, ReaderError> {
     let names_prefix = format.names_prefix.as_deref().ok_or_else(|| {
@@ -254,13 +258,17 @@ pub fn extract_tabular(
     let mut line_number = 0usize;
     while let Some(line) = puller.next_line()? {
         line_number += 1;
-        let fields = split_line(&line, format.delimiter, &format!("{relative_path} line {line_number}"))?;
+        let fields = split_line(
+            &line,
+            format.delimiter,
+            &format!("{relative_path} line {line_number}"),
+        )?;
         if fields.first().map(String::as_str) == Some(names_prefix) {
             headers = Some(fields);
             break;
         }
         header_bytes += line.len() + 1;
-        if header_bytes > MAXIMUM_SOURCE_LINE_BYTES {
+        if header_bytes > (1 << 20) {
             return Err(ReaderError::InvalidSource(format!(
                 "{relative_path}: header section exceeds the 1 MiB header limit."
             )));
@@ -286,7 +294,11 @@ pub fn extract_tabular(
         if line.trim().is_empty() {
             continue;
         }
-        let fields = split_line(&line, format.delimiter, &format!("{relative_path} line {line_number}"))?;
+        let fields = split_line(
+            &line,
+            format.delimiter,
+            &format!("{relative_path} line {line_number}"),
+        )?;
         if !data_prefix.is_empty() && fields.first().map(String::as_str) != Some(data_prefix) {
             continue;
         }
@@ -320,13 +332,12 @@ pub fn extract_tabular(
         let message = if data_prefix.is_empty() {
             format!("{relative_path}: no data rows were found after the header.")
         } else {
-            format!(
-                "{relative_path}: no \"{data_prefix}\" data rows were found after the header."
-            )
+            format!("{relative_path}: no \"{data_prefix}\" data rows were found after the header.")
         };
         return Err(ReaderError::InvalidSource(message));
     }
     let header_fields = header_metadata(&header_line_texts, format.delimiter, relative_path)?;
+    let warnings = ledger.summarize(relative_path);
     Ok(TabularExtraction {
         columns: columns
             .into_iter()
@@ -334,7 +345,7 @@ pub fn extract_tabular(
             .map(|(offset, (column, _))| (column, ledger.values[offset].clone()))
             .collect(),
         reasons: ledger.reasons,
-        warnings: ledger.summarize(relative_path),
+        warnings,
         header_fields,
         sha256: puller.digest_hex(),
     })
@@ -346,14 +357,20 @@ pub fn header_metadata(
     relative_path: &str,
 ) -> Result<Vec<(String, String)>, ReaderError> {
     let mut rows = Vec::new();
-    let mut first_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut first_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for (index, line) in lines.iter().enumerate() {
-        let cells = split_line(line, delimiter, &format!("{relative_path} line {}", index + 1))?;
+        let cells = split_line(
+            line,
+            delimiter,
+            &format!("{relative_path} line {}", index + 1),
+        )?;
         let Some(first) = cells.first().filter(|c| !c.is_empty()) else {
             continue;
         };
+        let first_key = first.clone();
         rows.push(cells);
-        *first_counts.entry(first.clone()).or_default() += 1;
+        *first_counts.entry(first_key).or_default() += 1;
     }
     let mut result = Vec::new();
     let mut used_keys = std::collections::HashSet::new();
@@ -367,10 +384,7 @@ pub fn header_metadata(
         } else if cells.len() == 2 {
             (first.clone(), cells[1].clone())
         } else if first_counts.get(first).copied().unwrap_or(0) > 1 {
-            (
-                format!("{} {}", first, cells[1]),
-                cells[2..].join(", "),
-            )
+            (format!("{} {}", first, cells[1]), cells[2..].join(", "))
         } else {
             (first.clone(), cells[1..].join(", "))
         };
@@ -378,7 +392,7 @@ pub fn header_metadata(
         if trimmed.is_empty() {
             continue;
         }
-        let mut key = base_key;
+        let mut key = base_key.clone();
         let mut suffix = 2usize;
         while used_keys.contains(&key) {
             key = format!("{base_key} #{suffix}");
@@ -396,19 +410,23 @@ pub fn header_metadata(
 }
 
 /// Re-open helper: seek file to end of prefix already consumed by caller.
-pub fn open_source_at_prefix(path: &std::path::Path, prefix_len: usize) -> Result<File, ReaderError> {
+pub fn open_source_at_prefix(
+    path: &std::path::Path,
+    prefix_len: usize,
+) -> Result<File, ReaderError> {
     let mut file = File::open(path).map_err(|err| {
         ReaderError::InvalidSource(format!(
             "{}: could not open the source file: {err}",
             path.display()
         ))
     })?;
-    file.seek(SeekFrom::Start(prefix_len as u64)).map_err(|err| {
-        ReaderError::InvalidSource(format!(
-            "{}: could not read the source file: {err}",
-            path.display()
-        ))
-    })?;
+    file.seek(SeekFrom::Start(prefix_len as u64))
+        .map_err(|err| {
+            ReaderError::InvalidSource(format!(
+                "{}: could not read the source file: {err}",
+                path.display()
+            ))
+        })?;
     Ok(file)
 }
 

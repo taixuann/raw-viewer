@@ -1,4 +1,4 @@
-use crate::reader::ReaderError;
+use super::ReaderError;
 use encoding_rs::WINDOWS_1252;
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -42,7 +42,7 @@ pub struct LinePuller {
 
 impl LinePuller {
     pub fn new(
-        mut file: File,
+        file: File,
         encoding: TextEncoding,
         relative_path: String,
         pending_bytes: Vec<u8>,
@@ -52,6 +52,7 @@ impl LinePuller {
         hasher.update(prefix_hashed);
         Self {
             file,
+            hasher,
             encoding,
             relative_path,
             pending_bytes,
@@ -106,12 +107,13 @@ impl LinePuller {
                     self.text_buffer.push('\n');
                 }
                 if !self.pending_bytes.is_empty() {
-                    let tail = decode_bytes(&self.pending_bytes, self.encoding).ok_or_else(|| {
-                        ReaderError::InvalidSource(format!(
-                            "{}: could not decode the file using the selected encoding.",
-                            self.relative_path
-                        ))
-                    })?;
+                    let tail =
+                        decode_bytes(&self.pending_bytes, self.encoding).ok_or_else(|| {
+                            ReaderError::InvalidSource(format!(
+                                "{}: could not decode the file using the selected encoding.",
+                                self.relative_path
+                            ))
+                        })?;
                     self.pending_bytes.clear();
                     self.stage_text(&tail, true)?;
                 } else {
@@ -147,12 +149,16 @@ impl LinePuller {
     }
 
     fn drain_lines(&mut self, final_chunk: bool) -> Result<(), ReaderError> {
-        let mut parts: Vec<&str> = self.text_buffer.split('\n').collect();
-        if final_chunk {
-            self.text_buffer.clear();
+        let remainder;
+        let mut parts: Vec<String> = if final_chunk {
+            remainder = String::new();
+            self.text_buffer.split('\n').map(str::to_string).collect()
         } else {
-            self.text_buffer = parts.pop().unwrap_or("").to_string();
-        }
+            let mut split = self.text_buffer.split('\n').map(str::to_string);
+            remainder = split.next_back().unwrap_or_default();
+            split.collect()
+        };
+        self.text_buffer = remainder;
         for part in &parts {
             if part.len() > MAXIMUM_SOURCE_LINE_BYTES {
                 return Err(ReaderError::InvalidSource(format!(
@@ -167,8 +173,7 @@ impl LinePuller {
                 self.relative_path
             )));
         }
-        self.ready_lines
-            .extend(parts.into_iter().map(str::to_string));
+        self.ready_lines.append(&mut parts);
         Ok(())
     }
 
@@ -221,10 +226,11 @@ fn decode_chunk_with_pending(
         TextEncoding::Utf8 => {
             let mut candidate_len = pending.len();
             while candidate_len > 0 {
-                if let Ok(text) = std::str::from_utf8(&pending[..candidate_len]) {
+                if std::str::from_utf8(&pending[..candidate_len]).is_ok() {
                     let rest = pending.split_off(candidate_len);
+                    let text = std::str::from_utf8(pending).unwrap().to_string();
                     *pending = rest;
-                    return Ok(text.to_string());
+                    return Ok(text);
                 }
                 candidate_len -= 1;
             }
@@ -233,9 +239,8 @@ fn decode_chunk_with_pending(
         _ => {
             let all = pending.clone();
             pending.clear();
-            decode_bytes(&all, encoding).ok_or_else(|| {
-                ReaderError::InvalidSource("could not decode source bytes".into())
-            })
+            decode_bytes(&all, encoding)
+                .ok_or_else(|| ReaderError::InvalidSource("could not decode source bytes".into()))
         }
     }
 }
@@ -248,20 +253,9 @@ fn decode_bytes(bytes: &[u8], encoding: TextEncoding) -> Option<String> {
             let (cow, _, _) = WINDOWS_1252.decode(bytes);
             Some(cow.into_owned())
         }
-        TextEncoding::Iso8859_1 => encoding_rs::Encoding::for_label(b"iso-8859-1").and_then(|enc| {
+        TextEncoding::Iso8859_1 => encoding_rs::Encoding::for_label(b"iso-8859-1").map(|enc| {
             let (cow, _, _) = enc.decode(bytes);
-            Some(cow.into_owned())
+            cow.into_owned()
         }),
     }
-}
-
-pub fn file_size(path: &std::path::Path) -> Result<u64, ReaderError> {
-    std::fs::metadata(path)
-        .map(|m| m.len())
-        .map_err(|err| {
-            ReaderError::InvalidSource(format!(
-                "{}: could not read the source file: {err}",
-                path.display()
-            ))
-        })
 }

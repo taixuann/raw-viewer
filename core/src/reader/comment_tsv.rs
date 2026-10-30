@@ -1,13 +1,14 @@
+use super::ReaderError;
+use crate::measurement::GapReason;
 use crate::profile::{ProfileFormat, ProfileMode};
 use crate::reader::cell::{append_cell, CellLedger};
-use crate::reader::line_puller::{LinePuller, TextEncoding, MAXIMUM_SOURCE_LINE_BYTES};
+use crate::reader::line_puller::{LinePuller, TextEncoding};
 use crate::reader::tabular::{split_line, TabularExtraction};
-use crate::reader::ReaderError;
-use crate::measurement::GapReason;
 use std::fs::File;
 
 const MAXIMUM_HEADER_BYTES: usize = 1 << 20;
 
+#[allow(clippy::too_many_arguments)]
 pub fn extract_comment_tsv(
     relative_path: &str,
     format: &ProfileFormat,
@@ -29,7 +30,10 @@ pub fn extract_comment_tsv(
         indexed.push((column.clone(), position));
     }
     if !indexed.iter().any(|(c, _)| c.key == mode.x)
-        || !mode.y.iter().all(|y| indexed.iter().any(|(c, _)| c.key == *y))
+        || !mode
+            .y
+            .iter()
+            .all(|y| indexed.iter().any(|(c, _)| c.key == *y))
     {
         return Err(ReaderError::InvalidSource(format!(
             "{relative_path}: profile mode \"{}\" references a column missing from format \"{}\".",
@@ -88,7 +92,11 @@ pub fn extract_comment_tsv(
             comments.push((unique, stored));
             continue;
         }
-        let fields = split_line(&line, format.delimiter, &format!("{relative_path} line {line_number}"))?;
+        let fields = split_line(
+            &line,
+            format.delimiter,
+            &format!("{relative_path} line {line_number}"),
+        )?;
         for (column_index, column) in indexed.iter().enumerate() {
             if column.1 >= fields.len() {
                 ledger.record(
@@ -119,6 +127,7 @@ pub fn extract_comment_tsv(
             "{relative_path}: no data rows were found."
         )));
     }
+    let warnings = ledger.summarize(relative_path);
     Ok(TabularExtraction {
         columns: indexed
             .into_iter()
@@ -126,7 +135,7 @@ pub fn extract_comment_tsv(
             .map(|(offset, (column, _))| (column, ledger.values[offset].clone()))
             .collect(),
         reasons: ledger.reasons,
-        warnings: ledger.summarize(relative_path),
+        warnings,
         header_fields: comments,
         sha256: puller.digest_hex(),
     })

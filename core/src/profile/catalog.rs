@@ -1,9 +1,8 @@
 use super::schema;
-use super::types::{
-    BrokenClaim, InstrumentProfile, ProfileCatalog, ProfileLoadOutcome, ProfileMatch,
-    ProfileResolution,
-};
 use super::sha256_hex;
+use super::types::{
+    BrokenClaim, InstrumentProfile, ProfileCatalog, ProfileMatch, ProfileMode, ProfileResolution,
+};
 use crate::project::ProjectContext;
 use std::fs;
 use std::io;
@@ -15,11 +14,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
         Err(err) => {
             return ProfileCatalog {
                 profiles: vec![],
-                issues: vec![format!(
-                    "{}: {}",
-                    project_root.display(),
-                    err
-                )],
+                issues: vec![format!("{}: {}", project_root.display(), err)],
                 broken_claims: vec![],
             };
         }
@@ -27,11 +22,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
 
     let rawviewer = project.root.join(".rawviewer/instrument");
     if is_directory_with_yamls(&rawviewer, &project.root) {
-        return load_profiles(
-            &rawviewer,
-            ".rawviewer/instrument",
-            &project,
-        );
+        return load_profiles(&rawviewer, ".rawviewer/instrument", &project);
     }
 
     let legacy = project.root.join("data/.rawview/instrument");
@@ -44,8 +35,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
         return ProfileCatalog {
             profiles: vec![],
             issues: vec![
-                "data/instruments resolves outside this project. No profiles were loaded."
-                    .into(),
+                "data/instruments resolves outside this project. No profiles were loaded.".into(),
             ],
             broken_claims: vec![],
         };
@@ -89,7 +79,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                     broken_claims: vec![],
                 };
             }
-            return load_profiles(&companion, "data/instruments/rawview", &project);
+            load_profiles(&companion, "data/instruments/rawview", &project)
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             load_profiles(&instruments, "data/instruments", &project)
@@ -135,8 +125,7 @@ fn is_inside_project(path: &Path, project_root: &Path) -> bool {
         return path.starts_with(project_root);
     };
     let canonical_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    canonical_path.starts_with(&canonical_root)
-        && canonical_path != canonical_root
+    canonical_path.starts_with(&canonical_root) && canonical_path != canonical_root
 }
 
 fn is_inside_directory(path: &Path, parent: &Path) -> bool {
@@ -154,12 +143,7 @@ fn load_profiles(root: &Path, display_root: &str, project: &ProjectContext) -> P
     let profile_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
 
     let mut entries: Vec<PathBuf> = fs::read_dir(root)
-        .map(|read_dir| {
-            read_dir
-                .filter_map(Result::ok)
-                .map(|e| e.path())
-                .collect()
-        })
+        .map(|read_dir| read_dir.filter_map(Result::ok).map(|e| e.path()).collect())
         .unwrap_or_default();
     entries.sort_by_key(|p| p.file_name().map(|n| n.to_os_string()));
 
@@ -293,17 +277,14 @@ impl ProfileCatalog {
                     .iter()
                     .filter(|m| m.format_id == format.id)
                     .collect();
-                let matched: Vec<_> = modes
+                let saw_filename_in_modes = modes.iter().any(|m| m.filename_contains_all.is_some());
+                let matched: Vec<ProfileMode> = modes
                     .iter()
                     .filter(|mode| {
                         let filename_ok = mode
                             .filename_contains_all
                             .as_ref()
-                            .map(|tokens| {
-                                tokens
-                                    .iter()
-                                    .all(|t| base.contains(&t.to_lowercase()))
-                            })
+                            .map(|tokens| tokens.iter().all(|t| base.contains(&t.to_lowercase())))
                             .unwrap_or(true);
                         let header_ok = mode
                             .detect
@@ -311,17 +292,18 @@ impl ProfileCatalog {
                             .any(|sig| sample.contains(&sig.to_lowercase()));
                         filename_ok && header_ok
                     })
-                    .copied()
+                    .map(|mode| (*mode).clone())
                     .collect();
+                let matched_empty = matched.is_empty();
                 for mode in matched {
                     matches.push(ProfileMatch {
                         profile: (*profile).clone(),
                         format: format.clone(),
-                        mode: mode.clone(),
+                        mode,
                     });
                 }
-                if matched.is_empty() {
-                    if modes.iter().any(|m| m.filename_contains_all.is_some()) {
+                if matched_empty {
+                    if saw_filename_in_modes {
                         saw_filename_gate = true;
                     }
                     let declared = if modes.is_empty() {
@@ -345,13 +327,14 @@ impl ProfileCatalog {
                 .filter(|c| c.blocks(&sample, basename))
                 .collect();
             if blocking.is_empty() {
-                return ProfileResolution::Matched(sole);
+                return ProfileResolution::Matched(Box::new(sole));
             }
             let note = format!(
                 "A valid profile ({} mode {}) also matches this source; the source stays blocked until the invalid profile is fixed or removed.",
                 sole.profile.relative_path, sole.mode.id
             );
-            let mut messages: Vec<String> = blocking.iter().flat_map(|c| c.issues.clone()).collect();
+            let mut messages: Vec<String> =
+                blocking.iter().flat_map(|c| c.issues.clone()).collect();
             messages.push(note);
             return ProfileResolution::Failed(messages.join("\n"));
         }
@@ -394,11 +377,7 @@ impl ProfileCatalog {
     }
 }
 
-fn describe_miss(
-    mode: &crate::profile::ProfileMode,
-    basename: &str,
-    sample: &str,
-) -> String {
+fn describe_miss(mode: &crate::profile::ProfileMode, basename: &str, sample: &str) -> String {
     let mut parts = Vec::new();
     if let Some(tokens) = &mode.filename_contains_all {
         let missing: Vec<_> = tokens
@@ -406,7 +385,9 @@ fn describe_miss(
             .filter(|t| !basename.to_lowercase().contains(&t.to_lowercase()))
             .collect();
         if missing.is_empty() {
-            parts.push(format!("filename_contains_all matched basename \"{basename}\""));
+            parts.push(format!(
+                "filename_contains_all matched basename \"{basename}\""
+            ));
         } else {
             parts.push(format!(
                 "filename_contains_all tokens {} not in basename \"{basename}\"",

@@ -1,6 +1,6 @@
+use super::ReaderError;
 use crate::measurement::GapReason;
 use crate::reader::tabular;
-use crate::reader::ReaderError;
 
 pub struct CellLedger {
     pub values: Vec<Vec<Option<f64>>>,

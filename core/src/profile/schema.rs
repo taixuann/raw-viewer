@@ -1,6 +1,6 @@
 use super::types::{
-    humanized, unique_sorted, BrokenModeSelectors, InstrumentProfile, ProfileColumn,
-    ProfileFormat, ProfileLoadOutcome, ProfileMode, ProfileCatalog,
+    humanized, unique_sorted, BrokenModeSelectors, InstrumentProfile, ProfileCatalog,
+    ProfileColumn, ProfileFormat, ProfileLoadOutcome, ProfileMode,
 };
 use crate::yaml::{parse, YamlNode};
 
@@ -13,9 +13,7 @@ pub fn load_document(text: &str, relative_path: &str, sha256: &str) -> ProfileLo
     let root = match parse(text, false) {
         Ok(node) => node,
         Err(err) => {
-            return empty_outcome(vec![format!(
-                "{relative_path}: YAML parse error {err}"
-            )]);
+            return empty_outcome(vec![format!("{relative_path}: YAML parse error {err}")]);
         }
     };
     if root.map_entries().is_none() {
@@ -38,7 +36,10 @@ pub fn load_document(text: &str, relative_path: &str, sha256: &str) -> ProfileLo
             mode_selectors: selectors.mode_selectors,
         };
     }
-    let version_text = match root.value_for_key("schema_version").and_then(|n| n.scalar_value()) {
+    let version_text = match root
+        .value_for_key("schema_version")
+        .and_then(|n| n.scalar_value())
+    {
         Some(v) => v,
         None => {
             return broken(
@@ -204,7 +205,13 @@ fn validate(
             "transforms are not part of schema v{version}; remove the transforms field or migrate the profile (see CONTRACT.md)."
         ));
     }
-    reject_unknown(root, &["schema_version", "instrument", "formats", "modes"], "", &mut fail, version);
+    reject_unknown(
+        root,
+        &["schema_version", "instrument", "formats", "modes"],
+        "",
+        &mut fail,
+        version,
+    );
 
     let instrument_node = root.value_for_key("instrument");
     if instrument_node.is_none() || instrument_node.and_then(|n| n.map_entries()).is_none() {
@@ -224,7 +231,11 @@ fn validate(
         &mut fail,
         version,
     );
-    let instrument_id = string(instrument_node.value_for_key("id"), "instrument.id", &mut fail);
+    let instrument_id = string(
+        instrument_node.value_for_key("id"),
+        "instrument.id",
+        &mut fail,
+    );
     let instrument_name = string(
         instrument_node.value_for_key("name"),
         "instrument.name",
@@ -383,11 +394,7 @@ fn validate(
             continue;
         }
         let encoding_names = if let Some(encoding_node) = node.value_for_key("encoding") {
-            match string_list(
-                Some(encoding_node),
-                &format!("{field}.encoding"),
-                &mut fail,
-            ) {
+            match string_list(Some(encoding_node), &format!("{field}.encoding"), &mut fail) {
                 Some(v) => v,
                 None => continue,
             }
@@ -705,15 +712,11 @@ fn validate(
             None
         };
         let Some(extract) = node.value_for_key("extract") else {
-            fail(format!(
-                "{field}.extract mapping with x and y is required."
-            ));
+            fail(format!("{field}.extract mapping with x and y is required."));
             continue;
         };
         let Some(extract_entries) = extract.map_entries() else {
-            fail(format!(
-                "{field}.extract mapping with x and y is required."
-            ));
+            fail(format!("{field}.extract mapping with x and y is required."));
             continue;
         };
         for (key, _) in extract_entries {
@@ -723,8 +726,11 @@ fn validate(
                 ));
             }
         }
-        let Some(x) = string(extract.value_for_key("x"), &format!("{field}.extract.x"), &mut fail)
-        else {
+        let Some(x) = string(
+            extract.value_for_key("x"),
+            &format!("{field}.extract.x"),
+            &mut fail,
+        ) else {
             continue;
         };
         let y = if let Some(y_node) = extract.value_for_key("y") {
@@ -736,14 +742,10 @@ fn validate(
             vec![]
         };
         if y.is_empty() {
-            fail(format!(
-                "{field}.extract.y must name at least one column."
-            ));
+            fail(format!("{field}.extract.y must name at least one column."));
         }
         if y.len() != y.iter().collect::<std::collections::HashSet<_>>().len() {
-            fail(format!(
-                "{field}.extract.y contains duplicated columns."
-            ));
+            fail(format!("{field}.extract.y contains duplicated columns."));
         }
         if let Some(format) = format {
             if format.column(&x).is_none() {
@@ -792,10 +794,7 @@ fn validate(
         });
     }
 
-    if !errors.is_empty()
-        || instrument_id.is_none()
-        || instrument_name.is_none()
-    {
+    if !errors.is_empty() || instrument_id.is_none() || instrument_name.is_none() {
         let issues = if errors.is_empty() {
             vec![format!("{relative_path}: profile is incomplete.")]
         } else {
@@ -853,11 +852,7 @@ fn reject_unknown(
     }
 }
 
-fn string(
-    node: Option<&YamlNode>,
-    field: &str,
-    fail: &mut impl FnMut(String),
-) -> Option<String> {
+fn string(node: Option<&YamlNode>, field: &str, fail: &mut impl FnMut(String)) -> Option<String> {
     match node.and_then(|n| n.scalar_value()) {
         Some(value) => Some(value.to_string()),
         None => {

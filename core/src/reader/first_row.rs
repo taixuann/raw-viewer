@@ -1,13 +1,14 @@
+use super::ReaderError;
+use crate::measurement::GapReason;
 use crate::profile::{ProfileFormat, ProfileMode};
 use crate::reader::cell::{append_cell, CellLedger};
-use crate::reader::line_puller::{LinePuller, TextEncoding, MAXIMUM_SOURCE_LINE_BYTES};
+use crate::reader::line_puller::{LinePuller, TextEncoding};
 use crate::reader::tabular::{resolve_columns, split_line, TabularExtraction};
-use crate::reader::ReaderError;
-use crate::measurement::GapReason;
 use std::fs::File;
 
 const MAXIMUM_HEADER_BYTES: usize = 1 << 20;
 
+#[allow(clippy::too_many_arguments)]
 pub fn extract_first_row_header(
     relative_path: &str,
     format: &ProfileFormat,
@@ -50,7 +51,7 @@ pub fn extract_first_row_header(
     let headers = headers.ok_or_else(|| {
         ReaderError::InvalidSource(format!("{relative_path}: no header row was found."))
     })?;
-    let columns = resolve_columns(headers, format, mode, relative_path, "header row")?;
+    let columns = resolve_columns(&headers, format, mode, relative_path, "header row")?;
     let mut ledger = CellLedger::new(columns.len());
     let mut row_count = 0usize;
     while let Some(line) = puller.next_line()? {
@@ -58,7 +59,11 @@ pub fn extract_first_row_header(
         if line.trim().is_empty() {
             continue;
         }
-        let fields = split_line(&line, format.delimiter, &format!("{relative_path} line {line_number}"))?;
+        let fields = split_line(
+            &line,
+            format.delimiter,
+            &format!("{relative_path} line {line_number}"),
+        )?;
         for (column_index, column) in columns.iter().enumerate() {
             if column.1 >= fields.len() {
                 ledger.record(
@@ -89,6 +94,7 @@ pub fn extract_first_row_header(
             "{relative_path}: no data rows were found after the header."
         )));
     }
+    let warnings = ledger.summarize(relative_path);
     Ok(TabularExtraction {
         columns: columns
             .into_iter()
@@ -96,7 +102,7 @@ pub fn extract_first_row_header(
             .map(|(offset, (column, _))| (column, ledger.values[offset].clone()))
             .collect(),
         reasons: ledger.reasons,
-        warnings: ledger.summarize(relative_path),
+        warnings,
         header_fields: vec![],
         sha256: puller.digest_hex(),
     })

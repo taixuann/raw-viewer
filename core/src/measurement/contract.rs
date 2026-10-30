@@ -204,13 +204,11 @@ pub(crate) fn validate_measurement(
                 channel.values.len()
             )));
         }
-        for value in &channel.values {
-            if let Some(v) = value {
-                if !v.is_finite() {
-                    return Err(ContractError::Invalid(
-                        "Channels must contain only finite values or null gaps".to_string(),
-                    ));
-                }
+        for v in channel.values.iter().flatten() {
+            if !v.is_finite() {
+                return Err(ContractError::Invalid(
+                    "Channels must contain only finite values or null gaps".to_string(),
+                ));
             }
         }
         for (value, reason) in channel.values.iter().zip(channel.gap_reasons.iter()) {
