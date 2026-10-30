@@ -471,6 +471,16 @@ fn is_valid_filename_timestamp(token: &str) -> bool {
     true
 }
 
+/// Matches Swift `String.capitalized` for ASCII metadata keys (e.g. `SetupTitle` → `Setuptitle`).
+fn swift_capitalized_label(key: &str) -> String {
+    let spaced = key.replace('_', " ");
+    let mut chars = spaced.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+}
+
 fn metadata_sections(
     header_fields: &[(String, String)],
     filename: &str,
@@ -485,7 +495,7 @@ fn metadata_sections(
             .iter()
             .map(|(key, value)| MetadataField {
                 key: key.clone(),
-                label: key.replace('_', " "),
+                label: swift_capitalized_label(key),
                 value: JSONValue::String(value.clone()),
                 unit: None,
                 kind: "string".into(),

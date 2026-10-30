@@ -165,6 +165,7 @@ private enum GoldenSample: Encodable {
 
 private struct GoldenBits: Encodable {
     let bits: String
+}
 
 private struct GoldenMetadataSection: Encodable {
     let title: String

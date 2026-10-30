@@ -1,8 +1,10 @@
 //! Shared RawView core.
 //!
-//! [`paths`] resolves the global config directory, the project config directory,
-//! and the cache directory. [`config`] loads typed TOML settings from those
-//! directories. Readers and measurements arrive in a later step.
+//! [`paths`] and [`config`] resolve global and project settings directories.
+//! [`profile`] loads and validates instrument profile YAML (schema v1/v2).
+//! [`reader`] extracts normalized measurements from raw sources using those
+//! profiles. [`measurement`] defines the v1 contract and golden JSON codec.
+//! [`yaml`] is the profile YAML subset parser shared with the Swift app.
 
 pub mod config;
 pub mod measurement;

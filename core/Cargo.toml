@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
-description = "Shared RawView core. Resolves config paths and loads TOML settings."
+description = "Shared RawView core: config paths, profile validation, tabular readers, and normalized measurements."
 
 [dependencies]
 directories = "6.0.0"
