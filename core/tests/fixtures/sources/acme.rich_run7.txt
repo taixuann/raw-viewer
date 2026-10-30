@@ -1,0 +1,6 @@
+Run, acme-rich-7
+Volts, Amps
+1.0, 10.0
+, 
+2.0, NaN
+

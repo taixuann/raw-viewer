@@ -1,0 +1,8 @@
+SetupTitle, 2-terminal dual Vsweep
+DataName, V1, I1
+DataValue, 0, 1E-12
+DataValue, 0.1,
+DataValue, 0.2, NaN
+DataValue, 0.3, inf
+DataValue, 0.4, 1e999
+DataValue, 0.5, 5E-12

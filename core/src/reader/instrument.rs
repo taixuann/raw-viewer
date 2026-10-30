@@ -338,7 +338,11 @@ fn measurement_from_extraction(
             name: column.key.clone(),
             label: column.label.clone(),
             unit: column.unit.clone(),
-            quantity: Some(column.quantity.clone()),
+            quantity: if column.quantity.is_empty() {
+                None
+            } else {
+                Some(column.quantity.clone())
+            },
             values: values.clone(),
             gap_reasons: reasons.clone(),
         })

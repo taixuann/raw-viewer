@@ -1,0 +1,5 @@
+SetupTitle, STP decay
+DataName, Time, MeasResult1_value, MeasResult2_value
+DataValue, 0, 0, 1E-12
+DataValue, 1E-9, 0.5, 2E-12
+DataValue, 2E-9, 1.0, 3E-12

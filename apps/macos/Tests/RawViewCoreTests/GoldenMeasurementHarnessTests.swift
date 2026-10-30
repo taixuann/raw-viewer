@@ -6,12 +6,14 @@ struct GoldenMeasurementHarnessTests {
     private struct Manifest: Decodable {
         struct Case: Decodable {
             let id: String
+            let grammarFile: String?
             let profileFiles: [String: String]
             let sourceFiles: [String: String]
             let sourceToLoad: String
 
             enum CodingKeys: String, CodingKey {
                 case id
+                case grammarFile = "grammar_file"
                 case profileFiles = "profile_files"
                 case sourceFiles = "source_files"
                 case sourceToLoad = "source_to_load"
@@ -37,6 +39,7 @@ struct GoldenMeasurementHarnessTests {
         for entry in manifest.cases {
             let root = try makeProject(
                 fixturesRoot: fixturesRoot,
+                grammarFile: entry.grammarFile,
                 profileFiles: entry.profileFiles,
                 sourceFiles: entry.sourceFiles
             )
@@ -90,6 +93,7 @@ struct GoldenMeasurementHarnessTests {
 
     private func makeProject(
         fixturesRoot: URL,
+        grammarFile: String?,
         profileFiles: [String: String],
         sourceFiles: [String: String]
     ) throws -> URL {
@@ -98,6 +102,15 @@ struct GoldenMeasurementHarnessTests {
         for (relativePath, fixtureRelative) in sourceFiles {
             let payload = try Data(contentsOf: fixturesRoot.appendingPathComponent(fixtureRelative))
             let destination = root.appendingPathComponent(relativePath)
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try payload.write(to: destination)
+        }
+        if let grammarFile {
+            let payload = try Data(contentsOf: fixturesRoot.appendingPathComponent(grammarFile))
+            let destination = root.appendingPathComponent(".rawviewer/grammar.yaml")
             try FileManager.default.createDirectory(
                 at: destination.deletingLastPathComponent(),
                 withIntermediateDirectories: true

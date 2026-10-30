@@ -16,6 +16,9 @@ struct Manifest {
 #[derive(serde::Deserialize)]
 struct Case {
     id: String,
+    #[serde(default)]
+    grammar_file: Option<String>,
+    #[serde(default)]
     profile_files: std::collections::BTreeMap<String, String>,
     source_files: std::collections::BTreeMap<String, String>,
     source_to_load: String,
@@ -33,6 +36,18 @@ fn golden_path(id: &str) -> PathBuf {
 
 fn write_case_project(root: &Path, case: &Case) {
     let base = fixtures_root();
+    if let Some(grammar_rel) = &case.grammar_file {
+        let src = base.join(grammar_rel);
+        let dest = root.join(".rawviewer/grammar.yaml");
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::copy(&src, &dest).unwrap_or_else(|err| {
+            panic!(
+                "copy grammar {} -> {}: {err}",
+                src.display(),
+                dest.display()
+            )
+        });
+    }
     for (dest, src_rel) in &case.profile_files {
         let src = base.join(src_rel);
         let dest_path = root.join("data/instruments").join(dest);

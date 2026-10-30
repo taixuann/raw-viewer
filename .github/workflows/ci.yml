@@ -66,8 +66,11 @@ jobs:
         run: swift build
       - name: swift test
         run: swift test
-      - name: Golden measurement harness
-        run: ./Scripts/verify_golden_measurements.sh
+      - name: Golden JSON lock (Swift reader)
+        run: |
+          ./Scripts/write_golden_measurements.sh
+          cd ../..
+          git diff --exit-code core/tests/golden
       - name: Core self-check
         run: ./Scripts/check_core.sh
       - name: Index CLI check
