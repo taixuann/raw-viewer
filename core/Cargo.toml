@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
-description = "Shared RawView core. Step 1 exposes a placeholder API."
+description = "Shared RawView core. Resolves config paths and loads TOML settings."
 
 [dependencies]
+directories = "6.0.0"
+toml = "1.1.8"

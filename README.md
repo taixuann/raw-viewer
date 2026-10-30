@@ -9,7 +9,7 @@ RawView provides instant, offline, publication-grade visualization and inspectio
 ## Repository layout
 
 ```
-core/          Rust library crate raw-viewer-core. Step 1 is a placeholder API.
+core/          Rust library crate raw-viewer-core. Resolves config paths and loads TOML settings.
 bindings/      Rust library reserved for a future UniFFI Swift bridge.
 apps/macos/    SwiftUI app: Package.swift, Sources, Tests, Scripts, and Examples.
 apps/tauri/    Minimal Tauri 2 shell. src-tauri calls raw-viewer-core.
@@ -25,6 +25,8 @@ cargo fmt --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
 ```
+
+Config, project, and cache directories are described in [docs/config-and-paths.md](docs/config-and-paths.md).
 
 Swift commands run from `apps/macos/` (`swift build`, `swift test`). The package scripts resolve their own location, so from the repository root:
 

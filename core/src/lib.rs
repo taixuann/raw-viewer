@@ -1,5 +1,14 @@
+//! Shared RawView core.
+//!
+//! [`paths`] resolves the global config directory, the project config directory,
+//! and the cache directory. [`config`] loads typed TOML settings from those
+//! directories. Readers and measurements arrive in a later step.
+
+pub mod config;
+pub mod paths;
+
 /// Placeholder identity for the shared core.
-/// Later steps replace this with config, readers, and measurements.
+/// The Tauri shell still calls this.
 pub fn core_placeholder() -> &'static str {
     "raw-viewer-core"
 }
