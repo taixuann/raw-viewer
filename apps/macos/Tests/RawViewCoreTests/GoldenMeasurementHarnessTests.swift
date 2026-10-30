@@ -79,6 +79,7 @@ struct GoldenMeasurementHarnessTests {
                     Re-run with RAWVIEW_WRITE_GOLDENS=1 to refresh the checked-in golden.
                     """
                 )
+                continue
             }
         }
     }

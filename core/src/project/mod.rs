@@ -77,6 +77,7 @@ impl ProjectContext {
         } else {
             return None;
         };
+        let relative = relative.replace('\\', "/");
         if self.data_root_relative_path == "." {
             return Some(relative);
         }
