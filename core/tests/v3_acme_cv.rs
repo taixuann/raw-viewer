@@ -182,9 +182,15 @@ fn v3_acme_cv_loads_potential_and_current() {
 
     assert_eq!(potential, vec![Some(1.0), Some(2.0)]);
     assert_eq!(current, vec![Some(10.0), Some(20.0)]);
-    assert_eq!(measurement.provenance.get("variant_id").map(String::as_str), Some("cv"));
     assert_eq!(
-        measurement.provenance.get("profile_schema_version").map(String::as_str),
+        measurement.provenance.get("variant_id").map(String::as_str),
+        Some("cv")
+    );
+    assert_eq!(
+        measurement
+            .provenance
+            .get("profile_schema_version")
+            .map(String::as_str),
         Some("3")
     );
     assert_eq!(
