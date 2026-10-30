@@ -5,7 +5,9 @@
 //! directories. Readers and measurements arrive in a later step.
 
 pub mod config;
+pub mod measurement;
 pub mod paths;
+pub mod yaml;
 
 /// Placeholder identity for the shared core.
 /// The Tauri shell still calls this.
