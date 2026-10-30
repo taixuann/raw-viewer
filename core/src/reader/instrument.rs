@@ -522,14 +522,47 @@ fn is_valid_filename_timestamp(token: &str) -> bool {
     true
 }
 
-/// Matches Swift `String.capitalized` for ASCII metadata keys (e.g. `SetupTitle` → `Setuptitle`).
+/// Matches Swift `String.capitalized` on metadata keys (word boundaries after
+/// spaces and non-alphanumeric separators).
 pub(crate) fn swift_capitalized_label(key: &str) -> String {
-    let spaced = key.replace('_', " ");
-    let mut chars = spaced.chars();
-    let Some(first) = chars.next() else {
-        return String::new();
-    };
-    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+    swift_capitalized_words(&key.replace('_', " "))
+}
+
+fn swift_capitalized_words(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut capitalize_next = true;
+    for c in text.chars() {
+        if c.is_ascii_alphabetic() {
+            if capitalize_next {
+                out.extend(c.to_uppercase());
+                capitalize_next = false;
+            } else {
+                out.extend(c.to_lowercase());
+            }
+        } else {
+            out.push(c);
+            if !c.is_ascii_alphanumeric() {
+                capitalize_next = true;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::swift_capitalized_label;
+
+    #[test]
+    fn swift_capitalized_label_matches_word_boundaries() {
+        assert_eq!(swift_capitalized_label("SetupTitle"), "Setuptitle");
+        assert_eq!(swift_capitalized_label("Writer_Version"), "Writer Version");
+        assert_eq!(swift_capitalized_label("Acq. time (s)"), "Acq. Time (S)");
+        assert_eq!(
+            swift_capitalized_label("***End_of_Header*** "),
+            "***End Of Header*** "
+        );
+    }
 }
 
 fn metadata_sections(
