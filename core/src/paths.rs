@@ -64,7 +64,8 @@ pub struct PathInputs {
     /// Windows local app data (`%LOCALAPPDATA%`). The host wrapper fills this from
     /// `directories::BaseDirs::cache_dir`.
     pub local_app_data: Option<String>,
-    /// Project root. The project config directory is `<project_root>/.raw-viewer`.
+    /// Absolute project root. The project config directory is
+    /// `<project_root>/.raw-viewer`. A relative root is rejected.
     pub project_root: String,
 }
 
@@ -96,6 +97,8 @@ pub enum ResolveError {
     LocalAppDataNotAbsolute,
     /// The project root is empty or only whitespace.
     EmptyProjectRoot,
+    /// The project root is set but is not absolute.
+    ProjectRootNotAbsolute,
     /// A filesystem path is not valid UTF-8.
     PathNotUtf8 {
         /// What the path was for, such as "home directory".
@@ -129,6 +132,7 @@ impl fmt::Display for ResolveError {
                 write!(f, "the Windows local app data directory must be an absolute path")
             }
             Self::EmptyProjectRoot => write!(f, "project root is empty"),
+            Self::ProjectRootNotAbsolute => write!(f, "project root must be an absolute path"),
             Self::PathNotUtf8 { what } => write!(f, "{what} is not valid UTF-8"),
             Self::EnvNotUtf8 { name } => {
                 write!(f, "environment variable {name} is not valid UTF-8")
@@ -214,12 +218,20 @@ fn path_inputs_from_host(project_root: &Path) -> Result<PathInputs, ResolveError
     })
 }
 
+/// True when `path` is a directory. A symlink to a directory counts as existing.
 fn host_dir_exists(path: &str) -> bool {
     Path::new(path).is_dir()
 }
 
 fn env_path(name: &'static str) -> Result<Option<String>, ResolveError> {
-    match env::var(name) {
+    interpret_env_var(name, env::var(name))
+}
+
+fn interpret_env_var(
+    name: &'static str,
+    value: Result<String, env::VarError>,
+) -> Result<Option<String>, ResolveError> {
+    match value {
         Ok(value) => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -250,8 +262,11 @@ struct Normalized {
 }
 
 fn normalize(inputs: &PathInputs) -> Result<Normalized, ResolveError> {
-    let project_root =
-        normalize_path(inputs.os, &inputs.project_root).ok_or(ResolveError::EmptyProjectRoot)?;
+    let project_root = match normalize_path(inputs.os, &inputs.project_root) {
+        None => return Err(ResolveError::EmptyProjectRoot),
+        Some(path) if is_absolute(inputs.os, &path) => path,
+        Some(_) => return Err(ResolveError::ProjectRootNotAbsolute),
+    };
     let home = match inputs.home.as_deref() {
         None => None,
         Some(value) => match normalize_path(inputs.os, value) {
@@ -835,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_xdg_hit_does_not_need_home_or_appdata() {
+    fn windows_xdg_config_does_not_need_home_or_appdata_but_cache_needs_local_app_data() {
         let mut inputs = sample(TargetOs::Windows);
         inputs.home = None;
         inputs.app_data = None;
@@ -886,6 +901,36 @@ mod tests {
         assert_eq!(
             resolve_paths(&local, |_| false).unwrap_err(),
             ResolveError::LocalAppDataNotAbsolute
+        );
+    }
+
+    #[test]
+    fn relative_project_root_is_rejected_on_every_os() {
+        for os in OSES {
+            for value in ["lab/project", "../outside", "project", "./project"] {
+                let mut inputs = sample(os);
+                inputs.project_root = value.to_string();
+                let err = resolve_paths(&inputs, |_| true).unwrap_err();
+                assert_eq!(
+                    err,
+                    ResolveError::ProjectRootNotAbsolute,
+                    "{os:?} {value:?}"
+                );
+                assert_eq!(err.to_string(), "project root must be an absolute path");
+            }
+        }
+
+        let mut windows = sample(TargetOs::Windows);
+        windows.project_root = r"D:lab\project".to_string();
+        assert_eq!(
+            resolve_paths(&windows, |_| false).unwrap_err(),
+            ResolveError::ProjectRootNotAbsolute
+        );
+
+        let relative = Path::new("relative/project");
+        assert_eq!(
+            resolve_paths_from_env(relative).unwrap_err(),
+            ResolveError::ProjectRootNotAbsolute
         );
     }
 
@@ -979,5 +1024,95 @@ mod tests {
         assert!(resolved.project_config_dir.ends_with(".raw-viewer"));
         assert!(resolved.cache_dir.ends_with("raw-viewer"));
         assert!(!resolved.cache_dir.ends_with(".raw-viewer"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_project_root_is_path_not_utf8_and_message_omits_the_bytes() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = Path::new(OsStr::from_bytes(b"/tmp/raw-\xff-project"));
+        let err = path_to_utf8(path, "project root").unwrap_err();
+        assert_eq!(
+            err,
+            ResolveError::PathNotUtf8 {
+                what: "project root"
+            }
+        );
+        assert_eq!(err.to_string(), "project root is not valid UTF-8");
+        assert_eq!(resolve_paths_from_env(path).unwrap_err(), err);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_env_var_is_env_not_utf8_and_message_omits_the_bytes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let raw = OsString::from_vec(vec![0xff, 0xfe]);
+        let err =
+            interpret_env_var("XDG_CONFIG_HOME", Err(env::VarError::NotUnicode(raw))).unwrap_err();
+        assert_eq!(
+            err,
+            ResolveError::EnvNotUtf8 {
+                name: "XDG_CONFIG_HOME"
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "environment variable XDG_CONFIG_HOME is not valid UTF-8"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn non_utf8_windows_path_and_env_do_not_echo_raw_units() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let path = OsString::from_wide(&[0xD800]);
+        let err = path_to_utf8(Path::new(&path), "project root").unwrap_err();
+        assert_eq!(err.to_string(), "project root is not valid UTF-8");
+
+        let raw = OsString::from_wide(&[0xD800]);
+        let err = interpret_env_var("APPDATA", Err(env::VarError::NotUnicode(raw))).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "environment variable APPDATA is not valid UTF-8"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_config_directory_counts_as_existing() {
+        use std::os::unix::fs::symlink;
+
+        let scratch = std::env::temp_dir().join(format!(
+            "raw-viewer-symlink-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let real = scratch.join("real");
+        let xdg = scratch.join("xdg");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&xdg).unwrap();
+        let link = xdg.join(APP_DIRECTORY_NAME);
+        symlink(&real, &link).unwrap();
+
+        let link_text = link.to_str().expect("temp path is utf-8");
+        let real_text = real.to_str().expect("temp path is utf-8");
+        assert!(host_dir_exists(link_text));
+
+        let mut inputs = sample(TargetOs::Linux);
+        inputs.xdg_config_home = Some(xdg.to_str().expect("temp path is utf-8").to_string());
+        let resolved = resolve_paths(&inputs, host_dir_exists).unwrap();
+        assert_eq!(resolved.global_config_dir, link_text);
+        assert_ne!(resolved.global_config_dir, real_text);
+
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }

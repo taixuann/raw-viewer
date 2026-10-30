@@ -3,6 +3,9 @@
 //! A missing file loads defaults. A file that parses but has a wrong type or an
 //! unknown key is an error that names the file and the field. Loading does not
 //! create directories or write files.
+//!
+//! Each file is a flat table. Top-level keys only. A `[section]` is an unknown
+//! field.
 
 use std::fmt;
 use std::fs;
@@ -27,6 +30,10 @@ pub struct GlobalConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
     /// Project-relative directory that holds raw measurements.
+    ///
+    /// Allowed values are `.`, or one or more segments separated by `/`.
+    /// A segment must not be empty, `.`, or `..`. Absolute paths, values that
+    /// start with `~`, backslashes, and control characters are rejected.
     pub data_root: String,
     /// Explorer view opened for the project.
     pub default_view: String,
@@ -141,6 +148,9 @@ pub fn config_file(config_dir: &Path) -> PathBuf {
 ///
 /// A missing file returns [`GlobalConfig::default`]. This function does not
 /// create `config_dir` and does not write a file.
+///
+/// The document must be a flat table. A `[section]` is reported as an unknown
+/// field named after that section.
 pub fn load_global_config(config_dir: &Path) -> Result<GlobalConfig, ConfigError> {
     let path = config_file(config_dir);
     let Some(table) = read_table(&path)? else {
@@ -166,6 +176,10 @@ pub fn load_global_config(config_dir: &Path) -> Result<GlobalConfig, ConfigError
 ///
 /// A missing file returns [`ProjectConfig::default`]. This function does not
 /// create `config_dir` and does not write a file.
+///
+/// The document must be a flat table. A `[section]` is reported as an unknown
+/// field named after that section. `data_root`, when present, must be a
+/// project-relative path. See [`ProjectConfig::data_root`].
 pub fn load_project_config(config_dir: &Path) -> Result<ProjectConfig, ConfigError> {
     let path = config_file(config_dir);
     let Some(table) = read_table(&path)? else {
@@ -174,7 +188,7 @@ pub fn load_project_config(config_dir: &Path) -> Result<ProjectConfig, ConfigErr
     let mut config = ProjectConfig::default();
     for (key, value) in &table {
         match key.as_str() {
-            "data_root" => config.data_root = expect_string(&path, key, value)?,
+            "data_root" => config.data_root = expect_data_root(&path, value)?,
             "default_view" => config.default_view = expect_string(&path, key, value)?,
             "default_preset" => config.default_preset = expect_string(&path, key, value)?,
             _ => {
@@ -207,6 +221,56 @@ fn read_table(path: &Path) -> Result<Option<toml::Table>, ConfigError> {
         Ok(table) => Ok(Some(table)),
         Err(error) => Err(ConfigError::malformed(path, None, error.to_string())),
     }
+}
+
+fn expect_data_root(path: &Path, value: &toml::Value) -> Result<String, ConfigError> {
+    let text = expect_string(path, "data_root", value)?;
+    if let Some(detail) = data_root_problem(&text) {
+        return Err(ConfigError::malformed(
+            path,
+            Some("data_root".to_string()),
+            detail,
+        ));
+    }
+    Ok(text)
+}
+
+/// `data_root` is `.`, or slash-separated segments that stay inside the project.
+fn data_root_problem(value: &str) -> Option<String> {
+    if value.trim().is_empty() {
+        return Some("must not be empty".to_string());
+    }
+    if value.chars().any(|c| c.is_control() || c == '\\') {
+        return Some("must not contain backslashes or control characters".to_string());
+    }
+    if value.starts_with('/') || has_windows_drive_prefix(value) {
+        return Some(format!(
+            "must be project-relative, not absolute (got {value:?})"
+        ));
+    }
+    if value.starts_with('~') {
+        return Some(format!(
+            "must be project-relative, not a home path (got {value:?})"
+        ));
+    }
+    if value != "." {
+        for component in value.split('/') {
+            if component.is_empty() || component == "." || component == ".." {
+                return Some(format!(
+                    "must not contain empty, '.', or '..' components (got {value:?})"
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn has_windows_drive_prefix(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some(letter), Some(':')) if letter.is_ascii_alphabetic()
+    )
 }
 
 fn expect_string(path: &Path, field: &str, value: &toml::Value) -> Result<String, ConfigError> {
@@ -439,6 +503,52 @@ default_preset = \"science-single\"
             assert_names_file_and_field(&error, &file, field);
             assert!(error.to_string().contains("expected a string"), "{error}");
         }
+    }
+
+    #[test]
+    fn data_root_rejects_traversal_and_accepts_project_relative_paths() {
+        let accepted = ["data/raw", ".", "measurements", "lab/batch_01"];
+        for value in accepted {
+            let dir = TempDir::new();
+            let file = config_file(&dir.path);
+            fs::write(&file, format!("data_root = {value:?}\n")).unwrap();
+            let config = load_project_config(&dir.path).unwrap();
+            assert_eq!(config.data_root, value);
+        }
+
+        let rejected = [
+            ("../../../secrets", ".."),
+            ("data/../../raw", ".."),
+            ("/etc/passwd", "absolute"),
+            ("C:/Windows", "absolute"),
+            ("~/secrets", "home path"),
+            ("data//raw", "empty"),
+            ("data/./raw", "'.'"),
+            ("data\\raw", "backslash"),
+            ("", "empty"),
+            ("   ", "empty"),
+        ];
+        for (value, needle) in rejected {
+            let dir = TempDir::new();
+            let file = config_file(&dir.path);
+            fs::write(&file, format!("data_root = {value:?}\n")).unwrap();
+            let error = load_project_config(&dir.path).unwrap_err();
+            assert_names_file_and_field(&error, &file, "data_root");
+            assert!(
+                error.to_string().contains(needle),
+                "value {value:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn section_table_is_an_unknown_field() {
+        let dir = TempDir::new();
+        let file = config_file(&dir.path);
+        fs::write(&file, "[project]\ndata_root = \"data/raw\"\n").unwrap();
+        let error = load_project_config(&dir.path).unwrap_err();
+        assert_names_file_and_field(&error, &file, "project");
+        assert!(error.to_string().contains("unknown field"), "{error}");
     }
 
     #[test]

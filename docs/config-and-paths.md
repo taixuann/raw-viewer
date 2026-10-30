@@ -23,7 +23,7 @@ Windows `%APPDATA%` and `%LOCALAPPDATA%` come from the `directories` crate (`Bas
 
 Project settings live in `<project>/.raw-viewer/config.toml`.
 
-This path is always under the project root. The directory does not have to exist.
+The project root must be an absolute path. A relative root is an error. The config directory does not have to exist.
 
 The Swift app still stores its settings in `<project>/.rawviewer/`. The Rust core does not read or migrate that directory.
 
@@ -59,6 +59,8 @@ flowchart TD
 
 Each config directory has its own `config.toml`. A missing file loads defaults. Loading does not create the directory and does not write the file.
 
+The file is a flat table: top-level keys only. A `[section]` is an unknown field named after that section. Nested tables are not settings.
+
 Global keys:
 
 | Key | Default | Meaning |
@@ -69,7 +71,7 @@ Project keys:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `data_root` | `data/raw` | Raw measurements, relative to the project |
+| `data_root` | `data/raw` | Raw measurements, relative to the project. Allowed: `.`, or `/`-separated segments that are not empty, `.`, or `..`. Absolute paths, a leading `~`, backslashes, and control characters are rejected. |
 | `default_view` | `tree` | Explorer view |
 | `default_preset` | `nature-single` | Plot preset |
 
