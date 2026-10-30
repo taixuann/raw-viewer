@@ -1,7 +1,8 @@
 use super::types::{
-    humanized, unique_sorted, BrokenModeSelectors, InstrumentProfile, ProfileCatalog,
-    ProfileColumn, ProfileFormat, ProfileLoadOutcome, ProfileMode,
+    humanized, unique_sorted, BrokenModeSelectors, InstrumentProfile, LoadedV3Document,
+    ProfileCatalog, ProfileColumn, ProfileFormat, ProfileLoadOutcome, ProfileMode,
 };
+use super::v3::{decode_v3, lenient_v3_extensions, validate_structure, ProfileV3Error};
 use crate::yaml::{parse, YamlNode};
 
 struct Selectors {
@@ -34,6 +35,7 @@ pub fn load_document(text: &str, relative_path: &str, sha256: &str) -> ProfileLo
             )],
             extensions: selectors.extensions,
             mode_selectors: selectors.mode_selectors,
+            v3_document: None,
         };
     }
     let version_text = match root
@@ -61,17 +63,10 @@ pub fn load_document(text: &str, relative_path: &str, sha256: &str) -> ProfileLo
             );
         }
     };
+    if version == 3 {
+        return load_v3_document(&root, relative_path, sha256);
+    }
     if !ProfileCatalog::SUPPORTED_SCHEMA_VERSIONS.contains(&version) {
-        if version == 3 {
-            return ProfileLoadOutcome {
-                profile: None,
-                issues: vec![format!(
-                    "{relative_path}: schema_version 3 is not supported in the Rust core yet."
-                )],
-                extensions: selectors.extensions,
-                mode_selectors: selectors.mode_selectors,
-            };
-        }
         return broken(
             &selectors,
             vec![format!(
@@ -82,12 +77,47 @@ pub fn load_document(text: &str, relative_path: &str, sha256: &str) -> ProfileLo
     validate(&root, relative_path, sha256, &selectors, version)
 }
 
+fn load_v3_document(root: &YamlNode, relative_path: &str, sha256: &str) -> ProfileLoadOutcome {
+    match decode_v3(root) {
+        Ok(document) => {
+            if let Err(ProfileV3Error::Invalid(reason)) = validate_structure(&document) {
+                return ProfileLoadOutcome {
+                    profile: None,
+                    issues: vec![format!("{relative_path}: {reason}")],
+                    extensions: lenient_v3_extensions(root),
+                    mode_selectors: vec![],
+                    v3_document: None,
+                };
+            }
+            ProfileLoadOutcome {
+                profile: None,
+                issues: vec![],
+                extensions: vec![],
+                mode_selectors: vec![],
+                v3_document: Some(LoadedV3Document {
+                    document,
+                    relative_path: relative_path.to_string(),
+                    sha256: sha256.to_string(),
+                }),
+            }
+        }
+        Err(ProfileV3Error::Invalid(reason)) => ProfileLoadOutcome {
+            profile: None,
+            issues: vec![format!("{relative_path}: {reason}")],
+            extensions: lenient_v3_extensions(root),
+            mode_selectors: vec![],
+            v3_document: None,
+        },
+    }
+}
+
 fn empty_outcome(issues: Vec<String>) -> ProfileLoadOutcome {
     ProfileLoadOutcome {
         profile: None,
         issues,
         extensions: vec![],
         mode_selectors: vec![],
+        v3_document: None,
     }
 }
 
@@ -97,6 +127,7 @@ fn broken(selectors: &Selectors, issues: Vec<String>) -> ProfileLoadOutcome {
         issues,
         extensions: selectors.extensions.clone(),
         mode_selectors: selectors.mode_selectors.clone(),
+        v3_document: None,
     }
 }
 
@@ -221,6 +252,7 @@ fn validate(
             issues: errors,
             extensions,
             mode_selectors: selectors.mode_selectors.clone(),
+            v3_document: None,
         };
     }
     let instrument_node = instrument_node.unwrap();
@@ -805,6 +837,7 @@ fn validate(
             issues,
             extensions,
             mode_selectors: selectors.mode_selectors.clone(),
+            v3_document: None,
         };
     }
 
@@ -823,6 +856,7 @@ fn validate(
         issues: vec![],
         extensions,
         mode_selectors: vec![],
+        v3_document: None,
     }
 }
 

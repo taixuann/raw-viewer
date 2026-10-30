@@ -9,14 +9,17 @@ use crate::profile::{
 use crate::project::ProjectContext;
 use crate::reader::comment_tsv::extract_comment_tsv;
 use crate::reader::first_row::extract_first_row_header;
+use crate::reader::generic_table;
 use crate::reader::line_puller::{decode_with_format, TextEncoding};
 use crate::reader::tabular::{
     extract_tabular, open_source_at_prefix, read_prefix, TabularExtraction,
 };
+use crate::reader::v3;
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
-pub const READER_VERSION: &str = "1.3.0";
+pub const READER_VERSION: &str = super::READER_VERSION;
 const HEADER_SAMPLE_BYTES: usize = 64 * 1024;
 
 pub fn load_measurement(
@@ -56,10 +59,54 @@ pub fn load_measurement(
     let relative_path = source_relative.to_string_lossy().replace('\\', "/");
 
     let catalog = load_catalog(project_root);
+    let grammar = crate::grammar::grammar_context(project_root);
     let prefix = read_prefix(&source_path, HEADER_SAMPLE_BYTES)?;
+    let file_size = fs::metadata(&source_path).map(|m| m.len()).unwrap_or(0);
+
+    if !catalog.v3_documents.is_empty() {
+        match v3::resolve(
+            &prefix,
+            &extension,
+            &basename,
+            &relative_path,
+            file_size,
+            &catalog,
+            &grammar,
+        ) {
+            v3::V3Outcome::Unclaimed => {}
+            v3::V3Outcome::Failed(message) => {
+                return Err(ReaderError::InvalidSource(message));
+            }
+            v3::V3Outcome::Matched {
+                match_info,
+                encoding,
+                sample,
+                pending,
+            } => {
+                let prefix_consumed = prefix.len() - pending.len();
+                let file = open_source_at_prefix(&source_path, prefix_consumed)?;
+                let extracted = v3::extract_streaming(
+                    &relative_path,
+                    &match_info,
+                    encoding,
+                    &sample,
+                    &pending,
+                    file,
+                    &prefix[..prefix_consumed],
+                )?;
+                return v3::measurement_from_v3(&relative_path, &basename, &match_info, extracted);
+            }
+        }
+    }
+
     let encoded = resolve_encoded(&prefix, &catalog, &extension, &basename);
     let (profile_match, encoding, sample, pending) = match encoded {
         EncodedResolution::Failed(message) => {
+            if let Ok(measurement) =
+                generic_table::load_measurement_default(&source_path, &relative_path)
+            {
+                return Ok(measurement);
+            }
             return Err(ReaderError::InvalidSource(
                 if message.contains("could not be decoded") {
                     format!("{relative_path}: {message}")
@@ -472,7 +519,7 @@ fn is_valid_filename_timestamp(token: &str) -> bool {
 }
 
 /// Matches Swift `String.capitalized` for ASCII metadata keys (e.g. `SetupTitle` → `Setuptitle`).
-fn swift_capitalized_label(key: &str) -> String {
+pub(crate) fn swift_capitalized_label(key: &str) -> String {
     let spaced = key.replace('_', " ");
     let mut chars = spaced.chars();
     let Some(first) = chars.next() else {

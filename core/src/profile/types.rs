@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use super::v3::ProfileDocumentV3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileColumn {
     pub key: String,
@@ -109,11 +111,19 @@ impl BrokenClaim {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedV3Document {
+    pub document: ProfileDocumentV3,
+    pub relative_path: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileLoadOutcome {
     pub profile: Option<InstrumentProfile>,
     pub issues: Vec<String>,
     pub extensions: Vec<String>,
     pub mode_selectors: Vec<BrokenModeSelectors>,
+    pub v3_document: Option<LoadedV3Document>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +131,7 @@ pub struct ProfileCatalog {
     pub profiles: Vec<InstrumentProfile>,
     pub issues: Vec<String>,
     pub broken_claims: Vec<BrokenClaim>,
+    pub v3_documents: Vec<LoadedV3Document>,
 }
 
 impl ProfileCatalog {

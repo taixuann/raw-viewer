@@ -3,6 +3,15 @@
 mod catalog;
 mod schema;
 mod types;
+mod v3;
+
+pub use v3::{
+    parse as parse_profile_v3, ColumnRoleV3, DataStartLocatorV3, HeaderLocatorV3,
+    MetadataCaptureRuleV3, ProfileColumnV3, ProfileDocumentError, ProfileDocumentV3,
+    ProfileVariantV3,
+};
+
+pub use v3::MetadataCaptureRuleV3 as MetadataCaptureRule;
 
 pub use catalog::load_catalog;
 pub use types::*;

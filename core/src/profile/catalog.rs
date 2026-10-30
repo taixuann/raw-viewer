@@ -1,7 +1,8 @@
 use super::schema;
 use super::sha256_hex;
 use super::types::{
-    BrokenClaim, InstrumentProfile, ProfileCatalog, ProfileMatch, ProfileMode, ProfileResolution,
+    BrokenClaim, InstrumentProfile, LoadedV3Document, ProfileCatalog, ProfileMatch, ProfileMode,
+    ProfileResolution,
 };
 use crate::project::ProjectContext;
 use std::fs;
@@ -16,6 +17,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                 profiles: vec![],
                 issues: vec![format!("{}: {}", project_root.display(), err)],
                 broken_claims: vec![],
+                v3_documents: vec![],
             };
         }
     };
@@ -38,6 +40,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                 "data/instruments resolves outside this project. No profiles were loaded.".into(),
             ],
             broken_claims: vec![],
+            v3_documents: vec![],
         };
     }
     if !instruments.is_dir() {
@@ -45,6 +48,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
             profiles: vec![],
             issues: vec![],
             broken_claims: vec![],
+            v3_documents: vec![],
         };
     }
 
@@ -58,6 +62,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                         "data/instruments/rawview is a symlink; profiles must be regular entries in the companion directory.".into(),
                     ],
                     broken_claims: vec![],
+                    v3_documents: vec![],
                 };
             }
             let companion = fs::canonicalize(&companion).unwrap_or(companion);
@@ -68,6 +73,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                         "data/instruments/rawview resolves outside data/instruments. No profiles were loaded.".into(),
                     ],
                     broken_claims: vec![],
+                    v3_documents: vec![],
                 };
             }
             if !companion.is_dir() {
@@ -77,6 +83,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                         "data/instruments/rawview is not a readable directory. No profiles were loaded.".into(),
                     ],
                     broken_claims: vec![],
+                    v3_documents: vec![],
                 };
             }
             load_profiles(&companion, "data/instruments/rawview", &project)
@@ -90,6 +97,7 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                 "data/instruments/rawview could not be examined ({err}); no profiles were loaded."
             )],
             broken_claims: vec![],
+            v3_documents: vec![],
         },
     }
 }
@@ -138,6 +146,7 @@ fn is_inside_directory(path: &Path, parent: &Path) -> bool {
 
 fn load_profiles(root: &Path, display_root: &str, project: &ProjectContext) -> ProfileCatalog {
     let mut profiles: Vec<InstrumentProfile> = Vec::new();
+    let mut v3_documents: Vec<LoadedV3Document> = Vec::new();
     let mut issues: Vec<String> = Vec::new();
     let mut broken_claims: Vec<BrokenClaim> = Vec::new();
     let profile_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -217,6 +226,8 @@ fn load_profiles(root: &Path, display_root: &str, project: &ProjectContext) -> P
         let outcome = schema::load_document(text, &claimed_relative, &digest);
         if let Some(profile) = outcome.profile {
             profiles.push(profile);
+        } else if let Some(v3) = outcome.v3_document {
+            v3_documents.push(v3);
         } else if !outcome.issues.is_empty() {
             issues.extend(outcome.issues.clone());
             if !outcome.extensions.is_empty() {
@@ -235,6 +246,7 @@ fn load_profiles(root: &Path, display_root: &str, project: &ProjectContext) -> P
         profiles,
         issues,
         broken_claims,
+        v3_documents,
     }
 }
 
