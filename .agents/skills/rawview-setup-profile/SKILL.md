@@ -108,5 +108,5 @@ If the instrument outputs parameters in header rows (e.g. Row 3, Column 2 contai
   ```
 - If inside the RawView repository, run test gates:
   ```sh
-  ./Scripts/check_core.sh
+  ./apps/macos/Scripts/check_core.sh
   ```

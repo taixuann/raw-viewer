@@ -54,7 +54,7 @@ when that entry exists.
 Every profile must declare `schema_version: 1`. A missing or unsupported version
 blocks only the sources that would use that profile and reports an explicit
 upgrade diagnostic; RawView does not rewrite profiles and has no compatibility
-mode for unversioned files. `Examples/rawview/keysight-b1500a.yaml` is a working
+mode for unversioned files. `apps/macos/Examples/rawview/keysight-b1500a.yaml` is a working
 example.
 Profiles are parsed with the in-repo fail-closed YAML subset (Foundation only,
 no added dependency): tabs, duplicate keys, nested flow collections, and

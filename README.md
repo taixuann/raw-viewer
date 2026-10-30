@@ -6,6 +6,36 @@ RawView provides instant, offline, publication-grade visualization and inspectio
 
 ---
 
+## Repository layout
+
+```
+core/          Rust library crate raw-viewer-core. Step 1 is a placeholder API.
+bindings/      Rust library reserved for a future UniFFI Swift bridge.
+apps/macos/    SwiftUI app: Package.swift, Sources, Tests, Scripts, and Examples.
+apps/tauri/    Minimal Tauri 2 shell. src-tauri calls raw-viewer-core.
+docs/          Design notes and handoff records.
+```
+
+The Cargo workspace at the repository root includes `core`, `bindings`, and `apps/tauri/src-tauri`.
+
+Rust checks run from the repository root:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
+```
+
+Swift commands run from `apps/macos/` (`swift build`, `swift test`). The package scripts resolve their own location, so from the repository root:
+
+```bash
+./apps/macos/Scripts/check_core.sh
+./apps/macos/Scripts/check_index_cli.sh
+./apps/macos/Scripts/package_app.sh
+```
+
+---
+
 ## Key Capabilities
 
 - **Filesystem-First & Zero Mutation**: Opens research projects containing `data/raw/` in read-only mode. Never alters raw data files, timestamps, or original values.
@@ -50,15 +80,15 @@ RawView reads declarative instrument profiles (`schema_version: 1`, `2`, or vari
 ## Local Development & Verification
 
 ### Prerequisites
-- macOS 13.0+ (Ventura, Sonoma, Sequoia)
-- Xcode 15+ or Swift 6.0+ Command Line Tools
+- macOS 13.0+ (Ventura, Sonoma, Sequoia), Xcode 15+ or Swift 6.0+ Command Line Tools, for the Swift package
+- Rust stable (1.90 or newer) for the Cargo workspace. The Tauri shell links WebKit on Linux.
 
 ### Verification & Core Checks
-RawView includes an offline test runner and type checker:
+RawView includes an offline test runner and type checker. Run it from the repository root:
 
 ```bash
 # Run self-check and verify core contracts
-./Scripts/check_core.sh
+./apps/macos/Scripts/check_core.sh
 ```
 
 ### Packaging & Installation
@@ -66,7 +96,7 @@ Build a production-optimized, code-signed macOS `.app` bundle:
 
 ```bash
 # Build and package into /Applications/RawView.app
-./Scripts/package_app.sh /Applications/RawView.app
+./apps/macos/Scripts/package_app.sh /Applications/RawView.app
 ```
 
 ---
@@ -75,7 +105,8 @@ Build a production-optimized, code-signed macOS `.app` bundle:
 RawView includes a standalone CLI tool `rawview-index` for automated, non-interactive project indexing:
 
 ```bash
-# Build and run the pre-indexing CLI tool:
+# Build and run the pre-indexing CLI tool from the Swift package:
+cd apps/macos
 swift run rawview-index --project /path/to/project --data-root data/raw --save-settings --json
 ```
 

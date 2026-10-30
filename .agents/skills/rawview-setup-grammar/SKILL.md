@@ -81,5 +81,5 @@ source_labels:
   ```
 - If working inside the RawView repository or tests, run:
   ```sh
-  ./Scripts/check_core.sh
+  ./apps/macos/Scripts/check_core.sh
   ```
