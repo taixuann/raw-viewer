@@ -199,9 +199,23 @@ fn encode_metadata_field(field: &MetadataField) -> Value {
 fn encode_json_value(value: &JSONValue) -> Value {
     match value {
         JSONValue::String(s) => json!(s),
-        JSONValue::Number(n) => json!(n),
+        JSONValue::Number(n) => encode_golden_number(*n),
         JSONValue::Boolean(b) => json!(b),
         JSONValue::Null => Value::Null,
+    }
+}
+
+fn encode_golden_number(n: f64) -> Value {
+    if n.is_finite() && n.fract() == 0.0 {
+        if n >= 0.0 && n <= u64::MAX as f64 {
+            json!(n as u64)
+        } else if n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+            json!(n as i64)
+        } else {
+            json!(n)
+        }
+    } else {
+        json!(n)
     }
 }
 

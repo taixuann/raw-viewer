@@ -158,7 +158,7 @@ private enum GoldenSample: Encodable {
             try container.encodeNil()
         case .finite(let bits):
             var container = encoder.singleValueContainer()
-            try container.encode(GoldenBits(bits: String(format: "%016x", bits)))
+            try container.encode(GoldenBits(bits: String(format: "%016llx", bits)))
         }
     }
 }
