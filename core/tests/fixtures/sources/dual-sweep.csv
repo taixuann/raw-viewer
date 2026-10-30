@@ -1,0 +1,9 @@
+﻿SetupTitle, 2-terminal dual Vsweep
+ApplicationTest, 2-terminal dual Vsweep, Public
+Dimension1, 5, 5
+DataName, V1, I1
+DataValue, 0, 1E-12
+DataValue, 0.1, 2E-12
+DataValue, 0.2, 3E-12
+DataValue, 0.1, 4E-12
+DataValue, 0, 5E-12

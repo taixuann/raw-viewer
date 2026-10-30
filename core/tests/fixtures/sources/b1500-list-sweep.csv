@@ -1,0 +1,5 @@
+SetupTitle, I/V List Sweep 1V
+DataName, V1, I2
+DataValue, 0.2, 3E-9
+DataValue, 0.0, 1E-9
+DataValue, 0.1, 2E-9

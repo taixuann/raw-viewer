@@ -1,0 +1,3 @@
+# Golden tests hash raw fixture bytes; keep LF on all platforms.
+core/tests/fixtures/** text eol=lf
+core/tests/golden/** text eol=lf

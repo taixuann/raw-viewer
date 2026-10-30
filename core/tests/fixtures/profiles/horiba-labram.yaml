@@ -1,0 +1,53 @@
+schema_version: 2
+instrument:
+  id: horiba-labram
+  name: Horiba LabRAM HR Evolution Raman Spectrometer
+formats:
+  - id: tab_comma
+    kind: comment-tsv
+    extensions: [".txt"]
+    delimiter: "\t"
+    decimal: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      wavenumber:
+        column_index: 0
+        quantity: wavenumber
+        unit: "cm-1"
+        label: "Raman shift"
+      intensity:
+        column_index: 1
+        quantity: intensity
+        unit: "counts"
+        label: "Intensity"
+  - id: header_semicolon
+    kind: tabular
+    extensions: [".txt"]
+    delimiter: ";"
+    rows:
+      names_prefix: "raman_shift"
+      data_prefix: ""
+    columns:
+      wavenumber:
+        header: "raman_shift"
+        quantity: wavenumber
+        unit: "cm-1"
+        label: "Raman shift"
+      intensity:
+        header: "intensity"
+        quantity: intensity
+        unit: "counts"
+        label: "Intensity"
+modes:
+  - id: raman-tsv
+    format: tab_comma
+    detect: ["#Laser="]
+    extract:
+      x: wavenumber
+      y: [intensity]
+  - id: raman-semicolon
+    format: header_semicolon
+    detect: ["raman_shift;intensity"]
+    extract:
+      x: wavenumber
+      y: [intensity]

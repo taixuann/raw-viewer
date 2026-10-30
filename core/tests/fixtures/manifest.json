@@ -1,0 +1,175 @@
+{
+  "cases": [
+    {
+      "id": "keysight-dual-sweep-v1",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+      },
+      "source_files": {
+        "data/raw/fixture-run/dual-sweep.csv": "sources/dual-sweep.csv"
+      },
+      "source_to_load": "data/raw/fixture-run/dual-sweep.csv"
+    },
+    {
+      "id": "keysight-gaps-v1",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+      },
+      "source_files": {
+        "data/raw/gaps.csv": "sources/gaps.csv"
+      },
+      "source_to_load": "data/raw/gaps.csv"
+    },
+    {
+      "id": "keysight-gap-reasons-v1",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+      },
+      "source_files": {
+        "data/raw/gap-reasons.csv": "sources/gap-reasons.csv"
+      },
+      "source_to_load": "data/raw/gap-reasons.csv"
+    },
+    {
+      "id": "keithley-lvm-v2",
+      "profile_files": {
+        "keithley-2400.yaml": "profiles/keithley-2400.yaml"
+      },
+      "source_files": {
+        "data/raw/sweep.txt": "sources/sweep.txt"
+      },
+      "source_to_load": "data/raw/sweep.txt"
+    },
+    {
+      "id": "horiba-raman-tsv-v2",
+      "profile_files": {
+        "horiba-labram.yaml": "profiles/horiba-labram.yaml"
+      },
+      "source_files": {
+        "data/raw/sers.txt": "sources/sers.txt"
+      },
+      "source_to_load": "data/raw/sers.txt"
+    },
+    {
+      "id": "horiba-raman-semicolon-v2",
+      "profile_files": {
+        "horiba-labram.yaml": "profiles/horiba-labram.yaml"
+      },
+      "source_files": {
+        "data/raw/characterization.txt": "sources/raman-semicolon.txt"
+      },
+      "source_to_load": "data/raw/characterization.txt"
+    },
+    {
+      "id": "b1500-dual-sweep-v2",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/keysight-b1500a.dual-sweep_one.csv": "sources/b1500-dual-sweep.csv"
+      },
+      "source_to_load": "data/raw/keysight-b1500a.dual-sweep_one.csv"
+    },
+    {
+      "id": "b1500-list-sweep-v2",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/keysight-b1500a.list-sweep_one.csv": "sources/b1500-list-sweep.csv"
+      },
+      "source_to_load": "data/raw/keysight-b1500a.list-sweep_one.csv"
+    },
+    {
+      "id": "b1500-wgfmu-std-v2",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/keysight-b1500a.wgfmu_std.csv": "sources/b1500-wgfmu-std.csv"
+      },
+      "source_to_load": "data/raw/keysight-b1500a.wgfmu_std.csv"
+    },
+    {
+      "id": "b1500-wgfmu-ppf-time-v2",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/keysight-b1500a.wgfmu_ppf-time.csv": "sources/b1500-wgfmu-ppf-time.csv"
+      },
+      "source_to_load": "data/raw/keysight-b1500a.wgfmu_ppf-time.csv"
+    },
+    {
+      "id": "b1500-wgfmu-ppf-index-v2",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/keysight-b1500a.wgfmu_ppf-index.csv": "sources/b1500-wgfmu-ppf-index.csv"
+      },
+      "source_to_load": "data/raw/keysight-b1500a.wgfmu_ppf-index.csv"
+    },
+    {
+      "id": "b1500-wgfmu-large-v2",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/keysight-b1500a.wgfmu_large.csv": "sources/b1500-wgfmu-large.csv"
+      },
+      "source_to_load": "data/raw/keysight-b1500a.wgfmu_large.csv"
+    },
+    {
+      "id": "v3-acme-cv",
+      "grammar_file": "grammar/electrochem.yaml",
+      "profile_files": {
+        "acme-v3.yaml": "profiles/acme-v3.yaml"
+      },
+      "source_files": {
+        "data/raw/acme.cv_run1.txt": "sources/acme.cv_run1.txt"
+      },
+      "source_to_load": "data/raw/acme.cv_run1.txt"
+    },
+    {
+      "id": "v3-acme-ca",
+      "grammar_file": "grammar/electrochem.yaml",
+      "profile_files": {
+        "acme-v3.yaml": "profiles/acme-v3.yaml"
+      },
+      "source_files": {
+        "data/raw/acme.ca_run2.txt": "sources/acme.ca_run2.txt"
+      },
+      "source_to_load": "data/raw/acme.ca_run2.txt"
+    },
+    {
+      "id": "v3-acme-rich-gaps-v3",
+      "grammar_file": "grammar/electrochem.yaml",
+      "profile_files": {
+        "acme-v3.yaml": "profiles/acme-v3.yaml"
+      },
+      "source_files": {
+        "data/raw/acme.rich_run7.txt": "sources/acme.rich_run7.txt"
+      },
+      "source_to_load": "data/raw/acme.rich_run7.txt"
+    },
+    {
+      "id": "generic-table-fallback",
+      "profile_files": {},
+      "source_files": {
+        "data/raw/generic.csv": "sources/generic-fallback.csv"
+      },
+      "source_to_load": "data/raw/generic.csv"
+    },
+    {
+      "id": "filename-selector-v2",
+      "profile_files": {
+        "synth.yaml": "profiles/filename-v2.yaml"
+      },
+      "source_files": {
+        "data/raw/run_synth-token_dual-sweep.csv": "sources/filename-v2.csv"
+      },
+      "source_to_load": "data/raw/run_synth-token_dual-sweep.csv"
+    }
+  ]
+}

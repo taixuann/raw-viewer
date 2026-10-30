@@ -1,11 +1,20 @@
 //! Shared RawView core.
 //!
-//! [`paths`] resolves the global config directory, the project config directory,
-//! and the cache directory. [`config`] loads typed TOML settings from those
-//! directories. Readers and measurements arrive in a later step.
+//! [`paths`] and [`config`] resolve global and project settings directories.
+//! [`profile`] loads and validates instrument profile YAML (schema v1, v2, and v3).
+//! [`grammar`] loads filename grammars for schema-v3 routing.
+//! [`reader`] extracts normalized measurements (legacy profiles, schema v3,
+//! and generic-table fallback). [`measurement`] defines the v1 contract and golden JSON codec.
+//! [`yaml`] is the profile YAML subset parser shared with the Swift app.
 
 pub mod config;
+pub mod grammar;
+pub mod measurement;
 pub mod paths;
+pub mod profile;
+pub mod project;
+pub mod reader;
+pub mod yaml;
 
 /// Placeholder identity for the shared core.
 /// The Tauri shell still calls this.
