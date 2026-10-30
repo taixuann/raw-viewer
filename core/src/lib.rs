@@ -7,6 +7,9 @@
 pub mod config;
 pub mod measurement;
 pub mod paths;
+pub mod profile;
+pub mod project;
+pub mod reader;
 pub mod yaml;
 
 /// Placeholder identity for the shared core.

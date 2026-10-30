@@ -1,0 +1,7 @@
+#Instrument=	LabRAM HR Evol
+#Laser=	532nm
+#Acq. time (s)=	5
+125,500	3,25
+126,750	4,5
+128,000	NaN
+

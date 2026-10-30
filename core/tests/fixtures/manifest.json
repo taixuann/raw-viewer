@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "id": "keysight-dual-sweep",
+      "profile_files": {
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+      },
+      "source_files": {
+        "data/raw/fixture-run/dual-sweep.csv": "sources/dual-sweep.csv"
+      },
+      "source_to_load": "data/raw/fixture-run/dual-sweep.csv"
+    },
+    {
+      "id": "keithley-lvm",
+      "profile_files": {
+        "keithley-2400.yaml": "profiles/keithley-2400.yaml"
+      },
+      "source_files": {
+        "data/raw/sweep.txt": "sources/sweep.txt"
+      },
+      "source_to_load": "data/raw/sweep.txt"
+    },
+    {
+      "id": "horiba-raman-tsv",
+      "profile_files": {
+        "horiba-labram.yaml": "profiles/horiba-labram.yaml"
+      },
+      "source_files": {
+        "data/raw/sers.txt": "sources/sers.txt"
+      },
+      "source_to_load": "data/raw/sers.txt"
+    }
+  ]
+}
