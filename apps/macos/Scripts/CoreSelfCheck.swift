@@ -987,7 +987,10 @@ enum CoreSelfCheck {
         do {
             _ = try await InstrumentReader.load(root.appendingPathComponent("data/raw/foreign-list.csv"), project: project)
             fatalError("foreign basename was loaded")
-        } catch { precondition("\(error)".contains("\"keysight\""), "foreign diagnostic lost the token: \(error)") }
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            precondition(message.contains("\"keysight\""), "foreign diagnostic lost the token: \(message)")
+        }
         // Generic I/V Sweep text in unrelated metadata must not pull a dual
         // export into list-sweep: the dual signature wins uniquely.
         let dualMetaResult = report.results.first { $0.id == "data/raw/keysight-b1500a.dual-sweep_meta.csv" }
