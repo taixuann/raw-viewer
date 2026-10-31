@@ -731,12 +731,6 @@ struct FilenameGrammarEngineTests {
             offenders.append(url.lastPathComponent)
         }
         #expect(offenders.isEmpty, "loadCombined callers outside its definition: \(offenders)")
-        // The editor's enforced paths use throwing load/save, not loadCombined.
-        let editorURL = repoRoot.appendingPathComponent("Sources/RawViewApp/Editor/EditorWorkspaceView.swift")
-        let editor = try String(contentsOf: editorURL, encoding: .utf8)
-        #expect(!editor.contains("loadCombined"))
-        #expect(editor.contains("FilenameGrammarEngine.load(project:"))
-        #expect(editor.contains("FilenameGrammarEngine.save(catalog:"))
     }
 
     // MARK: - Task 7: grammar-variable Explorer views (RED-first)

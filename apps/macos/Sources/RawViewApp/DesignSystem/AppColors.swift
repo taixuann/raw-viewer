@@ -56,15 +56,6 @@ public enum AppColors {
         return .data
     }
 
-    /// Resolves semantic role color from ColumnDefinition.
-    public static func roleColor(col: ColumnDefinition) -> RoleColor {
-        if col.isSkipped || col.role == .skip { return .skip }
-        if col.role == .progression { return .progression }
-        if col.isXAxis || col.role == .x { return .x }
-        if col.isYAxis || col.role == .y { return .y }
-        return .data
-    }
-
     // MARK: - 12 Harmonious Stream Palette Colors
 
     /// 12 harmonious pastel stream colors for distinguishing streams and columns.

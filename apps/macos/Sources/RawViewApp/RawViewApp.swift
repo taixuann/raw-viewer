@@ -30,80 +30,12 @@ struct RawViewApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             ExplorerToolbarCommands(model: model)
-            EditorSaveCommands()
         }
 
         Settings {
             SettingsView(model: model)
                 .preferredColorScheme(preferredScheme)
         }
-    }
-}
-
-// MARK: - Task 6: one focused-window Save command (no duplicate ⌘S).
-
-/// Vended by the focused editor workspace; the single ⌘S command calls it.
-/// Scene-scoped, so sidebar focus never retargets the Save target.
-struct EditorSaveActionKey: FocusedValueKey {
-    typealias Value = () -> Void
-}
-
-extension FocusedValues {
-    var editorSaveAction: (() -> Void)? {
-        get { self[EditorSaveActionKey.self] }
-        set { self[EditorSaveActionKey.self] = newValue }
-    }
-}
-
-struct EditorSaveCommands: Commands {
-    @FocusedValue(\.editorSaveAction) private var saveAction
-
-    var body: some Commands {
-        CommandGroup(replacing: .saveItem) {
-            Button("Save") { saveAction?() }
-                .keyboardShortcut("s", modifiers: [.command])
-                .disabled(saveAction == nil)
-        }
-    }
-}
-
-// MARK: - Task 6: window-close/quit dirty guard (Save/Discard/Cancel).
-
-/// Per-window editor registrations. Entries hold the owner weakly and are
-/// pruned on read, so switching workspace modes never strands a guard.
-@MainActor
-final class EditorDirtyTracker: ObservableObject {
-    static let shared = EditorDirtyTracker()
-
-    private struct Entry {
-        weak var owner: AnyObject?
-        let label: String
-        let hasWork: () -> Bool
-        /// Attempts Save; returns false when the save failed (abort).
-        let save: () -> Bool
-    }
-
-    private var entries: [ObjectIdentifier: Entry] = [:]
-
-    func register(_ owner: AnyObject, label: String, hasWork: @escaping () -> Bool, save: @escaping () -> Bool) {
-        entries[ObjectIdentifier(owner)] = Entry(owner: owner, label: label, hasWork: hasWork, save: save)
-    }
-
-    private func liveEntries() -> [Entry] {
-        entries = entries.filter { $0.value.owner != nil }
-        return Array(entries.values)
-    }
-
-    var hasUnsavedWork: Bool { liveEntries().contains(where: { $0.hasWork() }) }
-
-    var dirtyLabels: [String] { liveEntries().filter { $0.hasWork() }.map(\.label) }
-
-    /// Saves every dirty document; a failed Save aborts (returns false).
-    func saveAll() -> Bool {
-        for entry in liveEntries() where entry.hasWork() {
-            if !entry.save() { return false }
-        }
-        return !hasUnsavedWork
     }
 }
 
@@ -122,24 +54,7 @@ final class RawViewAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard EditorDirtyTracker.shared.hasUnsavedWork else { return .terminateNow }
-        let names = EditorDirtyTracker.shared.dirtyLabels.joined(separator: ", ")
-        let alert = NSAlert()
-        alert.messageText = "Unsaved profile changes"
-        alert.informativeText = "Save \(names.isEmpty ? "the profile document" : names), discard the drafts, or cancel and keep editing."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            // Failed Save aborts termination; Cancel keeps everything.
-            return EditorDirtyTracker.shared.saveAll() ? .terminateNow : .terminateCancel
-        case .alertSecondButtonReturn:
-            return .terminateNow
-        default:
-            return .terminateCancel
-        }
+        .terminateNow
     }
 }
 
@@ -504,28 +419,6 @@ final class RawViewModel: ObservableObject {
     @Published var showLegend = true
     @Published var customSeriesLabels: [String: String] = [:]
     @Published var legendOffset: CGSize = .zero
-    public enum WorkspaceMode: String, CaseIterable, Identifiable {
-        case explorer = "Explorer"
-        case editor = "Profile Editor"
-        public var id: String { rawValue }
-    }
-
-    @Published var activeWorkspaceMode: WorkspaceMode = .explorer
-    @Published var editorInitialSource: RawSource? = nil
-
-    func buildProfileForSource(_ sourceID: String?) {
-        let targetID = sourceID ?? focusedSourceID
-        guard let targetID = targetID,
-              let src = sources.first(where: {
-                  $0.id == targetID ||
-                  $0.relativePath == targetID ||
-                  $0.url.lastPathComponent == targetID ||
-                  $0.url.path == targetID ||
-                  targetID.hasSuffix($0.relativePath)
-              }) else { return }
-        self.editorInitialSource = src
-        self.activeWorkspaceMode = .editor
-    }
 
     @Published var availablePresets: [ScientificPreset] = ScientificPreset.allCases
     @Published var selectedPreset: ScientificPreset = .natureSingle
@@ -1690,20 +1583,11 @@ struct RawViewShell: View {
                     }
 
                 Group {
-                    if model.activeWorkspaceMode == .editor, let project = model.project {
-                        EditorWorkspaceView(
-                            project: project,
-                            sources: model.sources,
-                            initialSelectedSource: model.editorInitialSource,
-                            developerMode: model.developerMode
-                        )
-                    } else {
-                        galleryPane
-                    }
+                    galleryPane
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if model.activeWorkspaceMode == .explorer && model.showInspector {
+                if model.showInspector {
                     inspector
                         .frame(minWidth: 240, idealWidth: 280, maxWidth: 450)
                         .frame(maxHeight: .infinity)
@@ -1802,7 +1686,6 @@ struct RawViewShell: View {
                        onSaveSnapshotPackage: { model.saveSnapshotPackage() },
                        projectSnapshotPackages: model.projectSnapshotPackages,
                        onSelectSnapshotPackage: { model.loadSnapshotPackage($0) },
-                       onBuildProfile: { model.buildProfileForSource($0) },
                        comparisonTitle: model.comparisonTitle,
                        availablePresets: model.availablePresets,
                        selectedPreset: $model.selectedPreset,
@@ -1814,10 +1697,10 @@ struct RawViewShell: View {
 
     private var sidebarPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // OakReader-style Workspace Modes (Explorer & Profile Studio)
+            // Project header (open / recent)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text("WORKSPACE")
+                    Text("PROJECT")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color(nsColor: .labelColor).opacity(0.55))
                         .tracking(0.5)
@@ -1853,18 +1736,6 @@ struct RawViewShell: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
                 .padding(.bottom, 4)
-
-                workspaceRow(title: "Explorer", icon: "chart.xyaxis.line", isSelected: model.activeWorkspaceMode == .explorer) {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        model.activeWorkspaceMode = .explorer
-                    }
-                }
-
-                workspaceRow(title: "Profile Studio", icon: "slider.horizontal.3", isSelected: model.activeWorkspaceMode == .editor) {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        model.activeWorkspaceMode = .editor
-                    }
-                }
             }
 
             Spacer().frame(height: 12)
@@ -1901,7 +1772,6 @@ struct RawViewShell: View {
                     inventoryIssues: model.inventoryIssues,
                     dataRoot: project.dataRootRelativePath,
                     expandedDirectoryIDs: $model.expandedDirectoryIDs,
-                    onBuildProfile: { model.buildProfileForSource($0) },
                     facet: $model.selectedExplorerView,
                     explorerViews: model.explorerViews,
                     catalog: model.explorerCatalog,
@@ -1927,33 +1797,6 @@ struct RawViewShell: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private func workspaceRow(title: String, icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                    .frame(width: 18, height: 18)
-
-                Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.primary.opacity(0.08) : Color.clear)
-                    .padding(.horizontal, 8)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private var sectionSwitcher: some View {
@@ -2130,7 +1973,6 @@ struct RawViewShell: View {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
                                  }
                              },
-                             onBuildProfile: { model.buildProfileForSource($0) },
                              eligibleX: currentState?.measurement?.eligibleXIDs ?? [],
                              eligibleY: currentState?.measurement?.eligibleYIDs ?? [],
                              defaultY: baseMeasurement?.view.y ?? [],

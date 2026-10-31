@@ -12,7 +12,6 @@ struct ProjectSourcesSidebar: View {
     var inventoryIssues: [InventoryIssue] = []
     var dataRoot: String = "data/raw"
     @Binding var expandedDirectoryIDs: Set<String>
-    var onBuildProfile: ((String?) -> Void)? = nil
     /// Task 7: settings-driven grammar-variable views. Tree/None stay
     /// structural; every other choice is a qualified (grammar, variable)
     /// reference owned by project settings, never the grammar catalog.
@@ -51,7 +50,6 @@ struct ProjectSourcesSidebar: View {
         inventoryIssues: [InventoryIssue] = [],
         dataRoot: String = "data/raw",
         expandedDirectoryIDs: Binding<Set<String>> = .constant([]),
-        onBuildProfile: ((String?) -> Void)? = nil,
         facet: Binding<String> = .constant("tree"),
         explorerViews: [ExplorerViewDefinition] = [],
         catalog: FilenameGrammarCatalog? = nil,
@@ -70,7 +68,6 @@ struct ProjectSourcesSidebar: View {
         self.inventoryIssues = inventoryIssues
         self.dataRoot = dataRoot
         self._expandedDirectoryIDs = expandedDirectoryIDs
-        self.onBuildProfile = onBuildProfile
         self._facet = facet
         self.explorerViews = explorerViews
         self.catalog = catalog
@@ -724,13 +721,6 @@ struct ProjectSourcesSidebar: View {
         }
         .padding(.vertical, 3)
         .tag(source.id)
-        .contextMenu {
-            Button {
-                onBuildProfile?(source.id)
-            } label: {
-                Label("Build Profile from This File", systemImage: "sparkles.rectangle.stack")
-            }
-        }
         .help(filename)
         .accessibilityLabel("\(filename)\(isFocused ? ", focused" : "")")
     }

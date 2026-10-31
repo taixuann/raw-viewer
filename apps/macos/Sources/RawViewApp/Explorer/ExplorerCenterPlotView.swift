@@ -776,7 +776,6 @@ struct ProjectGallery: View {
     var onSaveSnapshotPackage: (() -> Void)? = nil
     var projectSnapshotPackages: [RawViewModel.ProjectSnapshotPackage] = []
     var onSelectSnapshotPackage: ((RawViewModel.ProjectSnapshotPackage) -> Void)? = nil
-    var onBuildProfile: ((String) -> Void)? = nil
     var comparisonTitle: String = ""
     var availablePresets: [ScientificPreset] = ScientificPreset.allCases
     @Binding var selectedPreset: ScientificPreset

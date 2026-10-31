@@ -91,7 +91,6 @@ enum CoreSelfCheck {
         try scientificPresetsSelfCheck()
         try presetCatalogSelfCheck()
         try categoryRuleEngineSelfCheck()
-        try editorWorkspaceModelSelfCheck()
         try await projectIndexStoreSelfCheck()
         try await projectIndexerSelfCheck()
         try await indexCommandSelfCheck()
@@ -2633,47 +2632,6 @@ enum CoreSelfCheck {
         precondition(legacyFacts.category == nil, "unconfigured category should be nil")
     }
 
-    static func editorWorkspaceModelSelfCheck() throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("rawview-editor-check-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: root) }
-
-        let sampleCSV = """
-        # Instrument: Custom Keithey
-        # Date: 2026-10-10
-        Voltage,Current
-        0.0,1.2e-6
-        0.1,2.5e-6
-        0.2,3.8e-6
-        """
-        try writeFixture(root, "sample.csv", sampleCSV)
-        let sampleURL = root.appendingPathComponent("sample.csv")
-
-        let model = EditorWorkspaceModel()
-        try model.loadSample(url: sampleURL)
-        precondition(model.lines.count == 6, "expected 6 preview lines, got \(model.lines.count)")
-
-        // Tag lines 0..1 as metadata, line 2 as column headers, lines 3..5 as data matrix
-        model.tagRange(from: 0, to: 1, as: .metadata)
-        model.tagRange(from: 2, to: 2, as: .columnHeaders)
-        model.tagRange(from: 3, to: 5, as: .dataMatrix)
-
-        precondition(model.lineTags[0] == .metadata)
-        precondition(model.lineTags[1] == .metadata)
-        precondition(model.lineTags[2] == .columnHeaders)
-        precondition(model.lineTags[3] == .dataMatrix)
-        precondition(model.columns.count == 2, "auto-detected 2 columns: \(model.columns.map(\.name))")
-        precondition(model.columns[0].name == "Voltage")
-        precondition(model.columns[1].name == "Current")
-
-        model.instrumentID = "test-sourcemeter"
-        model.instrumentName = "Test SourceMeter"
-        let compiledYAML = try model.compileProfile()
-        precondition(compiledYAML.contains("id: \"test-sourcemeter\""))
-        precondition(compiledYAML.contains("header_row: 3"))
-        precondition(compiledYAML.contains("data_start_row: 4"))
-    }
-
     static func activeProjectTestSelfCheck() async throws {
         let testRoot = URL(fileURLWithPath: "/Users/tai/research-projects/active-projects/test", isDirectory: true)
         guard FileManager.default.fileExists(atPath: testRoot.path) else { return }
@@ -3781,70 +3739,6 @@ enum CoreSelfCheck {
         precondition(itemsAllExpanded[4].node.sourceID == "a/b/c/d/sample.csv", "leaf sourceID matches")
         precondition(itemsAllExpanded[4].depth == 4, "deep-nested leaf depth is 4")
         precondition(!itemsAllExpanded[4].isDirectory, "leaf is not directory")
-
-        // Test Smart Auto Detect
-        let editorModel = EditorWorkspaceModel()
-        editorModel.lines = [
-            "Date: 2026-10-10",
-            "Instrument: Keithley 2400",
-            "Scan Rate: 50 mV/s",
-            "Voltage (V)\tCurrent (A)",
-            "0.000E+00\t1.050E-06",
-            "1.000E-01\t2.500E-06",
-            "2.000E-01\t4.800E-06"
-        ]
-        let detected = editorModel.smartAutoDetect()
-        precondition(detected.columnSeparator == "\t", "sniffed tab separator")
-        precondition(detected.metadataPairs.count == 3, "detected 3 metadata pairs")
-        precondition(detected.headerLineIndex == 3, "header line is 3")
-        precondition(detected.dataStartLineIndex == 4, "data start line is 4")
-        precondition(detected.suggestedChannels.count == 2, "suggested 2 channels")
-        precondition(detected.suggestedChannels[0].isXAxis, "channel 0 is X Axis")
-        precondition(detected.suggestedChannels[0].unit == "V", "channel 0 unit is V")
-        precondition(detected.suggestedChannels[1].isYAxis, "channel 1 is Y Axis")
-        precondition(detected.suggestedChannels[1].unit == "A", "channel 1 unit is A")
-
-        // Test Universal Profile Loader
-        let b1500URL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Examples/rawview/keysight-b1500a.yaml")
-        if FileManager.default.fileExists(atPath: b1500URL.path) {
-            let loadedModel = EditorWorkspaceModel()
-            try loadedModel.loadSavedProfile(url: b1500URL)
-            precondition(loadedModel.instrumentID == "keysight-b1500a", "loaded B1500A id")
-            precondition(loadedModel.delimiter == ",", "loaded B1500A delimiter")
-            precondition(!loadedModel.columns.isEmpty, "loaded B1500A columns")
-            precondition(loadedModel.columns.contains(where: { $0.isXAxis }), "loaded B1500A X axis")
-            precondition(loadedModel.columns.contains(where: { $0.isYAxis }), "loaded B1500A Y axis")
-        }
-
-        let flatYAML = """
-        id: autolab-cv
-        name: Autolab PGSTAT302N
-        delimiter: ";"
-        columns:
-          - name: Potential applied (V)
-            unit: V
-            label: Potential
-            is_x: true
-          - name: Current (A)
-            unit: A
-            label: Current
-            is_y: true
-        """
-        let tempYAMLURL = FileManager.default.temporaryDirectory.appendingPathComponent("test-flat-\(UUID().uuidString).yaml")
-        try flatYAML.write(to: tempYAMLURL, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: tempYAMLURL) }
-
-        let flatModel = EditorWorkspaceModel()
-        try flatModel.loadSavedProfile(url: tempYAMLURL)
-        precondition(flatModel.instrumentID == "autolab-cv", "loaded flat ID")
-        precondition(flatModel.delimiter == ";", "loaded flat delimiter")
-        precondition(flatModel.columns.count == 2, "loaded 2 flat columns")
-        precondition(flatModel.columns[0].unit == "V", "loaded flat unit V")
-        precondition(flatModel.columns[0].isXAxis, "loaded flat X axis")
-        precondition(flatModel.columns[1].isYAxis, "loaded flat Y axis")
     }
 }
 

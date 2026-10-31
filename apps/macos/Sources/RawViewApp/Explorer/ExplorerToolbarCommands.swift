@@ -30,18 +30,6 @@ struct ExplorerToolbarCommands: Commands {
         }
 
         CommandMenu("View") {
-            Button("Switch to Explorer") {
-                model.activeWorkspaceMode = .explorer
-            }
-            .keyboardShortcut("1", modifiers: [.command])
-
-            Button("Switch to Profile Editor") {
-                model.activeWorkspaceMode = .editor
-            }
-            .keyboardShortcut("2", modifiers: [.command])
-
-            Divider()
-
             Button("Toggle Inspector") {
                 model.toggleInspector()
             }
