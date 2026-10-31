@@ -224,11 +224,10 @@ public enum InstrumentReader {
             let pending: Data
             switch encoded.resolution {
             case .failed(let message):
+                try? handle.close()
                 if let measurement = try? GenericTableReader.loadMeasurement(url: source, sourceID: relativePath) {
-                    try? handle.close()
                     return measurement
                 }
-                try? handle.close()
                 if message.contains("could not be decoded") {
                     throw ReaderError.invalidSource("\(relativePath): \(message)")
                 }
