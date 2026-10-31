@@ -76,7 +76,7 @@ The gardener owns this table. Update it when rules or checks change.
 | L9 — Raw scientific data under project data roots are read-only and immutable. | `apps/macos/Scripts/check_index_cli.sh:53-77` (macOS `stat -f`; swift CI job only) | partial |
 | L13 — Graphify paths are relative to the Swift package in `apps/macos/`. | `.github/workflows/ci.yml:57-59` (swift job `working-directory: apps/macos`) | partial |
 | L63 — Storage invariant (writable index only under `<project>/.rawviewer/index.db`; no other project-local SQLite writes). | `apps/macos/Scripts/CoreSelfCheck.swift:2845-2858`, `3656-3657` (`projectIndexStoreSelfCheck`) | partial |
-| L64 — Settings invariant (`.rawviewer/setting.yaml`; default view `tree`; default preset `nature-single`). | `apps/macos/Scripts/check_index_cli.sh:65-69`; `apps/macos/Scripts/CoreSelfCheck.swift:2386-2398`; `core/src/config.rs:48-58`, `489-490` | partial |
+| L64 — Settings invariant (`.rawviewer/setting.yaml`; default view `tree`; default preset `nature-single`). | `apps/macos/Scripts/check_index_cli.sh:65-69`; `apps/macos/Scripts/CoreSelfCheck.swift:2386-2398`; `core/src/config.rs:48-58` (`DEFAULT_VIEW` / `DEFAULT_PRESET`) | partial |
 | L65 — Profile fallback (load order; no writes under `.rawviewer/instrument/`). | `apps/macos/Scripts/CoreSelfCheck.swift:1076-1084` (priority/fallback); no automated check for the read-only write ban | partial |
 | L66 — Verification gate (macOS check scripts + Rust fmt/clippy/test). | `.github/workflows/ci.yml:46-51`, `73-76` | partial |
 | CI must be green on all jobs before merge. | `.github/workflows/ci.yml:15-76` (rust matrix + swift job steps) | enforced |
