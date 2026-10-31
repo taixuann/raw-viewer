@@ -2,9 +2,11 @@
 
 use crate::profile::sha256_hex;
 use crate::yaml::parse;
-use regex::Regex;
 use std::collections::HashMap;
-use std::path::PathBuf;
+
+mod compile;
+
+pub use compile::compile;
 
 pub const RELATIVE_PATH: &str = ".rawviewer/grammar.yaml";
 
@@ -206,79 +208,9 @@ pub fn template_variables(template: &str) -> Vec<String> {
     names
 }
 
-fn pattern_for_field(field: Option<&GrammarField>, has_trailing: bool) -> String {
-    let Some(field) = field else {
-        return if has_trailing {
-            "(.+?)".into()
-        } else {
-            "(.+)".into()
-        };
-    };
-    match field.field_type {
-        GrammarFieldType::Number => "(\\d+(?:\\.\\d+)?)".into(),
-        GrammarFieldType::DateTime | GrammarFieldType::String => {
-            if has_trailing {
-                "(.+?)".into()
-            } else {
-                "(.+)".into()
-            }
-        }
-    }
-}
-
-pub fn compile(template: &str, fields: &[GrammarField]) -> Result<(Regex, Vec<String>), String> {
-    let trimmed = template.trim();
-    if trimmed.is_empty() {
-        return Err("Grammar template cannot be empty".into());
-    }
-    let mut pattern = String::from("^");
-    let mut field_names = Vec::new();
-    let mut scan_index = 0usize;
-    while scan_index < trimmed.len() {
-        if let Some(open_rel) = trimmed[scan_index..].find('{') {
-            let open = scan_index + open_rel;
-            let leading = if open > scan_index {
-                &trimmed[scan_index..open]
-            } else {
-                ""
-            };
-            let close_rel = trimmed[open..]
-                .find('}')
-                .ok_or_else(|| format!("Unclosed token near '{}'", &trimmed[open..]))?;
-            let close = open + close_rel;
-            let var_name = trimmed[open + 1..close].trim().to_string();
-            field_names.push(var_name.clone());
-            let field_config = fields.iter().find(|f| f.name == var_name);
-            let is_optional = field_config.map(|f| f.is_optional).unwrap_or(false);
-            let next_index = close + 1;
-            let has_trailing = next_index < trimmed.len();
-            let mut capture_group = pattern_for_field(field_config, has_trailing);
-            if (field_config.is_none()
-                || field_config.map(|f| f.field_type) == Some(GrammarFieldType::String))
-                && next_index < trimmed.len()
-                && !trimmed[next_index..].starts_with('{')
-            {
-                let next_char = trimmed[next_index..].chars().next().unwrap();
-                capture_group = format!("([^{}]+?)", regex::escape(&next_char.to_string()));
-            }
-            if is_optional {
-                pattern.push_str(&format!("(?:{}{})?", regex::escape(leading), capture_group));
-            } else {
-                if !leading.is_empty() {
-                    pattern.push_str(&regex::escape(leading));
-                }
-                pattern.push_str(&capture_group);
-            }
-            scan_index = next_index;
-        } else {
-            pattern.push_str(&regex::escape(&trimmed[scan_index..]));
-            scan_index = trimmed.len();
-        }
-    }
-    pattern.push('$');
-    Regex::new(&pattern)
-        .map_err(|e| format!("Invalid regular expression: {e}"))
-        .map(|regex| (regex, field_names))
+fn template_has_bracketed_var(template: &str, var_name: &str) -> bool {
+    let needle = format!("[{{{var_name}}}]");
+    template.contains(&needle)
 }
 
 fn canonical_role_key(role: &str) -> String {
@@ -309,18 +241,7 @@ pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFac
             unmatched_reason: Some("Invalid template syntax".into()),
         };
     };
-    let mut target = filename.to_string();
-    if let Some(ext) = PathBuf::from(filename)
-        .extension()
-        .and_then(|e| e.to_str())
-        .filter(|e| !e.is_empty())
-    {
-        if !grammar.template.ends_with(&format!(".{ext}")) {
-            if let Some(stem) = PathBuf::from(filename).file_stem().and_then(|s| s.to_str()) {
-                target = stem.to_string();
-            }
-        }
-    }
+    let target = compile::strip_data_extension(filename, &grammar.template);
     let Some(caps) = regex.captures(&target) else {
         return ExtractedGrammarFacts {
             is_matched: false,
@@ -338,7 +259,15 @@ pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFac
     let mut extracted = HashMap::new();
     for (idx, name) in field_names.iter().enumerate() {
         if let Some(m) = caps.get(idx + 1) {
-            extracted.insert(name.clone(), m.as_str().to_string());
+            let mut value = m.as_str().to_string();
+            if template_has_bracketed_var(&grammar.template, name)
+                && value.starts_with('[')
+                && value.ends_with(']')
+                && value.len() >= 2
+            {
+                value = value[1..value.len() - 1].to_string();
+            }
+            extracted.insert(name.clone(), value);
         }
     }
     let mut timestamp = None;

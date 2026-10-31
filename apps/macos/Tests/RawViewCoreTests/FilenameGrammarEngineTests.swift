@@ -174,16 +174,17 @@ struct FilenameGrammarEngineTests {
 
     @Test func standardScientificTemplateWithBatchAndDateTime() throws {
         let standard = FilenameGrammarCatalog.standardDefaults.first!
-        #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}")
+        #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_f.[{flags}]_{batch}")
         let (_, fieldNames) = try FilenameGrammarEngine.compile(template: standard.template, fields: standard.fields)
         #expect(fieldNames.contains("batch"))
 
-        let sample = "261012-143000_Autolab.CV_[D01]_Stability_r.[scan1]_001.csv"
+        let sample =
+            "201226-154955_keithley-2400.dual-sweep_[d01]_iv.dual-sweep_r.[300K]_f.[x]_001.csv"
         let facts = FilenameGrammarEngine.extract(from: sample, grammar: standard)
         #expect(facts.isMatched == true)
-        #expect(facts.extractedFields["date"] == "261012-143000")
+        #expect(facts.extractedFields["date"] == "201226-154955")
         #expect(facts.extractedFields["batch"] == "001")
-        #expect(facts.extractedFields["device-id"] == "D01")
+        #expect(facts.extractedFields["device-id"] == "d01")
     }
 
     @Test func globalAndProjectStorageIsolation() throws {
@@ -255,29 +256,29 @@ struct FilenameGrammarEngineTests {
     @Test func standardScientificTemplatePermutations() throws {
         let standard = FilenameGrammarCatalog.standardDefaults.first!
 
-        // 1. With remarks and batch
-        let s1 = "261012-143000_Autolab.CV_[D01]_Stability_r.[scan1]_001.csv"
+        // 1. With remarks and batch (standard keithley-style tokens; optional flags omitted)
+        let s1 = "201226-154955_keithley-2400.dual-sweep_[d01]_iv.dual-sweep_r.[300K]_001.csv"
         let f1 = FilenameGrammarEngine.extract(from: s1, grammar: standard)
         #expect(f1.isMatched == true)
-        #expect(f1.extractedFields["remarks"] == "scan1")
+        #expect(f1.extractedFields["remarks"] == "300K")
         #expect(f1.extractedFields["batch"] == "001")
 
         // 2. With remarks, without batch
-        let s2 = "261012-143000_Autolab.CV_[D01]_Stability_r.[scan1].csv"
+        let s2 = "201226-154955_keithley-2400.dual-sweep_[d01]_iv.dual-sweep_r.[300K].csv"
         let f2 = FilenameGrammarEngine.extract(from: s2, grammar: standard)
         #expect(f2.isMatched == true)
-        #expect(f2.extractedFields["remarks"] == "scan1")
+        #expect(f2.extractedFields["remarks"] == "300K")
         #expect(f2.extractedFields["batch"] == nil)
 
         // 3. Without remarks, with batch
-        let s3 = "261012-143000_Autolab.CV_[D01]_Stability_001.csv"
+        let s3 = "201226-154955_keithley-2400.dual-sweep_[d01]_iv.dual-sweep_001.csv"
         let f3 = FilenameGrammarEngine.extract(from: s3, grammar: standard)
         #expect(f3.isMatched == true)
         #expect(f3.extractedFields["remarks"] == nil)
         #expect(f3.extractedFields["batch"] == "001")
 
         // 4. Without remarks, without batch
-        let s4 = "261012-143000_Autolab.CV_[D01]_Stability.csv"
+        let s4 = "201226-154955_keithley-2400.dual-sweep_[d01]_iv.dual-sweep.csv"
         let f4 = FilenameGrammarEngine.extract(from: s4, grammar: standard)
         #expect(f4.isMatched == true)
         #expect(f4.extractedFields["remarks"] == nil)

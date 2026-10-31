@@ -111,7 +111,7 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
         FilenameGrammar(
             id: "standard-scientific",
             name: "Standard Filename Pattern",
-            template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}",
+            template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_f.[{flags}]_{batch}",
             description: "Default pattern for electrochemistry measurement series",
             fields: [
                 GrammarField(name: "date", role: "Date & Time", type: .datetime, formatHint: "DDMMYY-HHmmSS"),
@@ -120,6 +120,7 @@ public struct FilenameGrammarCatalog: Sendable, Equatable {
                 GrammarField(name: "device-id", role: "Device ID", type: .string, stripBrackets: true),
                 GrammarField(name: "study", role: "Study", type: .string),
                 GrammarField(name: "remarks", role: "Remarks", type: .string, stripBrackets: true, isOptional: true),
+                GrammarField(name: "flags", role: "flags", type: .string, stripBrackets: true, isOptional: true),
                 GrammarField(name: "batch", role: "Batch", type: .number, formatHint: "001", isOptional: true)
             ],
             isDefault: true
@@ -336,41 +337,72 @@ public enum FilenameGrammarEngine {
         return names
     }
 
-    private static func patternForField(_ field: GrammarField?, hasTrailing: Bool) -> String {
+    private static let dataExtensions: Set<String> = [
+        "csv", "txt", "tsv", "dat", "asc", "log", "json", "yaml", "yml", "xlsx", "xls",
+    ]
+
+    static func stripDataExtension(_ filename: String, template: String) -> String {
+        let lower = filename.lowercased()
+        for ext in dataExtensions {
+            let suffix = ".\(ext)"
+            if lower.hasSuffix(suffix) {
+                if template.hasSuffix(suffix) { return filename }
+                return String(filename.dropLast(suffix.count))
+            }
+        }
+        return filename
+    }
+
+    private static func tailIsOptionalOnly(_ template: String, from start: String.Index, fields: [GrammarField]) -> Bool {
+        var scan = start
+        while scan < template.endIndex {
+            guard let open = template[scan...].firstIndex(of: "{"),
+                  let close = template[open...].firstIndex(of: "}") else { break }
+            let name = String(template[template.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+            guard fields.first(where: { $0.name == name })?.isOptional == true else { return false }
+            scan = template.index(after: close)
+            if scan < template.endIndex && template[scan] == "]" {
+                scan = template.index(after: scan)
+            }
+        }
+        return true
+    }
+
+    private static func patternForField(
+        _ field: GrammarField?,
+        bracketed: Bool,
+        nextLeading: String,
+        categoryStyle: Bool
+    ) -> String {
+        if bracketed { return "([^\\]]+)" }
         guard let field = field else {
-            return hasTrailing ? "(.+?)" : "(.+)"
+            return nextLeading.isEmpty ? "(.+)" : (nextLeading.count == 1 ? "(.+?)" : "(.+?)")
         }
         switch field.type {
         case .number:
             let fmt = field.formatHint.trimmingCharacters(in: .whitespaces)
-            if fmt == "01" || fmt.lowercased().contains("2-digit") {
-                return "(\\d{2})"
-            } else if fmt == "001" || fmt.lowercased().contains("3-digit") {
-                return "(\\d{3})"
-            } else if fmt == "0.0" || fmt.lowercased() == "decimal" {
-                return "(\\d+(?:\\.\\d+)?)"
-            } else {
-                return "(\\d+)"
-            }
+            if fmt == "01" || fmt.lowercased().contains("2-digit") { return "(\\d{2})" }
+            if fmt == "001" || fmt.lowercased().contains("3-digit") { return "(\\d{3})" }
+            if fmt == "0.0" || fmt.lowercased() == "decimal" { return "(\\d+(?:\\.\\d+)?)" }
+            return "(\\d+)"
         case .datetime:
             let fmt = field.formatHint.trimmingCharacters(in: .whitespaces)
-            if fmt == "yyyyMMdd" {
-                return "(\\d{8})"
-            } else if fmt == "yyMMdd" {
-                return "(\\d{6})"
-            } else if fmt == "yyyy-MM-dd" {
-                return "(\\d{4}-\\d{2}-\\d{2})"
-            } else if fmt == "HHmmss" {
-                return "(\\d{6})"
-            } else if fmt == "HHmm" {
-                return "(\\d{4})"
-            } else if fmt == "DDMMYY-HHmmSS" || fmt == "yyMMdd-HHmmss" {
-                return "(\\d{6}-\\d{6})"
-            } else {
-                return hasTrailing ? "(.+?)" : "(.+)"
-            }
+            if fmt == "yyyyMMdd" { return "(\\d{8})" }
+            if fmt == "yyMMdd" { return "(\\d{6})" }
+            if fmt == "yyyy-MM-dd" { return "(\\d{4}-\\d{2}-\\d{2})" }
+            if fmt == "HHmmss" { return "(\\d{6})" }
+            if fmt == "HHmm" { return "(\\d{4})" }
+            if fmt == "DDMMYY-HHmmSS" || fmt == "yyMMdd-HHmmss" { return "(\\d{6}-\\d{6})" }
+            return nextLeading.isEmpty ? "(.+)" : "(.+?)"
         case .string:
-            return hasTrailing ? "(.+?)" : "(.+)"
+            if categoryStyle { return "([^_]+(?:\\.[^_]+)*)" }
+            if nextLeading.isEmpty { return "(.+)" }
+            if nextLeading.count == 1 {
+                let ch = nextLeading[nextLeading.startIndex]
+                if ch == "." || ch == "_" { return "([^._]+)" }
+                return "([^" + NSRegularExpression.escapedPattern(for: String(ch)) + "]+?)"
+            }
+            return "(.+?)"
         }
     }
 
@@ -378,74 +410,70 @@ public enum FilenameGrammarEngine {
     /// into a regular expression and an ordered list of variable names.
     public static func compile(template: String, fields: [GrammarField] = []) throws -> (regex: NSRegularExpression, fieldNames: [String]) {
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw GrammarCompileError.emptyTemplate
-        }
+        guard !trimmed.isEmpty else { throw GrammarCompileError.emptyTemplate }
 
         var pattern = "^"
         var fieldNames: [String] = []
-
         var scanIndex = trimmed.startIndex
         while scanIndex < trimmed.endIndex {
-            if let openBrace = trimmed[scanIndex...].firstIndex(of: "{") {
-                let leadingLiteral = openBrace > scanIndex ? String(trimmed[scanIndex..<openBrace]) : ""
-
-                guard let closeBrace = trimmed[openBrace...].firstIndex(of: "}") else {
-                    let unclosed = String(trimmed[openBrace...])
-                    throw GrammarCompileError.unclosedToken(token: unclosed)
-                }
-
-                let varName = String(trimmed[trimmed.index(after: openBrace)..<closeBrace]).trimmingCharacters(in: .whitespaces)
-                fieldNames.append(varName)
-
-                let fieldConfig = fields.first(where: { $0.name == varName })
-                let isOptional = fieldConfig?.isOptional ?? false
-
-                var nextIndex = trimmed.index(after: closeBrace)
-                var trailingEnclosure = ""
-                if nextIndex < trimmed.endIndex && (trimmed[nextIndex] == "]" || trimmed[nextIndex] == ")") {
-                    trailingEnclosure = String(trimmed[nextIndex])
-                    nextIndex = trimmed.index(after: nextIndex)
-                }
-
-                let hasTrailing = (nextIndex < trimmed.endIndex)
-                var captureGroup = patternForField(fieldConfig, hasTrailing: hasTrailing || !trailingEnclosure.isEmpty)
-
-                // If next character in template is an explicit delimiter, ensure string fields do not swallow that delimiter
-                if (fieldConfig == nil || fieldConfig?.type == .string) && nextIndex < trimmed.endIndex {
-                    let nextChar = trimmed[nextIndex]
-                    if nextChar != "{" {
-                        captureGroup = "([^" + NSRegularExpression.escapedPattern(for: String(nextChar)) + "]+?)"
-                    }
-                }
-
-                if isOptional {
-                    let escapedLeading = leadingLiteral.isEmpty ? "" : NSRegularExpression.escapedPattern(for: leadingLiteral)
-                    let escapedTrailing = trailingEnclosure.isEmpty ? "" : NSRegularExpression.escapedPattern(for: trailingEnclosure)
-                    pattern += "(?:\(escapedLeading)\(captureGroup)\(escapedTrailing))?"
-                } else {
-                    if !leadingLiteral.isEmpty {
-                        pattern += NSRegularExpression.escapedPattern(for: leadingLiteral)
-                    }
-                    if !trailingEnclosure.isEmpty {
-                        pattern += captureGroup + NSRegularExpression.escapedPattern(for: trailingEnclosure)
-                    } else {
-                        pattern += captureGroup
-                    }
-                }
-
-                scanIndex = nextIndex
-            } else {
-                let trailingLiteral = String(trimmed[scanIndex...])
-                pattern += NSRegularExpression.escapedPattern(for: trailingLiteral)
-                scanIndex = trimmed.endIndex
+            guard let openBrace = trimmed[scanIndex...].firstIndex(of: "{") else {
+                pattern += NSRegularExpression.escapedPattern(for: String(trimmed[scanIndex...]))
+                break
             }
+            var leading = openBrace > scanIndex ? String(trimmed[scanIndex..<openBrace]) : ""
+            let bracketed = leading.hasSuffix("[")
+            if bracketed { leading.removeLast() }
+
+            guard let closeBrace = trimmed[openBrace...].firstIndex(of: "}") else {
+                throw GrammarCompileError.unclosedToken(token: String(trimmed[openBrace...]))
+            }
+            let varName = String(trimmed[trimmed.index(after: openBrace)..<closeBrace]).trimmingCharacters(in: .whitespaces)
+            fieldNames.append(varName)
+            let fieldConfig = fields.first(where: { $0.name == varName })
+            let isOptional = fieldConfig?.isOptional ?? false
+
+            var afterVar = trimmed.index(after: closeBrace)
+            if bracketed {
+                guard afterVar < trimmed.endIndex, trimmed[afterVar] == "]" else {
+                    throw GrammarCompileError.invalidRegex(reason: "Bracketed variable '\(varName)' must close with ']'")
+                }
+                afterVar = trimmed.index(after: afterVar)
+            }
+
+            var nextLeadingRaw = ""
+            if afterVar < trimmed.endIndex, let nextOpen = trimmed[afterVar...].firstIndex(of: "{") {
+                nextLeadingRaw = String(trimmed[afterVar..<nextOpen])
+            }
+            var nextLeading = nextLeadingRaw
+            if nextLeading.hasSuffix("[") { nextLeading.removeLast() }
+            let categoryStyle = fieldConfig?.type == .string
+                && tailIsOptionalOnly(trimmed, from: afterVar, fields: fields)
+                && (nextLeading.isEmpty || nextLeading.hasPrefix("_r."))
+            let captureGroup = patternForField(
+                fieldConfig,
+                bracketed: bracketed,
+                nextLeading: nextLeading,
+                categoryStyle: categoryStyle
+            )
+
+            var body = ""
+            if !leading.isEmpty { body += NSRegularExpression.escapedPattern(for: leading) }
+            if bracketed {
+                body += "\\[" + captureGroup + "\\]"
+            } else {
+                body += captureGroup
+            }
+            if isOptional {
+                pattern += "(?:\(body))?"
+            } else {
+                pattern += body
+            }
+            scanIndex = afterVar
         }
         pattern += "$"
 
         do {
-            let regex = try NSRegularExpression(pattern: pattern, options: [])
-            return (regex, fieldNames)
+            return (try NSRegularExpression(pattern: pattern, options: []), fieldNames)
         } catch {
             throw GrammarCompileError.invalidRegex(reason: error.localizedDescription)
         }
@@ -457,12 +485,7 @@ public enum FilenameGrammarEngine {
             return ExtractedGrammarFacts(isMatched: false, unmatchedReason: "Invalid template syntax")
         }
 
-        // Normalize filename by stripping standard extension if template does not expect it
-        var target = filename
-        let ext = (filename as NSString).pathExtension
-        if !ext.isEmpty && !grammar.template.hasSuffix(".\(ext)") {
-            target = (filename as NSString).deletingPathExtension
-        }
+        var target = stripDataExtension(filename, template: grammar.template)
         let trimmed = grammar.template.trimmingCharacters(in: .whitespacesAndNewlines)
         let range = NSRange(target.startIndex..<target.endIndex, in: target)
         var match = regex.firstMatch(in: target, options: [], range: range)
@@ -523,7 +546,8 @@ public enum FilenameGrammarEngine {
             if groupRange.location != NSNotFound, let swiftRange = Range(groupRange, in: target) {
                 var value = String(target[swiftRange])
                 let fieldConfig = grammar.fields.first(where: { $0.name == name })
-                if (fieldConfig?.stripBrackets == true || true) && value.hasPrefix("[") && value.hasSuffix("]") && value.count >= 2 {
+                if fieldConfig?.stripBrackets == true,
+                   value.hasPrefix("["), value.hasSuffix("]"), value.count >= 2 {
                     value = String(value.dropFirst().dropLast())
                 }
                 extracted[name] = value
