@@ -40,6 +40,13 @@ struct WhenMatcherTests {
             optional: false
     """
 
+    private let simpleTableCSV = """
+    Voltage (V),Current (A)
+    0.0,1.0e-9
+    0.1,2.0e-9
+    0.2,3.0e-9
+    """
+
     @Test func tokenExactMatchRejectsNearMissSubstring() {
         let merged = ProfileWhenMatcher.whenFromLegacy(
             detect: ["SIG"], filenameContainsAll: ["needle"])
@@ -360,12 +367,16 @@ struct WhenMatcherTests {
             to: root.appendingPathComponent("data/instruments/synth.yaml"),
             atomically: true, encoding: .utf8)
         let csvURL = root.appendingPathComponent("data/raw/table.csv")
-        try "X,Y\n0,1\n".write(to: csvURL, atomically: true, encoding: .utf8)
+        try simpleTableCSV.write(to: csvURL, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
-        let source = try project.discoverSources().first { $0.relativePath.hasSuffix("table.csv") }
-        let resolved = try #require(source)
-        let measurement = try await InstrumentReader.load(resolved.url, project: project)
+        let source = try #require(
+            try project.discoverSources().first { $0.relativePath.hasSuffix("table.csv") })
+        let report = await InstrumentReader.inspectMany([source], project: project)
+        let result = try #require(report.results.first)
+        #expect(result.disposition == .structuralCandidate)
+        #expect(result.inspection?.profileID == "generic-table")
+        let measurement = try await InstrumentReader.load(source.url, project: project)
         #expect(measurement.instrument.id == "generic-table")
     }
 }

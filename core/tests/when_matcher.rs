@@ -29,6 +29,12 @@ grammars:
         optional: false
 "#;
 
+const SIMPLE_TABLE_CSV: &str = "Voltage (V),Current (A)
+0.0,1.0e-9
+0.1,2.0e-9
+0.2,3.0e-9
+";
+
 fn catalog_with_profiles(project: &Path, yamls: &[(&str, &str)]) -> ProfileCatalog {
     std::fs::create_dir_all(project.join("data/instruments")).unwrap();
     for (name, yaml) in yamls {
@@ -137,7 +143,7 @@ fn no_grammar_zero_hits_falls_back_generic() {
     std::fs::write(tmp.join(".rawviewer/grammar.yaml"), SYNTH_GRAMMAR_YAML).unwrap();
     std::fs::create_dir_all(tmp.join("data/instruments")).unwrap();
     std::fs::write(tmp.join("data/instruments/synth.yaml"), synth_v2_yaml()).unwrap();
-    std::fs::write(tmp.join("data/raw/table.csv"), b"X,Y\n0,1\n").unwrap();
+    std::fs::write(tmp.join("data/raw/table.csv"), SIMPLE_TABLE_CSV).unwrap();
     let measurement = load_measurement(&tmp, Path::new("data/raw/table.csv"))
         .expect("generic table fallback when grammar unmatched and no profile hit");
     assert_eq!(measurement.instrument.id, "generic-table");
