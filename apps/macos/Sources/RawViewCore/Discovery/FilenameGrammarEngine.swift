@@ -370,9 +370,11 @@ public enum FilenameGrammarEngine {
 
     private static func patternForField(
         _ field: GrammarField?,
+        bracketed: Bool,
         nextLeading: String,
         categoryStyle: Bool
     ) -> String {
+        if bracketed { return "([^\\]]+)" }
         guard let field = field else {
             return nextLeading.isEmpty ? "(.+)" : (nextLeading.count == 1 ? "(.+?)" : "(.+?)")
         }
@@ -447,7 +449,12 @@ public enum FilenameGrammarEngine {
             let categoryStyle = fieldConfig?.type == .string
                 && tailIsOptionalOnly(trimmed, from: afterVar, fields: fields)
                 && (nextLeading.isEmpty || nextLeading.hasPrefix("_r."))
-            let captureGroup = patternForField(fieldConfig, nextLeading: nextLeading, categoryStyle: categoryStyle)
+            let captureGroup = patternForField(
+                fieldConfig,
+                bracketed: bracketed,
+                nextLeading: nextLeading,
+                categoryStyle: categoryStyle
+            )
 
             var body = ""
             if !leading.isEmpty { body += NSRegularExpression.escapedPattern(for: leading) }
