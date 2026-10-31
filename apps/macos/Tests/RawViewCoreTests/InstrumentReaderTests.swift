@@ -1406,8 +1406,8 @@ struct InstrumentReaderTests {
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first?.error)
         #expect(error.contains("ambiguous_profile"))
-        #expect(error.contains("a.yaml"))
-        #expect(error.contains("b.yaml"))
+        #expect(error.contains("synth"))
+        #expect(error.contains("synth-copy"))
     }
 
     @Test func malformedFilenameSelectorIsFailClosed() async throws {
