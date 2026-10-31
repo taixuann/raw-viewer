@@ -329,7 +329,7 @@ struct SettingsView: View {
                 }
             }
 
-            let categories = ["Navigation", "Profile Studio", "View", "Export"]
+            let categories = ["Navigation", "View", "Export"]
             ForEach(categories, id: \.self) { cat in
                 let items = hotkeyManager.hotkeys.filter { $0.category == cat }
                 if !items.isEmpty {

@@ -31,7 +31,6 @@ struct InspectorPane: View {
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
-    var onBuildProfile: ((String?) -> Void)? = nil
     /// Task 7: variant-declared axis choices for the focused source. Menus
     /// appear only when multiple choices exist; a nil selectedY means the
     /// Default series (variant multi-Y defaults). Missing IDs surface via

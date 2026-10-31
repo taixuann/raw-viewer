@@ -12,7 +12,7 @@ Raw scientific data files under project data roots are strictly read-only and im
 
 The Swift package lives in `apps/macos/`. Paths in the map below are relative to that package.
 
-RawView is organized into five decoupled core layers and two app workspaces.
+RawView is organized into five decoupled core layers and a single Explorer workspace in the macOS app.
 
 ```mermaid
 graph TD
@@ -32,20 +32,19 @@ graph TD
     subgraph Reader ["Reader (Sources/RawViewCore/Reader)"]
         ProfileCatalog["ProfileCatalog: resolves YAML profiles from .rawviewer/instrument/"]
         InstrumentReader["InstrumentReader: parallel worker pool for stream extraction"]
+        ProgressionPlotReader["ProgressionPlotReader: segments plots by progression columns"]
         GenericTableReader["GenericTableReader: bounded 64 KiB delimiter/header sniffer"]
         SourceInspection["SourceInspection: typed inspection results & dispositions"]
     end
 
-    subgraph Editor ["Editor (Sources/RawViewCore/Editor)"]
-        EditorWorkspaceModel["EditorWorkspaceModel: state machine for template definition"]
-        FilenameTokenizer["FilenameTokenizer: interactive delimiter & token segmenter"]
-        RegionTagger["RegionTagger: marks header, names, data, and metadata blocks"]
+    subgraph PlotStyle ["Plot presets (Sources/RawViewCore/Editor)"]
+        PresetCatalog["PresetCatalog & ScientificPreset: publication figure presets"]
+        AxisFormatter["AxisFormatter: tick/label scaling for Explorer plots"]
     end
 
     subgraph AppUI ["Application Shell (Sources/RawViewApp)"]
         RawViewApp["RawViewApp: application lifecycle & global state"]
-        ExplorerWorkspace["ExplorerWorkspace: 3-column scientific viewer (Tree/Plot/Table)"]
-        EditorWorkspace["EditorWorkspace: 2-panel interactive template builder"]
+        ExplorerWorkspace["Explorer: 3-column scientific viewer (Tree/Plot/Table)"]
     end
 
     ProjectContext --> ProjectSettings
@@ -56,15 +55,13 @@ graph TD
     InstrumentReader --> ProfileCatalog
     ExplorerWorkspace --> ProjectContext
     ExplorerWorkspace --> InstrumentReader
-    EditorWorkspaceModel --> FilenameTokenizer
-    EditorWorkspaceModel --> RegionTagger
-    EditorWorkspace --> EditorWorkspaceModel
+    ExplorerWorkspace --> ProgressionPlotReader
+    ExplorerWorkspace --> PresetCatalog
 ```
 
 ## Invariants and Contracts
 
 1. **Storage Invariant**: Writable index is located at `<project>/.rawviewer/index.db`. Zero project-local SQLite writes occur outside `.rawviewer/`. Legacy `data/.rawview/index.db` is read-only hints.
 2. **Settings Invariant**: Project configuration is declarative and resides at `<project>/.rawviewer/setting.yaml`. Default view is `tree`. Default preset is `nature-single`.
-3. **Profile Fallback**: Profiles are loaded from `<project>/.rawviewer/instrument/`. If missing, fallback to `data/.rawview/instrument/` and `data/instruments/` (ignoring empty directories).
-4. **Editor Performance**: The raw data canvas displays a virtualized window of the first 500 lines to guarantee 120 FPS UI performance.
-5. **Verification**: Always run `./apps/macos/Scripts/check_core.sh` and `./apps/macos/Scripts/check_index_cli.sh` before declaring completion. Rust workspace checks are `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` from the repository root.
+3. **Profile Fallback**: Profiles are loaded from `<project>/.rawviewer/instrument/`. If missing, fallback to `data/.rawview/instrument/` and `data/instruments/` (ignoring empty directories). The app must not write new YAML under `.rawviewer/instrument/` (read-only consumption until a dedicated profile pipeline lands).
+4. **Verification**: Always run `./apps/macos/Scripts/check_core.sh` and `./apps/macos/Scripts/check_index_cli.sh` before declaring completion. Rust workspace checks are `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` from the repository root.
