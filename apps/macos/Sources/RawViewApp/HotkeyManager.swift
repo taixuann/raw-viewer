@@ -58,7 +58,7 @@ public final class HotkeyManager: ObservableObject {
     private func loadHotkeys() {
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([AppHotkey].self, from: data) {
-            self.hotkeys = decoded.filter { $0.category != "Profile Studio" }
+            self.hotkeys = decoded
         } else {
             self.hotkeys = Self.defaultHotkeys
         }

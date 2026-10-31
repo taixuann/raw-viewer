@@ -34,7 +34,7 @@ public enum ProgressionPlotReader {
 
     /// Normalizes one progression cell into a stable segment key string.
     public static func discreteKey(from value: Double?) -> String {
-        guard let value, value.isFinite else { return "default" }
+        guard let value, value.isFinite else { return "1" }
         if value.truncatingRemainder(dividingBy: 1) == 0 {
             return "\(Int(value))"
         }
@@ -46,7 +46,7 @@ public enum ProgressionPlotReader {
         if let d = Double(normalized), d.isFinite {
             return discreteKey(from: d)
         }
-        return normalized.isEmpty ? "default" : normalized
+        return normalized.isEmpty ? "1" : normalized
     }
 
     /// Builds plot segments for aligned x, y, and progression channel arrays.
@@ -68,11 +68,17 @@ public enum ProgressionPlotReader {
         progStrings.reserveCapacity(count)
         var continuousValues: [Double] = []
         for index in 0..<count {
-            if let progression, index < progression.count, let raw = progression[index], raw.isFinite {
-                continuousValues.append(raw)
-                progStrings.append(discreteKey(from: raw))
-            } else if let progression, index < progression.count {
-                progStrings.append("default")
+            if let progression {
+                if index < progression.count {
+                    if let raw = progression[index], raw.isFinite {
+                        continuousValues.append(raw)
+                        progStrings.append(discreteKey(from: raw))
+                    } else {
+                        progStrings.append(discreteKey(from: ""))
+                    }
+                } else {
+                    progStrings.append("default")
+                }
             } else {
                 progStrings.append("default")
             }

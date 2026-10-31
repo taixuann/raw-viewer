@@ -32,7 +32,7 @@ graph TD
     subgraph Reader ["Reader (Sources/RawViewCore/Reader)"]
         ProfileCatalog["ProfileCatalog: resolves YAML profiles from .rawviewer/instrument/"]
         InstrumentReader["InstrumentReader: parallel worker pool for stream extraction"]
-        ProgressionPlotReader["ProgressionPlotReader: segments plots by progression columns"]
+        ProgressionPlotReader["ProgressionPlotReader: progression plot segments (#18 wiring pending)"]
         GenericTableReader["GenericTableReader: bounded 64 KiB delimiter/header sniffer"]
         SourceInspection["SourceInspection: typed inspection results & dispositions"]
     end
@@ -55,7 +55,6 @@ graph TD
     InstrumentReader --> ProfileCatalog
     ExplorerWorkspace --> ProjectContext
     ExplorerWorkspace --> InstrumentReader
-    ExplorerWorkspace --> ProgressionPlotReader
     ExplorerWorkspace --> PresetCatalog
 ```
 

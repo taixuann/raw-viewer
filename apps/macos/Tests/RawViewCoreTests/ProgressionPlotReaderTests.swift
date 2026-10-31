@@ -21,6 +21,84 @@ struct ProgressionPlotReaderTests {
         #expect(ProgressionPlotReader.isContinuousBehavior(column: discrete, distinctDiscreteKeys: 200) == false)
     }
 
+    @Test func discreteKeyTreatsEmptyCellsAsCycleOne() {
+        #expect(ProgressionPlotReader.discreteKey(from: "") == "1")
+        #expect(ProgressionPlotReader.discreteKey(from: nil as Double?) == "1")
+        #expect(ProgressionPlotReader.discreteKey(from: Double.nan) == "1")
+    }
+
+    @Test func emptyProgressionCellSegmentsAsCycleOne() {
+        let col = ProfileColumnV3(
+            id: "step",
+            source: ColumnSourceV3(header: "Step"),
+            label: "Step",
+            quantity: "index",
+            role: .progression,
+            progression: ColumnProgressionV3(type: .index, behavior: .discrete))
+        let x: [Double?] = [0, 1]
+        let y: [Double?] = [5, 6]
+        let prog: [Double?] = [nil, 1]
+        let segments = ProgressionPlotReader.segments(x: x, y: y, progression: prog, column: col)
+        #expect(segments.map(\.name).sorted() == ["1"])
+        #expect(segments[0].points.count == 2)
+    }
+
+    @Test func inferredContinuousFromTimeColumnName() {
+        let col = ProfileColumnV3(
+            id: "scan_time",
+            source: ColumnSourceV3(header: "t"),
+            label: "Scan duration",
+            quantity: "time",
+            role: .progression,
+            progression: ColumnProgressionV3(type: .index, behavior: nil))
+        #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 3) == true)
+    }
+
+    @Test func inferredContinuousFromProgressionTypeTime() {
+        let col = ProfileColumnV3(
+            id: "elapsed",
+            source: ColumnSourceV3(header: "Elapsed"),
+            label: "Elapsed",
+            quantity: "generic",
+            role: .progression,
+            progression: ColumnProgressionV3(type: .time, behavior: nil))
+        #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 2) == true)
+    }
+
+    @Test func inferredContinuousFromHighCardinality() {
+        let col = ProfileColumnV3(
+            id: "step",
+            source: ColumnSourceV3(header: "Step"),
+            label: "Step",
+            quantity: "index",
+            role: .progression,
+            progression: ColumnProgressionV3(type: .index, behavior: nil))
+        #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 51) == true)
+        #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 50) == false)
+    }
+
+    @Test func inferredContinuousSegmentsUseTimeWindow() {
+        let col = ProfileColumnV3(
+            id: "step",
+            source: ColumnSourceV3(header: "Step"),
+            label: "Step",
+            quantity: "index",
+            role: .progression,
+            progression: ColumnProgressionV3(type: .index, behavior: nil))
+        var x: [Double?] = []
+        var y: [Double?] = []
+        var prog: [Double?] = []
+        for index in 0..<60 {
+            x.append(Double(index))
+            y.append(Double(index))
+            prog.append(Double(index))
+        }
+        let segments = ProgressionPlotReader.segments(x: x, y: y, progression: prog, column: col)
+        #expect(segments.count == 1)
+        #expect(segments[0].name == "Time Window")
+        #expect(segments[0].points.count == 60)
+    }
+
     @Test func discreteSegmentsFilterSelectedCycles() {
         let col = ProfileColumnV3(
             id: "step",
