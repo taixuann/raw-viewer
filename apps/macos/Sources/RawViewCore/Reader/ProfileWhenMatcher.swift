@@ -58,8 +58,12 @@ enum ProfileWhenMatcher {
     }
 
     static func tokenizeBasename(_ basename: String) -> [String] {
-        let stem = basename.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first
-            .map(String.init) ?? basename
+        let stem: String
+        if let dot = basename.lastIndex(of: ".") {
+            stem = String(basename[..<dot])
+        } else {
+            stem = basename
+        }
         return tokenizeFragment(stem)
     }
 
