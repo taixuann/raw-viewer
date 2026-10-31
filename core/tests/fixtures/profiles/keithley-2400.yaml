@@ -1,0 +1,36 @@
+schema_version: 2
+instrument:
+  id: keithley-2400
+  name: Keithley 2400 SourceMeter
+formats:
+  - id: lvm
+    kind: tabular
+    extensions: [".txt", ".lvm"]
+    delimiter: "\t"
+    rows:
+      names_prefix: "X_Value"
+      data_prefix: ""
+    columns:
+      voltage:
+        header: "Untitled"
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "Untitled 1"
+        quantity: current
+        unit: "A"
+        label: "Current"
+      timestamp:
+        header: "Untitled 2"
+        quantity: time
+        unit: "s"
+        label: "Time"
+        required: false
+modes:
+  - id: dual-sweep
+    format: lvm
+    detect: ["LabVIEW Measurement"]
+    extract:
+      x: voltage
+      y: [current]

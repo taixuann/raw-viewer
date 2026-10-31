@@ -1,5 +1,23 @@
+//! Shared RawView core.
+//!
+//! [`paths`] and [`config`] resolve global and project settings directories.
+//! [`profile`] loads and validates instrument profile YAML (schema v1, v2, and v3).
+//! [`grammar`] loads filename grammars for schema-v3 routing.
+//! [`reader`] extracts normalized measurements (legacy profiles, schema v3,
+//! and generic-table fallback). [`measurement`] defines the v1 contract and golden JSON codec.
+//! [`yaml`] is the profile YAML subset parser shared with the Swift app.
+
+pub mod config;
+pub mod grammar;
+pub mod measurement;
+pub mod paths;
+pub mod profile;
+pub mod project;
+pub mod reader;
+pub mod yaml;
+
 /// Placeholder identity for the shared core.
-/// Later steps replace this with config, readers, and measurements.
+/// The Tauri shell still calls this.
 pub fn core_placeholder() -> &'static str {
     "raw-viewer-core"
 }

@@ -1,0 +1,29 @@
+schema_version: 2
+instrument:
+  id: synth
+  name: Synth
+formats:
+  - id: csv
+    kind: tabular
+    extensions: [".csv"]
+    delimiter: ","
+    rows:
+      names_prefix: "DataName"
+      data_prefix: "DataValue"
+    columns:
+      voltage:
+        header: "V1"
+        quantity: voltage
+        unit: "V"
+      current:
+        header: "I1"
+        quantity: current
+        unit: "A"
+modes:
+  - id: dual-sweep
+    format: csv
+    filename_contains_all: ["synth-token", "dual-sweep"]
+    detect: ["SYNTH-SPECIFIC-HEADER"]
+    extract:
+      x: voltage
+      y: [current]

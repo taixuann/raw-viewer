@@ -1,0 +1,130 @@
+schema_version: 3
+identity:
+  id: acme
+  name: Acme Lab
+  instrument:
+    id: acme-inst
+    name: Acme Instrument
+filename:
+  grammar_id: electrochem
+  variant_keys:
+    - instrument
+    - mode
+variants:
+  - id: cv
+    name: CV
+    key_values:
+      instrument: acme
+      mode: cv
+    raw_stream:
+      extensions: [".txt"]
+      encoding: [utf-8]
+      delimiter: ","
+      decimal_separator: "."
+      rows:
+        header:
+          row: 2
+        data_start:
+          after_header: true
+      columns:
+        - id: potential
+          source:
+            header: Volts
+          label: Voltage
+          quantity: voltage
+          unit: V
+          required: true
+          role: channel
+          axes: [x]
+        - id: current
+          source:
+            header: Amps
+          label: Current
+          quantity: current
+          unit: A
+          required: true
+          role: channel
+          axes: [y]
+    metadata_capture:
+      - kind: pre_header_fields
+    default_plot:
+      x: potential
+      y: [current]
+  - id: ca
+    name: CA
+    key_values:
+      instrument: acme
+      mode: ca
+    raw_stream:
+      extensions: [".txt"]
+      encoding: [utf-8]
+      delimiter: ","
+      decimal_separator: "."
+      rows:
+        header:
+          row: 2
+        data_start:
+          after_header: true
+      columns:
+        - id: elapsed
+          source:
+            header: Secs
+          label: Time
+          quantity: time
+          unit: s
+          required: true
+          role: channel
+          axes: [x]
+        - id: current
+          source:
+            header: mAmps
+          label: Current
+          quantity: current
+          unit: mA
+          required: true
+          role: channel
+          axes: [y]
+    metadata_capture:
+      - kind: pre_header_fields
+    default_plot:
+      x: elapsed
+      y: [current]
+  - id: rich
+    name: Rich
+    key_values:
+      instrument: acme
+      mode: rich
+    raw_stream:
+      extensions: [".txt"]
+      encoding: [utf-8]
+      delimiter: ","
+      decimal_separator: "."
+      rows:
+        header:
+          row: 2
+        data_start:
+          after_header: true
+      columns:
+        - id: potential
+          source:
+            header: Volts
+          label: Voltage
+          quantity: voltage
+          unit: V
+          required: true
+          role: channel
+          axes: [x]
+        - id: current
+          source:
+            header: Amps
+          label: Current
+          quantity: current
+          unit: A
+          required: true
+          role: channel
+          axes: [y]
+    metadata_capture:
+      - kind: pre_header_fields
+    default_plot:
+      x: potential
+      y: [current]
