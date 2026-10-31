@@ -883,6 +883,32 @@ struct ProfileDocumentV3Tests {
         try anchored.validate()
     }
 
+    private func matchDocument() throws -> ProfileDocumentV3 {
+        let profile = try legacyProfile(Self.legacyTabularV2)
+        var draft = try LegacyProfileUpgrader.draft(
+            from: profile, legacyPath: "data/instruments/synth.yaml",
+            sha256: String(repeating: "0", count: 64))
+        draft.resolve(
+            grammarID: "standard-scientific", variantKeys: ["instrument", "mode"],
+            valuesByVariantID: [
+                "sweep-a": ["instrument": "synthx", "mode": "sweep-a"],
+                "sweep-b": ["instrument": "synthx", "mode": "sweep-b"],
+            ])
+        return try draft.finalize(catalog: Self.catalog())
+    }
+
+    private func tabSample(modeToken: String) -> Data {
+        Data("Title, SYNTH-TAB-PLACEHOLDER export\nHDR, V1, I1, P1\nROW, 1, 2, 3\nROW, 2, 4, 6\n"
+            .replacingOccurrences(of: "SYNTH-TAB-PLACEHOLDER", with: modeToken).utf8)
+    }
+
+    private func candidate(id: String, basename: String, bytes: Data) -> PreviewSampleCandidate {
+        PreviewSampleCandidate(
+            sourceID: id, basename: basename,
+            fileExtension: "." + (basename as NSString).pathExtension,
+            prefixBytes: bytes, byteSize: bytes.count)
+    }
+
     @Test func testPreviewMatcherConfirmsExactVariant() throws {
         let doc = try matchDocument()
         let hit = candidate(id: "data/raw/a.csv", basename: "synthx.sweep-a_s01.csv", bytes: tabSample(modeToken: "SYNTH-TAB-A"))
