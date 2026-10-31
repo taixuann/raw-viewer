@@ -1,0 +1,81 @@
+id: iop-hanoi
+name: Institute of Physics (IOP Hanoi) UV-Vis Spectrometer
+vendor: Institute of Physics VAST
+model: UV-Vis Optical Absorption System
+
+metadata_verification:
+  format: CSV
+  has_hardware_timestamp: false
+  hardware_time_available: false
+  confirmation_action: "UV-Vis CSV export has no header date/time. Date confirmed from parent folder YYYY-MM-DD; time is strictly fixed to 000000."
+  header_signatures:
+    columns: 'Wavelength_nm,T%'
+  timestamp_purpose: "Map date from parent folder ISO format with default zero seconds."
+  timestamp_extraction:
+    method: parent_folder_date
+    fallback_time: "000000"
+  collision_policy:
+    unique_rule: omit_sequence
+    collision_rule: append_sequence_nnn
+    duplicate_rule: flag_duplicate
+
+formats:
+  - id: csv
+    description: Simple two-column CSV export of optical transmittance.
+    extensions: [".txt", ".csv"]
+    support: validated
+    encoding:
+      accepted: [utf-8, latin-1, cp1252]
+      fallback: replace
+    signatures:
+      delimiter: ","
+
+application_modes:
+  - id: uv-vis
+    instrument_token: iop-hanoi.uv-vis
+    raw_token: uv-vis.transmission
+    alias_tokens:
+      - uv-vis
+    format_ref: csv
+    description: Ultraviolet-Visible optical transmittance and bandgap absorption spectrophotometry.
+    supported_studies:
+      - optical-bandgap
+    detect:
+      method: column-presence
+      signatures: ["Wavelength_nm", "T%"]
+    extract:
+      layout: tabular_columns
+      delimiter: ','
+      header_line: 0
+      columns:
+        wavelength:
+          header_name: "Wavelength_nm"
+          aliases: ["wavelength (nm)"]
+          label: "Wavelength"
+          unit: "nm"
+          required: true
+        transmittance:
+          header_name: "T%"
+          aliases: ["%t", "transmission (%)"]
+          label: "Transmittance"
+          unit: "%"
+          required: true
+    transforms: []
+    normalized_output:
+      required_fields: [wavelength, transmittance]
+    summary:
+      kind: range
+      source: wavelength
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-05-28/280526-000000_iop-hanoi.uv-vis_[pda.q2-ito.3]_uv-vis.transmission.txt"
+          sha256: "caf6c8c037b40b64f90d9f9c4845a83461f05d5e5567d7dd51b24ddfaea199b4"
+          size_bytes: 4884
+          observed_format: csv
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [wavelength, transmittance]

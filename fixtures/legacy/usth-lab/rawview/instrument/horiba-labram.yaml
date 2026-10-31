@@ -1,0 +1,68 @@
+# Project-owned RawView companion profile, schema v2.
+# This standalone viewer profile belongs in data/instruments/rawview/.
+# RawView reads it as YAML data; it never rewrites profiles or executes code.
+# Both Horiba LabRAM text layouts share the ".txt" extension and are told
+# apart by their detect signatures. The comment-header TSV declares a comma
+# decimal (a lexical property, not a transform); the legacy semicolon table
+# uses period decimals. There is no transforms mechanism.
+schema_version: 2
+
+instrument:
+  id: horiba-labram
+  name: Horiba LabRAM HR Evolution Raman Spectrometer
+
+formats:
+  - id: tab_comma
+    kind: comment-tsv
+    extensions: [".txt"]
+    delimiter: "\t"
+    decimal: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      # The observed two-column export orders wavenumber before intensity.
+      wavenumber:
+        column_index: 0
+        quantity: wavenumber
+        unit: "cm-1"
+        label: "Raman shift"
+      intensity:
+        column_index: 1
+        quantity: intensity
+        unit: "counts"
+        label: "Intensity"
+  - id: header_semicolon
+    kind: tabular
+    extensions: [".txt"]
+    delimiter: ";"
+    rows:
+      names_prefix: "raman_shift"
+      # Empty accepts every non-blank line after the names row as data.
+      data_prefix: ""
+    columns:
+      wavenumber:
+        header: "raman_shift"
+        quantity: wavenumber
+        unit: "cm-1"
+        label: "Raman shift"
+      intensity:
+        header: "intensity"
+        quantity: intensity
+        unit: "counts"
+        label: "Intensity"
+
+modes:
+  - id: raman-tsv
+    format: tab_comma
+    # Positional channels target the observed two-column export order.
+    detect: ["#Instrument=\tLabRAM HR Evol"]
+    filename_contains_all: ["horiba-labram"]
+    extract:
+      x: wavenumber
+      y: [intensity]
+  - id: raman-semicolon
+    format: header_semicolon
+    detect: ["raman_shift;intensity"]
+    filename_contains_all: ["horiba-labram"]
+    extract:
+      x: wavenumber
+      y: [intensity]

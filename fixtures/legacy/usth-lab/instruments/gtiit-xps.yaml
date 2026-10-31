@@ -1,0 +1,102 @@
+id: gtiit-xps
+name: GTIIT High-Resolution X-ray Photoelectron Spectrometer
+vendor: GTIIT Core Research Facility
+model: PHI VersaProbe III
+
+metadata_verification:
+  format: SPE (PHI VersaProbe III Binary Spectrum)
+  has_hardware_timestamp: true
+  hardware_time_available: false
+  confirmation_action: "Parse FileDate from SPE text header to confirm DDMMYY; time is unrecorded by instrument and strictly fixed to 000000."
+  header_signatures:
+    platform: 'Platform: PC'
+    technique: 'Technique: XPS'
+    file_type: 'FileType:  SPECTRUM'
+    terminator: 'EOFH'
+  timestamp_purpose: "Extract acquisition date from FileDate metadata header with default zero seconds."
+  timestamp_extraction:
+    method: header_regex
+    date_pattern: 'FileDate:\s*(?P<year>\d{4})\s+(?P<month>\d{1,2})\s+(?P<day>\d{1,2})'
+    fallback_time: "000000"
+  collision_policy:
+    unique_rule: omit_sequence
+    collision_rule: append_sequence_nnn
+    duplicate_rule: flag_duplicate
+
+formats:
+  - id: phi-spe-binary
+    description: Physical Electronics (PHI) VersaProbe III SPE format with text header, EOFH boundary, 304-byte binary header, and float32 spectral data.
+    extensions: [".spe"]
+    support: validated
+    encoding:
+      accepted: [utf-8, latin-1, cp1252]
+      fallback: latin-1
+    signatures:
+      header_terminator: "EOFH"
+      magic_lead: "SOFH"
+    metadata:
+      acquisition_date:
+        source: header
+        pattern: 'FileDate:\s*(?P<year>\d{4})\s+(?P<month>\d{1,2})\s+(?P<day>\d{1,2})'
+        required: true
+        output_type: date
+      analyser_mode:
+        source: header
+        key: "AnalyserMode"
+        output_type: string
+      xray_source:
+        source: header
+        key: "XraySource"
+        output_type: string
+      pass_energy:
+        source: header
+        key: "SxiPassEnergy"
+        output_type: string
+      detector_acq_time:
+        source: header
+        key: "Detector Acq Time"
+        output_type: string
+
+application_modes:
+  - id: survey
+    instrument_token: gtiit-xps.survey
+    raw_token: xps.characterization
+    alias_tokens:
+      - xps
+    format_ref: phi-spe-binary
+    description: High-resolution core-level XPS spectra across multiple spectral regions (C 1s, N 1s, O 1s).
+    supported_studies:
+      - chemical-composition
+    detect:
+      method: header-signature
+      signatures: ["Technique: XPS", "FileType:  SPECTRUM"]
+    extract:
+      layout: binary_spectral_regions
+      header_terminator: "EOFH"
+      binary_header_bytes: 304
+      region_descriptor_prefix: "SpectralRegDef:"
+      data_dtype: "<f"
+      outputs:
+        regions:
+          item_shape:
+            name: string
+            binding_energy: vector
+            intensity: vector
+          unit_binding_energy: "eV"
+          unit_intensity: "CPS"
+    transforms: []
+    normalized_output:
+      required_fields: [regions]
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-06-24/240626-000000_gtiit-xps.survey_[pda.n3-ito.3]_xps.characterization.spe"
+          sha256: "eae7569c8c8bb9cdcf786126a6ca32d41cca85ca14a58604560e7cf1763c1915"
+          size_bytes: 9181
+          observed_format: phi-spe-binary
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [regions]

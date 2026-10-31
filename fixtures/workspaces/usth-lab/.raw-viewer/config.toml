@@ -1,0 +1,3 @@
+data_root = "data/raw"
+default_view = "tree"
+default_preset = "nature-single"

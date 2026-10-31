@@ -1,0 +1,230 @@
+id: autolab-usth
+name: Metrohm Autolab Potentiostat / Galvanostat (USTH Cleanroom)
+vendor: Metrohm Autolab
+model: PGSTAT302N (USTH)
+
+metadata_verification:
+  format: ASCII (NOVA ASCII Export)
+  delimiter: ';'
+  has_hardware_timestamp: false
+  hardware_time_available: false
+  confirmation_action: "NOVA ASCII data export has no date/time in text header. Date is confirmed from parent folder YYYY-MM-DD; time is strictly fixed to 000000. Sequential cycles in the same session are disambiguated by SHA256 collision check."
+  header_signatures:
+    cv: 'Potential applied (V);Time (s);WE(1).Current (A)'
+    ca: 'Time (s);WE(1).Potential (V);WE(1).Current (A);Corrected time (s);Index'
+    eis: "Index;Frequency (Hz);Z' (Ω);-Z'' (Ω);Z (Ω);-Phase (°);Time (s)"
+  timestamp_purpose: "Map acquisition timestamp to parent folder ISO date YYYY-MM-DD with fallback time 000000."
+  timestamp_extraction:
+    method: filename_timestamp
+    filename_pattern: '^(\d{6})-(\d{6})_'
+    fallback_time: "000000"
+  collision_policy:
+    unique_rule: omit_sequence
+    collision_rule: append_sequence_nnn
+    duplicate_rule: flag_duplicate
+
+formats:
+  - id: nova-ascii
+    description: Metrohm NOVA software ASCII export with semicolon delimiter and header on row 0.
+    extensions: [".txt"]
+    support: validated
+    encoding:
+      accepted: [utf-8, latin-1, cp1252]
+      fallback: replace
+    signatures:
+      delimiter: ";"
+
+application_modes:
+  - id: cv
+    instrument_token: autolab-usth.cv
+    raw_token: cv.deposition
+    alias_tokens:
+      - cv.characterization
+      - cv.pda
+    format_ref: nova-ascii
+    description: Cyclic voltammetry for electropolymerization and redox probe characterization.
+    supported_studies:
+      - precursor-electrochemistry
+      - device-fabrication
+    detect:
+      method: column-presence
+      signatures: ["Potential applied (V)", "Scan"]
+    extract:
+      layout: tabular_columns
+      header_line: 0
+      delimiter: ';'
+      columns:
+        applied_voltage:
+          header_name: "Potential applied (V)"
+          label: "Voltage"
+          unit: "V"
+          required: true
+        measured_voltage:
+          header_name: "WE(1).Potential (V)"
+          aliases: ["we(1).potential_(v)"]
+          label: "Voltage"
+          unit: "V"
+          required: false
+        current:
+          header_name: "WE(1).Current (A)"
+          aliases: ["we(1).current_(a)"]
+          label: "Current"
+          unit: "A"
+          required: true
+        time:
+          header_name: "Time (s)"
+          aliases: ["time_(s)"]
+          label: "Time"
+          unit: "s"
+          required: false
+    transforms:
+      - field: all_numeric
+        operation: comma_to_period
+        rationale: "European decimal separator normalization for NOVA exports."
+
+    normalized_output:
+      required_fields: [applied_voltage, current]
+      optional_fields: [measured_voltage, time, cycle]
+    summary:
+      kind: iv
+      sources:
+        voltage: applied_voltage
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-05-11/110526-000000_autolab-usth.cv_[cu-ta-pda.c1-ito.1]_cv.deposition.txt"
+          sha256: "1c259750338cb33346192b853ec190bc764b86148745d02be9e061915c003d62"
+          size_bytes: 966615
+          observed_format: nova-ascii
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [applied_voltage, measured_voltage, current, time, cycle]
+
+  - id: ca
+    instrument_token: autolab-usth.ca
+    raw_token: ca.protonation
+    format_ref: nova-ascii
+    description: Chronoamperometric protonation and redox state tuning.
+    supported_studies:
+      - device-fabrication
+      - protonation-kinetics
+    detect:
+      method: column-presence
+      signatures: ["Corrected time (s)", "Corrected_time_(s)"]
+    extract:
+      layout: tabular_columns
+      header_line: 0
+      delimiter: ';'
+      columns:
+        time:
+          header_name: "Time (s)"
+          aliases: ["time_(s)"]
+          label: "Time"
+          unit: "s"
+          required: true
+        bias_voltage:
+          header_name: "WE(1).Potential (V)"
+          aliases: ["we(1).potential_(v)"]
+          label: "Voltage"
+          unit: "V"
+          required: true
+        current:
+          header_name: "WE(1).Current (A)"
+          aliases: ["we(1).current_(a)"]
+          label: "Current"
+          unit: "A"
+          required: true
+        step_time:
+          header_name: "Corrected time (s)"
+          aliases: ["corrected_time_(s)"]
+          label: "Time"
+          unit: "s"
+          required: false
+    transforms:
+      - field: all_numeric
+        operation: comma_to_period
+        rationale: "European decimal separator normalization for NOVA exports."
+    normalized_output:
+      required_fields: [time, bias_voltage, current]
+      optional_fields: [step_time]
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-05-11/110526-000000_autolab-usth.ca_[cu-ta-pda.q1-ito.1]_ca.protonation.txt"
+          sha256: "365b1cb6cf146dfd4393b3f473e8fda8c31494b4762a411efd6acd7e3498a464"
+          size_bytes: 74872
+          observed_format: nova-ascii
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [time, bias_voltage, current, step_time]
+
+  - id: eis
+    instrument_token: autolab-usth.eis
+    raw_token: eis.characterization
+    alias_tokens:
+      - eis
+    format_ref: nova-ascii
+    description: Electrochemical impedance spectroscopy of precursor electrodes.
+    supported_studies:
+      - precursor-electrochemistry
+    detect:
+      method: column-presence
+      signatures: ["Frequency (Hz)", "Z' (Ω)"]
+    extract:
+      layout: tabular_columns
+      header_line: 0
+      delimiter: ';'
+      columns:
+        frequency:
+          header_name: "Frequency (Hz)"
+          label: "Frequency"
+          unit: "Hz"
+          required: true
+        impedance_real:
+          header_name: "Z' (Ω)"
+          aliases: ["z' (ohm)", "z' (ω)"]
+          label: "Z'"
+          unit: "ohm"
+          required: true
+        impedance_imag:
+          header_name: "-Z'' (Ω)"
+          aliases: ["-z'' (ohm)", "-z'' (ω)"]
+          label: "-Z''"
+          unit: "ohm"
+          required: true
+        impedance_magnitude:
+          header_name: "Z (Ω)"
+          aliases: ["z (ohm)", "z (ω)"]
+          label: "|Z|"
+          unit: "ohm"
+          required: false
+        phase_angle:
+          header_name: "-Phase (°)"
+          unit: "deg"
+          required: false
+    transforms:
+      - field: all_numeric
+        operation: comma_to_period
+        rationale: "European decimal separator normalization for NOVA exports."
+    normalized_output:
+      required_fields: [frequency, impedance_real, impedance_imag]
+      optional_fields: [impedance_magnitude, phase_angle]
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-04-21/210426-000000_autolab-usth.eis_[gce-pda]_eis.characterization_r.[ph-6.65].txt"
+          sha256: "790aeefd1b1599d03b90bb7a66a57613f784843cb92e49d6b5f5f7b4daee75e5"
+          size_bytes: 4816
+          observed_format: nova-ascii
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [frequency, impedance_real, impedance_imag, impedance_magnitude, phase_angle]

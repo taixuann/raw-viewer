@@ -1,0 +1,165 @@
+# RawView companion instrument profile schema v2 — Autolab USTH (NOVA ASCII).
+# Four first-row-header layouts share the ".txt" extension, semicolon
+# delimiter, and comma decimal. Detect alternatives and basename gates
+# distinguish them; see CONTRACT.md for matching and ambiguity rules. Comma
+# decimal is lexical parsing only, not a transform.
+# There is no transforms mechanism: record values are preserved as written.
+schema_version: 2
+
+instrument:
+  id: autolab-usth
+  name: Autolab USTH
+
+formats:
+  - id: cv
+    kind: first-row-header
+    extensions: [".txt"]
+    delimiter: ";"
+    decimal: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      applied_voltage:
+        header: "Potential applied (V)"
+        aliases: ["Potential_applied_(V)", "Potential_applied(V)"]
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "WE(1).Current (A)"
+        aliases: ["WE(1).Current_(A)"]
+        quantity: current
+        unit: "A"
+        label: "Current"
+      electrode_potential:
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+        required: false
+      time:
+        header: "Time (s)"
+        aliases: ["Time_(s)"]
+        quantity: time
+        unit: "s"
+        label: "Time"
+        required: false
+  - id: ca
+    kind: first-row-header
+    extensions: [".txt"]
+    delimiter: ";"
+    decimal: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      time:
+        header: "Time (s)"
+        aliases: ["Time_(s)"]
+        quantity: time
+        unit: "s"
+        label: "Time"
+      current:
+        header: "WE(1).Current (A)"
+        aliases: ["WE(1).Current_(A)"]
+        quantity: current
+        unit: "A"
+        label: "Current"
+      electrode_potential:
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+        required: false
+      corrected_time:
+        header: "Corrected time (s)"
+        aliases: ["Corrected_time_(s)"]
+        quantity: time
+        unit: "s"
+        label: "Time"
+        required: false
+  - id: eis
+    kind: first-row-header
+    extensions: [".txt"]
+    delimiter: ";"
+    decimal: ","
+    # Preserve the Ω and ° symbols used by the declared EIS headers.
+    encoding: [utf-8]
+    columns:
+      frequency:
+        header: "Frequency (Hz)"
+        quantity: frequency
+        unit: "Hz"
+        label: "Frequency"
+      z_prime:
+        header: "Z' (Ω)"
+        quantity: impedance
+        unit: "ohm"
+        label: "Z′"
+      z_double_prime:
+        header: "-Z'' (Ω)"
+        quantity: impedance
+        unit: "ohm"
+        label: "−Z″"
+      z_magnitude:
+        header: "Z (Ω)"
+        quantity: impedance
+        unit: "ohm"
+        label: "|Z|"
+      phase:
+        header: "-Phase (°)"
+        quantity: phase
+        unit: "deg"
+        label: "−Phase"
+        required: false
+  - id: cv_2col
+    kind: first-row-header
+    extensions: [".txt"]
+    delimiter: ";"
+    decimal: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      # Two-column CV layout: no time channel. The CA twin shares these
+      # headers but has no mode, so it stays unmatched instead of being
+      # mislabeled as CV; the ".cv_" gate selects this mode.
+      potential:
+        header: "WE(1)_potential(V)"
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "WE(1)_current(A)"
+        quantity: current
+        unit: "A"
+        label: "Current"
+
+modes:
+  - id: cv
+    format: cv
+    detect: ["Potential applied (V)", "Potential_applied_(V)", "Potential_applied(V)"]
+    filename_contains_all: ["autolab-usth", ".cv_"]
+    extract:
+      x: applied_voltage
+      y: [current]
+  - id: ca
+    format: ca
+    detect: ["Time (s)", "Time_(s)"]
+    filename_contains_all: ["autolab-usth", ".ca_"]
+    extract:
+      x: time
+      y: [current]
+  - id: eis
+    format: eis
+    # Frequency is required and identifies EIS; magnitude remains required
+    # during extraction, so a missing magnitude gets a source diagnostic.
+    detect: ["Frequency (Hz)"]
+    filename_contains_all: ["autolab-usth", ".eis_"]
+    extract:
+      x: frequency
+      y: [z_prime, z_double_prime, z_magnitude]
+  - id: cv_2col
+    format: cv_2col
+    detect: ["WE(1)_potential(V)", "WE(1)_current(A)"]
+    filename_contains_all: ["autolab-usth", ".cv_"]
+    extract:
+      x: potential
+      y: [current]

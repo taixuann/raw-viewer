@@ -1,0 +1,117 @@
+id: oxford-mfp
+name: Oxford Instruments Asylum Research MFP-3D AFM
+vendor: Oxford Instruments / Asylum Research
+model: MFP-3D Origin
+
+metadata_verification:
+  format: IBW (Igor Pro Binary Wave)
+  has_hardware_timestamp: true
+  hardware_time_available: true
+  confirmation_action: "Parse Date and Time fields from Igor Pro wave note binary trailer to confirm DDMMYY-HHMMSS in raw filenames."
+  header_signatures:
+    magic: 'IGOR'
+    version: 5
+  timestamp_purpose: "Extract scan date and 12-hour AM/PM time from Igor wave note metadata."
+  timestamp_extraction:
+    method: binary_note
+    combined_datetime_pattern: 'Date:\s*(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})[\r\n]+Time:\s*(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2})\s*(?P<ampm>AM|PM)'
+    fallback_time: "000000"
+  collision_policy:
+    unique_rule: omit_sequence
+    collision_rule: append_sequence_nnn
+    duplicate_rule: flag_duplicate
+
+formats:
+  - id: ibw
+    description: Igor Pro Binary Wave Version 5 with appended wave notes
+    extensions: [".ibw"]
+    support: partial
+    signatures:
+      bin_header_version: 5
+    metadata:
+      scan_date:
+        source: note
+        pattern: 'Date:\s*(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})'
+        required: true
+        output_type: date
+      scan_time:
+        source: note
+        pattern: 'Time:\s*(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2})\s*(?P<ampm>AM|PM)'
+        required: true
+        output_type: time
+      scan_size:
+        source: note
+        pattern: 'ScanSize:\s*(?P<value>[0-9.eE+-]+)'
+        output_type: float
+        unit: "m"
+      scan_points:
+        source: note
+        pattern: 'PointsLines:\s*(?P<value>\d+)'
+        output_type: integer
+    timestamp_verification:
+      method: binary_note
+      fallback_time: "000000"
+
+application_modes:
+  - id: contact-afm
+    instrument_token: oxford-mfp.contact-afm
+    raw_token: afm.surface-roughness
+    alias_tokens:
+      - afm.step-height
+      - afm
+    format_ref: ibw
+    description: Contact mode AFM for surface topography, RMS roughness, and step-height film thickness.
+    supported_studies:
+      - surface-morphology
+      - film-thickness
+    detect:
+      method: extension-and-magic
+      signatures: [".ibw", "IGOR"]
+    extract:
+      layout: binary_raster_matrix
+      wave_name: "ZSensor"
+      channels:
+        height_matrix:
+          channel_name: "ZSensor"
+          source_unit: "m"
+          normalized_unit: "nm"
+          shape: matrix_2d
+          required: true
+          transform:
+            operation: multiply
+            factor: 1.0e+9
+            rationale: "Convert raw Asylum Igor SI meter values to nanometers (nm) for surface morphology analysis."
+        deflection:
+          channel_name: "Deflection"
+          source_unit: "V"
+          normalized_unit: "V"
+          shape: matrix_2d
+          required: false
+    transforms:
+      - field: height_matrix
+        operation: multiply
+        factor: 1.0e+9
+        rationale: "Convert raw Asylum Igor SI meter values to nanometers (nm) for surface morphology analysis."
+    normalized_output:
+      required_fields: [height_matrix]
+      optional_fields: [deflection]
+    evidence:
+      support_status: partial
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-05-29/290526-150141_oxford-mfp.contact-afm_[ito.2]_afm.surface-roughness_r.[ito].ibw"
+          sha256: "b7aacdab92b0423fad3718e17fa8925ea8f6785faf601a7a4f8d167d858ca737"
+          size_bytes: 41874
+          observed_format: ibw
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            metadata_extraction: pass
+            validated_metadata_fields:
+              - scan_date
+              - scan_time
+              - scan_size
+              - scan_points
+            measurement_extraction: not-assessed
+            normalized_fields: []
+      limitations: "Wave note metadata and timestamps are validated. Binary rasterization reader is not yet integrated into workspace-tools; raw raster data parsing remains not-assessed."

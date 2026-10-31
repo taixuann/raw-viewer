@@ -1,0 +1,60 @@
+# Project-owned RawView companion profile, schema v2.
+# This standalone viewer profile belongs in data/instruments/rawview/.
+# RawView reads it as YAML data; it never rewrites profiles or executes code.
+# Layout: Keithley 2400 dual-sweep LVM (tab-separated) with voltage/current
+# and an optional elapsed-time channel. The observed data rows have an empty
+# leading cell; an empty data_prefix means no row-prefix filter, so every
+# non-blank line after the names row is parsed. Blank lines are skipped, never
+# parsed as gap rows. There is no transforms mechanism: record values are
+# preserved exactly as written.
+schema_version: 2
+
+instrument:
+  id: keithley-2400
+  name: Keithley 2400 SourceMeter
+  vendor: Keithley Instruments
+  model: "2400"
+
+formats:
+  - id: lvm
+    kind: tabular
+    # ".lvm", ".txt", and ".csv" sources share this LabVIEW Measurement
+    # layout with tab-separated headers/data. Match headers and project
+    # basename, not extension alone.
+    extensions: [".txt", ".lvm", ".csv"]
+    # Double-quoted "\t" is one tab character; single quotes would be two.
+    delimiter: "\t"
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      names_prefix: "X_Value"
+      data_prefix: ""
+    columns:
+      voltage:
+        header: "Untitled"
+        quantity: voltage
+        unit: "V"
+        label: "Voltage"
+      current:
+        header: "Untitled 1"
+        quantity: current
+        unit: "A"
+        label: "Current"
+      timestamp:
+        header: "Untitled 2"
+        quantity: time
+        unit: "s"
+        label: "Time"
+        # Optional channel: parsed with full row alignment when the header is
+        # present, skipped without invented values when absent. Plot axes
+        # must stay on required channels.
+        required: false
+
+modes:
+  - id: dual-sweep
+    format: lvm
+    # Case-insensitive substrings searched in the first 64 KiB of the source.
+    detect: ["Untitled", "Untitled 1"]
+    filename_contains_all: ["keithley-2400"]
+    extract:
+      x: voltage
+      y: [current]
