@@ -5,8 +5,29 @@ use raw_viewer_core::profile::{
     validate_document, when_from_application_mode_id, when_from_header_signature, when_from_legacy,
     GrammarMatchContext, ProfileCatalog, ProfileResolution, WhenClause,
 };
+use raw_viewer_core::reader::load_measurement;
 use std::collections::HashMap;
 use std::path::Path;
+
+const SYNTH_GRAMMAR_YAML: &str = r#"schema_version: 1
+grammars:
+  - id: electrochem
+    name: Electrochem Filenames
+    template: "{instrument}.{mode}_{sample}"
+    fields:
+      - name: instrument
+        role: instrument
+        type: string
+        optional: false
+      - name: mode
+        role: mode
+        type: string
+        optional: false
+      - name: sample
+        role: sample
+        type: string
+        optional: false
+"#;
 
 fn catalog_with_profiles(project: &Path, yamls: &[(&str, &str)]) -> ProfileCatalog {
     std::fs::create_dir_all(project.join("data/instruments")).unwrap();
@@ -97,6 +118,29 @@ fn content_and_filename_requires_both() {
         "no-header",
         "tok.csv"
     ));
+}
+
+fn write_minimal_project(root: &Path) {
+    std::fs::create_dir_all(root.join("data/raw")).unwrap();
+    std::fs::create_dir_all(root.join(".rawviewer")).unwrap();
+    std::fs::write(
+        root.join(".rawviewer/setting.yaml"),
+        "schema_version: 1\ndata_root: data/raw\ndefault_view: tree\ndefault_preset: nature-single\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn no_grammar_zero_hits_falls_back_generic() {
+    let tmp = temp_project();
+    write_minimal_project(&tmp);
+    std::fs::write(tmp.join(".rawviewer/grammar.yaml"), SYNTH_GRAMMAR_YAML).unwrap();
+    std::fs::create_dir_all(tmp.join("data/instruments")).unwrap();
+    std::fs::write(tmp.join("data/instruments/synth.yaml"), synth_v2_yaml()).unwrap();
+    std::fs::write(tmp.join("data/raw/table.csv"), b"X,Y\n0,1\n").unwrap();
+    let measurement = load_measurement(&tmp, Path::new("data/raw/table.csv"))
+        .expect("generic table fallback when grammar unmatched and no profile hit");
+    assert_eq!(measurement.instrument.id, "generic-table");
 }
 
 #[test]

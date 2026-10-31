@@ -4,6 +4,9 @@ import Testing
 
 struct WhenMatcherTests {
     private func writeMinimalProject(at root: URL) throws {
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("data/raw", isDirectory: true),
+            withIntermediateDirectories: true)
         let setting = """
         schema_version: 1
         data_root: data/raw
@@ -15,6 +18,27 @@ struct WhenMatcherTests {
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try setting.write(to: url, atomically: true, encoding: .utf8)
     }
+
+    private let synthGrammarYAML = """
+    schema_version: 1
+    grammars:
+      - id: electrochem
+        name: Electrochem Filenames
+        template: "{instrument}.{mode}_{sample}"
+        fields:
+          - name: instrument
+            role: instrument
+            type: string
+            optional: false
+          - name: mode
+            role: mode
+            type: string
+            optional: false
+          - name: sample
+            role: sample
+            type: string
+            optional: false
+    """
 
     @Test func tokenExactMatchRejectsNearMissSubstring() {
         let merged = ProfileWhenMatcher.whenFromLegacy(
@@ -229,5 +253,119 @@ struct WhenMatcherTests {
         let when = ProfileWhenMatcher.whenFromLegacy(
             detect: [], filenameContainsAll: ["synth-token", "dual-sweep"])
         #expect(when.filenameTokens == ["synth", "token", "dual", "sweep"])
+    }
+
+    @Test func legacyHeaderSignaturesTranslation() {
+        let when = ProfileWhenMatcher.whenFromHeaderSignature(
+            modeID: "cv", signature: "Potential applied (V)")
+        #expect(when.contentContainsAny == ["Potential applied (V)"])
+        #expect(when.grammarTokens["cv"] == "cv")
+    }
+
+    @Test func legacyDetectSignaturesTranslation() {
+        let when = ProfileWhenMatcher.whenFromLegacy(detect: ["detect-me"], filenameContainsAll: nil)
+        #expect(
+            ProfileWhenMatcher.matchesWhen(
+                when, grammarFields: nil, basenameTokens: [], headerSample: "prefix detect-me suffix",
+                basenameForContent: "f.csv"))
+    }
+
+    @Test func legacyApplicationModesTranslation() {
+        let when = ProfileWhenMatcher.whenFromApplicationModeId(
+            modeID: "dual-sweep", detectSignatures: ["dual Vsweep"], filenameContainsAll: nil)
+        #expect(when.grammarTokens["mode"] == "dual-sweep")
+        #expect(when.contentContainsAny.contains("dual Vsweep"))
+    }
+
+    @Test func v2OptionalIdFallbackDirect() throws {
+        let yaml = """
+        schema_version: 2
+        instrument:
+          id: synth
+          name: Synth
+        formats:
+          - id: csv
+            kind: tabular
+            extensions: [".csv"]
+            delimiter: ","
+            encoding: [utf-8]
+            rows:
+              names_prefix: DataName
+              data_prefix: DataValue
+            columns:
+              voltage:
+                header: V1
+                quantity: voltage
+                unit: V
+              current:
+                header: I1
+                quantity: current
+                unit: A
+        modes:
+          - id: optional-id
+            format: csv
+            detect: [SYNTH-SPECIFIC-HEADER]
+            filename_contains_all: [synth-token, dual-sweep]
+            extract:
+              x: voltage
+              y: [current]
+        """
+        let outcome = ProfileSchema.load(
+            text: yaml, relativePath: "data/instruments/synth.yaml", sha256: "test")
+        #expect(outcome.profile != nil)
+    }
+
+    @Test func noGrammarZeroHitsFallsBackGeneric() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "rawview-when-generic-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
+        try synthGrammarYAML.write(
+            to: root.appendingPathComponent(".rawviewer/grammar.yaml"),
+            atomically: true, encoding: .utf8)
+        let profile = """
+        schema_version: 2
+        instrument:
+          id: synth
+          name: Synth
+        formats:
+          - id: csv
+            kind: tabular
+            extensions: [".csv"]
+            delimiter: ","
+            encoding: [utf-8]
+            rows:
+              names_prefix: DataName
+              data_prefix: DataValue
+            columns:
+              voltage:
+                header: V1
+                quantity: voltage
+                unit: V
+              current:
+                header: I1
+                quantity: current
+                unit: A
+        modes:
+          - id: dual-sweep
+            format: csv
+            detect: [SYNTH-SPECIFIC-HEADER]
+            filename_contains_all: [synth-token, dual-sweep]
+            extract:
+              x: voltage
+              y: [current]
+        """
+        try profile.write(
+            to: root.appendingPathComponent("data/instruments/synth.yaml"),
+            atomically: true, encoding: .utf8)
+        try writeMinimalProject(at: root)
+        let csvURL = root.appendingPathComponent("data/raw/table.csv")
+        try "X,Y\n0,1\n".write(to: csvURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let source = try project.discoverSources().first { $0.relativePath.hasSuffix("table.csv") }
+        let resolved = try #require(source)
+        let measurement = try await InstrumentReader.load(resolved.url, project: project)
+        #expect(measurement.instrument.id == "generic-table")
     }
 }

@@ -98,6 +98,21 @@ enum ProfileWhenMatcher {
             filenameTokens: clause.filenameContainsAll.map { splitLegacyFilenameTokens($0) } ?? [])
     }
 
+    static func whenFromApplicationModeId(
+        modeID: String,
+        detectSignatures: [String],
+        filenameContainsAll: [String]?
+    ) -> WhenClause {
+        WhenClause(
+            grammarTokens: ["mode": modeID],
+            contentContainsAny: detectSignatures,
+            filenameTokens: filenameContainsAll.map { splitLegacyFilenameTokens($0) } ?? [])
+    }
+
+    static func whenFromHeaderSignature(modeID: String, signature: String) -> WhenClause {
+        WhenClause(grammarTokens: [modeID: modeID], contentContainsAny: [signature])
+    }
+
     static func grammarContextFromCatalog(_ catalog: FilenameGrammarCatalog?, basename: String) -> GrammarMatchContext {
         guard let catalog else { return .withoutCatalog() }
         for grammar in catalog.grammars {
