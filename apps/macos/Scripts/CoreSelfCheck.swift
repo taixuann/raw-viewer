@@ -410,11 +410,11 @@ enum CoreSelfCheck {
         // (a) All basename tokens plus a header alternative load every value.
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-gate-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        try writeFixture(root, "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv", csv)
+        try writeFixture(root, "data/raw/run_synth-token_dual-sweep.csv", csv)
         try writeFixture(root, "data/instruments/synth.yaml", filenameV2Profile)
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
-        let good = report.results.first { $0.source.relativePath == "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv" }
+        let good = report.results.first { $0.source.relativePath == "data/raw/run_synth-token_dual-sweep.csv" }
         precondition(good?.inspection?.applicationMode == "dual-sweep")
         let measurement = try await InstrumentReader.load(good!.source.url, project: project)
         precondition(measurement.channel(named: "voltage")?.values == [0, 0.1, 0.2])
@@ -428,7 +428,7 @@ enum CoreSelfCheck {
         let partialProject = try ProjectContext.open(partialRoot)
         let partialReport = await InstrumentReader.inspectMany(try partialProject.discoverSources(), project: partialProject)
         precondition(partialReport.results.first?.inspection == nil)
-        precondition(partialReport.results.first?.error?.contains("filename_contains_all tokens \"dual-sweep\" not in basename \"run_synth-token_only.csv\"") == true)
+        precondition(partialReport.results.first?.error?.contains("filename_contains_all tokens \"dual\", \"sweep\" not in basename \"run_synth-token_only.csv\"") == true)
         precondition(partialReport.results.first?.error?.contains("not in header sample") == false)
         // (c) Without the optional selector the same header still matches.
         let legacyRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-legacy-\(UUID().uuidString)")
@@ -889,7 +889,10 @@ enum CoreSelfCheck {
         precondition(mode("keysight-b1500a.wgfmu_std.csv") == "wgfmu", "standard WGFMU mode moved to \(mode("keysight-b1500a.wgfmu_std.csv") ?? "blocked")")
         precondition(mode("unknown.csv") == nil, "unknown header was accepted")
         precondition(mode("foreign.csv") == nil, "foreign basename was claimed")
-        precondition(report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("keysight-b1500a.wgfmu") == true, "foreign basename diagnostic lost the missing token")
+        precondition(
+            report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("keysight-b1500a") == true
+                && report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("\"wgfmu\"") == true,
+            "foreign basename diagnostic lost the profile id or missing token")
         func load(_ name: String) async throws -> NormalizedMeasurement {
             try await InstrumentReader.load(root.appendingPathComponent("data/raw/\(name)"), project: project)
         }
@@ -987,7 +990,10 @@ enum CoreSelfCheck {
         do {
             _ = try await InstrumentReader.load(root.appendingPathComponent("data/raw/foreign-list.csv"), project: project)
             fatalError("foreign basename was loaded")
-        } catch { precondition("\(error)".contains("keysight-b1500a"), "foreign diagnostic lost the token: \(error)") }
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            precondition(message.contains("keysight-b1500a"), "foreign diagnostic lost the token: \(message)")
+        }
         // Generic I/V Sweep text in unrelated metadata must not pull a dual
         // export into list-sweep: the dual signature wins uniquely.
         let dualMetaResult = report.results.first { $0.id == "data/raw/keysight-b1500a.dual-sweep_meta.csv" }

@@ -233,9 +233,12 @@ pub fn resolve(
                 blocking_notes.join(" ")
             ));
         }
-        if let ProfileResolution::Matched(foreign) =
-            catalog.resolve(file_extension, &unique.text, basename)
-        {
+        if let ProfileResolution::Matched(foreign) = catalog.resolve(
+            file_extension,
+            &unique.text,
+            basename,
+            crate::profile::grammar_context_from_catalog(grammar.catalog.as_ref(), basename),
+        ) {
             return V3Outcome::Failed(format!(
                 "{relative_path}: Ambiguous profile match: schema-v3 {} variant {} and legacy {} mode {} both match. Keep one profile per source.",
                 unique.match_info.document_path,

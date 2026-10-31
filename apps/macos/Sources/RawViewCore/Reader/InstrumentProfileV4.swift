@@ -164,6 +164,7 @@ enum ProfileV4Codec {
             formats.append(try compileFormat(formatID: modeID, variant: variant))
             modes.append(try compileMode(modeID: modeID, variant: variant))
         }
+        let profileWhen = doc.when.map { ProfileWhenMatcher.whenFromV4Clause($0) }
         return InstrumentProfile(
             profileID: doc.profileID,
             instrumentID: doc.instrumentID,
@@ -174,7 +175,8 @@ enum ProfileV4Codec {
             modes: modes,
             relativePath: relativePath,
             sha256: sha256,
-            schemaVersion: 4
+            schemaVersion: 4,
+            profileWhen: profileWhen
         )
     }
 
@@ -241,17 +243,19 @@ enum ProfileV4Codec {
     }
 
     private static func compileMode(modeID: String, variant: ProfileVariantV4) throws -> ProfileMode {
-        let when = variant.when
-        let detect = when?.contentContainsAny?.filter { !$0.isEmpty } ?? []
-        if detect.isEmpty {
+        let when = ProfileWhenMatcher.whenFromV4Clause(variant.when ?? WhenClauseV4())
+        guard when.hasSelectors else {
             throw ProfileV4Error.invalid(
-                reason: "variants.\(modeID).when.content_contains_any must list at least one selector for reader compilation.")
+                reason: "variants.\(modeID).when must declare at least one selector for reader compilation.")
         }
+        let detect = when.contentContainsAny
+        let filenameContainsAll = variant.when?.filenameContainsAll?.filter { !$0.isEmpty }
         return ProfileMode(
             id: modeID,
             formatID: modeID,
             detect: detect,
-            filenameContainsAll: when?.filenameContainsAll,
+            filenameContainsAll: filenameContainsAll?.isEmpty == false ? filenameContainsAll : nil,
+            when: when,
             x: variant.plot.x,
             y: variant.plot.y
         )

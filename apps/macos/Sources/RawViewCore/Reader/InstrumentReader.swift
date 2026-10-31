@@ -214,18 +214,20 @@ public enum InstrumentReader {
             // The selected unique profile/format's declared encoding drives
             // decoding: candidates are resolved using each candidate's own
             // encoding, and only one unique profile/format may match.
-            let encoded = resolveEncoded(prefix: prefixData, catalog: catalog, extension: fileExtension, basename: basename)
+            let grammar = ProfileWhenMatcher.grammarContextFromCatalog(
+                (v3grammar ?? V3Reader.context(project: project)).catalog, basename: basename)
+            let encoded = resolveEncoded(
+                prefix: prefixData, catalog: catalog, extension: fileExtension, basename: basename, grammar: grammar)
             let match: ProfileMatch
             let sample: String
             let selectedEncoding: String.Encoding?
             let pending: Data
             switch encoded.resolution {
             case .failed(let message):
+                try? handle.close()
                 if let measurement = try? GenericTableReader.loadMeasurement(url: source, sourceID: relativePath) {
-                    try? handle.close()
                     return measurement
                 }
-                try? handle.close()
                 if message.contains("could not be decoded") {
                     throw ReaderError.invalidSource("\(relativePath): \(message)")
                 }
@@ -239,6 +241,13 @@ public enum InstrumentReader {
                 sample = text
                 selectedEncoding = enc
                 pending = pend
+            case .ambiguousProfile(let candidateIDs):
+                try? handle.close()
+                throw ReaderError.invalidSource(ProfileWhenMatcher.formatAmbiguous(candidateIDs))
+            case .grammarMatchedNoProfile:
+                try? handle.close()
+                throw ReaderError.invalidSource(
+                    "Filename matched the project grammar but no instrument profile mode matched this source.")
             }
             guard let encoding = selectedEncoding else {
                 try? handle.close()
@@ -411,7 +420,10 @@ public enum InstrumentReader {
             )
             return .supported(inspection, .profileMatched)
         }
-        let encoded = resolveEncoded(prefix: prefix, catalog: catalog, extension: fileExtension, basename: basename)
+        let grammar = ProfileWhenMatcher.grammarContextFromCatalog(
+            V3Reader.context(project: project).catalog, basename: basename)
+        let encoded = resolveEncoded(
+            prefix: prefix, catalog: catalog, extension: fileExtension, basename: basename, grammar: grammar)
         switch encoded.resolution {
         case .failed(let message):
             if let generic = try? GenericTableReader.inspect(prefix: prefix) {
@@ -449,6 +461,11 @@ public enum InstrumentReader {
                 readerVersion: version, profileID: match.profile.profileID, profileHash: match.profile.sha256, error: nil
             )
             return .supported(inspection, .profileMatched)
+        case .ambiguousProfile(let candidateIDs):
+            return .blocked(ProfileWhenMatcher.formatAmbiguous(candidateIDs))
+        case .grammarMatchedNoProfile:
+            return .blocked(
+                "Filename matched the project grammar but no instrument profile mode matched this source.")
         }
     }
 
@@ -476,7 +493,13 @@ public enum InstrumentReader {
     /// encoding to decode the header. Combining every encoding claimed for the
     /// extension would let one format's encoding rescue bytes another format
     /// cannot read; only one unique profile/format/mode may match.
-    private static func resolveEncoded(prefix: Data, catalog: ProfileCatalog, extension fileExtension: String, basename: String) -> (resolution: ProfileResolution, encoding: String.Encoding?, text: String?, pending: Data?) {
+    private static func resolveEncoded(
+        prefix: Data,
+        catalog: ProfileCatalog,
+        extension fileExtension: String,
+        basename: String,
+        grammar: ProfileWhenMatcher.GrammarMatchContext
+    ) -> (resolution: ProfileResolution, encoding: String.Encoding?, text: String?, pending: Data?) {
         var candidates: [(profile: InstrumentProfile, format: ProfileFormat)] = []
         for profile in catalog.profiles {
             for format in profile.formats where format.extensions.contains(fileExtension) {
@@ -484,7 +507,10 @@ public enum InstrumentReader {
             }
         }
         guard !candidates.isEmpty else {
-            return (catalog.resolve(extension: fileExtension, headerSample: "", basename: basename), nil, nil, nil)
+            return (
+                catalog.resolve(
+                    extension: fileExtension, headerSample: "", basename: basename, grammar: grammar),
+                nil, nil, nil)
         }
         struct CandidateHit {
             let match: ProfileMatch
@@ -496,17 +522,27 @@ public enum InstrumentReader {
         var decodedAny = false
         var firstSample = ""
         var firstDecoded = false
+        let basenameTokens = ProfileWhenMatcher.tokenizeBasename(basename)
+        let grammarFields = grammar.matchedFields
         for (profile, format) in candidates {
             guard let decoded = decodeWithFormat(prefix, format: format) else { continue }
             if !firstDecoded { firstSample = decoded.text; firstDecoded = true }
             decodedAny = true
-            let sampleLower = decoded.text.lowercased()
-            let baseLower = basename.lowercased()
+            let profileWhen = profile.profileWhen
             for mode in profile.modes.filter({ $0.formatID == format.id }) {
-                let filenameOK = mode.filenameContainsAll.map { $0.allSatisfy { baseLower.contains($0.lowercased()) } } ?? true
-                let headerOK = mode.detect.contains { sampleLower.contains($0.lowercased()) }
-                if filenameOK && headerOK {
-                    hits.append(CandidateHit(match: ProfileMatch(profile: profile, format: format, mode: mode), encoding: decoded.encoding, text: decoded.text, pending: decoded.pending))
+                let merged = ProfileWhenMatcher.mergeWhen(profile: profileWhen, variant: mode.when)
+                guard ProfileWhenMatcher.modeIsCandidate(merged, grammar: grammar) else { continue }
+                if ProfileWhenMatcher.matchesWhen(
+                    merged,
+                    grammarFields: grammarFields,
+                    basenameTokens: basenameTokens,
+                    headerSample: decoded.text,
+                    basenameForContent: basename
+                ) {
+                    hits.append(
+                        CandidateHit(
+                            match: ProfileMatch(profile: profile, format: format, mode: mode),
+                            encoding: decoded.encoding, text: decoded.text, pending: decoded.pending))
                 }
             }
         }
@@ -520,24 +556,29 @@ public enum InstrumentReader {
             return (.failed((blocking.flatMap(\.issues) + [note]).joined(separator: "\n")), nil, nil, nil)
         }
         if hits.count > 1 {
-            let described = hits.map { "\($0.match.profile.relativePath) mode \($0.match.mode.id)" }.joined(separator: ", ")
-            return (.failed("Ambiguous profile match: \(described). Keep one profile mode per source format."), nil, nil, nil)
+            var candidateIDs = hits.map { ProfileWhenMatcher.candidateProfileID($0.match.profile) }.sorted()
+            candidateIDs = Array(Set(candidateIDs)).sorted()
+            return (.ambiguousProfile(candidateIDs: candidateIDs), nil, nil, nil)
         }
         guard decodedAny else {
             if catalog.hasBrokenClaim(for: fileExtension) {
-                return (catalog.resolve(extension: fileExtension, headerSample: "", basename: basename), nil, nil, nil)
+                return (
+                    catalog.resolve(
+                        extension: fileExtension, headerSample: "", basename: basename, grammar: grammar),
+                    nil, nil, nil)
             }
             return (.failed("the file header could not be decoded with any accepted profile encoding."), nil, nil, nil)
         }
-        let fallback = catalog.resolve(extension: fileExtension, headerSample: firstSample, basename: basename)
+        let fallback = catalog.resolve(
+            extension: fileExtension, headerSample: firstSample, basename: basename, grammar: grammar)
         switch fallback {
-        case .failed:
+        case .failed, .ambiguousProfile, .grammarMatchedNoProfile:
             return (fallback, nil, nil, nil)
         case .matched(let foreign):
-            // At least one candidate encoding decoded the prefix, but no mode
-            // matched using its own declared encoding. A foreign-encoding match
-            // must never report supported: load would have no selected decoding.
-            return (.failed("No profile mode matched this source using its own declared encoding (basename \"\(basename)\"). A mode (\(foreign.profile.relativePath) mode \(foreign.mode.id)) matches only in another candidate's decoded text and cannot decode this source."), nil, nil, nil)
+            return (
+                .failed(
+                    "No profile mode matched this source using its own declared encoding (basename \"\(basename)\"). A mode (\(foreign.profile.relativePath) mode \(foreign.mode.id)) matches only in another candidate's decoded text and cannot decode this source."),
+                nil, nil, nil)
         }
     }
 
@@ -1475,7 +1516,10 @@ enum V3Reader {
             if !blockingNotes.isEmpty {
                 return .failed("\(relativePath): variant \"\(unique.match.variant.id)\" matches, but another claiming profile cannot route (\(blockingNotes.joined(separator: " "))). Resolve every claiming variant before loading.")
             }
-            if case .matched(let foreign) = catalog.resolve(extension: ext, headerSample: unique.text, basename: basename) {
+            if case .matched(let foreign) = catalog.resolve(
+                extension: ext, headerSample: unique.text, basename: basename,
+                grammar: ProfileWhenMatcher.grammarContextFromCatalog(grammar.catalog, basename: basename)
+            ) {
                 return .failed("\(relativePath): Ambiguous profile match: schema-v3 \(unique.match.documentPath) variant \(unique.match.variant.id) and legacy \(foreign.profile.relativePath) mode \(foreign.mode.id) both match. Keep one profile per source.")
             }
             let blocking = catalog.brokenClaims.filter { $0.blocks(sample: unique.text.lowercased(), basename: basename) }
