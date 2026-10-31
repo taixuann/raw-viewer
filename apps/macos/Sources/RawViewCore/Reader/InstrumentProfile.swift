@@ -43,6 +43,7 @@ struct ProfileMode: Sendable, Equatable {
 }
 
 struct InstrumentProfile: Sendable, Equatable {
+    let profileID: String
     let instrumentID: String
     let instrumentName: String
     let vendor: String?
@@ -561,15 +562,36 @@ enum ProfileSchema {
                 "\(relativePath): schema_version must be an integer; found \"\(versionText)\"."
             ])
         }
+        if version == 3 {
+            return loadV3Document(root: root, relativePath: relativePath, sha256: sha256)
+        }
+        if version == 4 {
+            return loadV4Document(root: root, relativePath: relativePath, sha256: sha256)
+        }
         guard ProfileCatalog.supportedSchemaVersions.contains(version) else {
-            if version == 3 {
-                return loadV3Document(root: root, relativePath: relativePath, sha256: sha256)
-            }
             return broken([
-                "\(relativePath): unsupported schema_version \(version); this viewer supports schema_version 1, 2, and 3."
+                "\(relativePath): unsupported schema_version \(version); this viewer supports schema_version 1, 2, 3, and 4."
             ])
         }
         return validate(root, relativePath: relativePath, sha256: sha256, selectors: selectors, version: version)
+    }
+
+    private static func loadV4Document(root: YAMLNode, relativePath: String, sha256: String) -> ProfileLoadOutcome {
+        do {
+            let document = try ProfileV4Codec.decode(root)
+            try ProfileV4Codec.validateStructure(document)
+            let profile = try ProfileV4Codec.compileInstrumentProfile(document, relativePath: relativePath, sha256: sha256)
+            let extensions = Array(Set(profile.formats.flatMap(\.extensions))).sorted()
+            return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, modeSelectors: [])
+        } catch let error as ProfileV4Error {
+            return ProfileLoadOutcome(
+                profile: nil, issues: ["\(relativePath): \(error.localizedDescription)"],
+                extensions: ProfileV4Codec.lenientV4Extensions(root), modeSelectors: [])
+        } catch {
+            return ProfileLoadOutcome(
+                profile: nil, issues: ["\(relativePath): \(error.localizedDescription)"],
+                extensions: ProfileV4Codec.lenientV4Extensions(root), modeSelectors: [])
+        }
     }
 
     /// Schema-v3 variant documents: structural decode plus structural
@@ -714,7 +736,7 @@ enum ProfileSchema {
         if root.value(for: "transforms") != nil {
             fail("transforms are not part of schema v\(version); remove the transforms field or migrate the profile (see CONTRACT.md).")
         }
-        rejectUnknown(root, allowed: ["schema_version", "instrument", "formats", "modes"], scope: "")
+        rejectUnknown(root, allowed: ["schema_version", "id", "instrument", "formats", "modes"], scope: "")
 
         guard let instrumentNode = root.value(for: "instrument"), instrumentNode.mapEntries != nil else {
             fail("instrument mapping is required.")
@@ -977,7 +999,8 @@ enum ProfileSchema {
         guard errors.isEmpty, let instrumentID, let instrumentName else {
             return ProfileLoadOutcome(profile: nil, issues: errors.isEmpty ? ["\(relativePath): profile is incomplete."] : errors, extensions: extensions, modeSelectors: selectors.modeSelectors)
         }
-        let profile = InstrumentProfile(instrumentID: instrumentID, instrumentName: instrumentName,
+        let profileID = root.value(for: "id")?.scalarValue ?? instrumentID
+        let profile = InstrumentProfile(profileID: profileID, instrumentID: instrumentID, instrumentName: instrumentName,
                                         vendor: vendor, model: model, formats: formats, modes: modes,
                                         relativePath: relativePath, sha256: sha256, schemaVersion: version)
         return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, modeSelectors: [])
@@ -2461,7 +2484,7 @@ enum LegacyProfileUpgrader {
                 "variants\(UpgradeNeedsDefinition.valuesInfix(mode.id)): supply a value for every routing key once keys are chosen.")
         }
         return ProfileUpgradeDraft(
-            profileID: profile.instrumentID, profileName: profile.instrumentName,
+            profileID: profile.profileID, profileName: profile.instrumentName,
             instrumentID: profile.instrumentID, instrumentName: profile.instrumentName,
             vendor: profile.vendor, model: profile.model,
             grammarID: nil, variantKeys: [], variants: variants,
