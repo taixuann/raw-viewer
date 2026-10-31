@@ -3,11 +3,22 @@ import Foundation
 /// Case-insensitive content matching applies to the first 64 KiB of the source.
 enum ProfileWhenMatcher {
     static let contentMatchByteLimit = 64 * 1024
-    private static let tokenDelimiters: CharacterSet = {
-        var set = CharacterSet(charactersIn: "_.-")
-        set.formUnion(.whitespaces)
-        return set
-    }()
+    private static func tokenizeFragment(_ text: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        for ch in text {
+            if ch == "_" || ch == "." || ch == "-" || ch.isWhitespace {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(ch)
+            }
+        }
+        if !current.isEmpty { tokens.append(current) }
+        return tokens
+    }
 
     struct WhenClause: Sendable, Equatable {
         var grammarTokens: [String: String] = [:]
@@ -53,8 +64,6 @@ enum ProfileWhenMatcher {
     }
 
     private static func tokenizeFragment(_ text: String) -> [String] {
-        text.components(separatedBy: tokenDelimiters).filter { !$0.isEmpty }
-    }
 
     static func mergeWhen(profile: WhenClause?, variant: WhenClause?) -> WhenClause {
         var merged = WhenClause()
