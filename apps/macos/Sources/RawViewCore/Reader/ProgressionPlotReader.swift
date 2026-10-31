@@ -12,6 +12,18 @@ public struct ProgressionPlotSegment: Sendable, Equatable, Identifiable {
         self.name = name
         self.points = points
     }
+
+    public static func == (lhs: ProgressionPlotSegment, rhs: ProgressionPlotSegment) -> Bool {
+        guard lhs.name == rhs.name, lhs.points.count == rhs.points.count else { return false }
+        for index in lhs.points.indices {
+            let left = lhs.points[index]
+            let right = rhs.points[index]
+            if left.x != right.x || left.y != right.y {
+                return false
+            }
+        }
+        return true
+    }
 }
 
 public enum ProgressionPlotReader {
