@@ -1,0 +1,5 @@
+## Acceptance case -> test mapping
+
+| Acceptance case | Test or vector |
+| --- | --- |
+| ascii heading | testName |

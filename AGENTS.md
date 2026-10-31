@@ -7,6 +7,12 @@ This file defines the architecture, invariant contracts, and component graph for
 Write instructions in Plain register: short imperative sentences, active voice, one instruction per sentence.
 Never delete or split existing source files without explicit human authorization.
 Raw scientific data files under project data roots are strictly read-only and immutable.
+Cover every acceptance case named in a task contract with tests.
+Give each acceptance case its own named test or shared vector row.
+When a case has multiple values, columns, or elements, assert every value in the test, not only the first.
+Map each contract acceptance case to its test or vector in the pull request body under `## Acceptance case → test mapping` (ASCII `->` is also accepted in the heading).
+
+The `pr-acceptance-mapping` CI job is **advisory**: it is not a required GitHub ruleset check for merge, and Tai decides separately whether to treat it as mandatory. The job only verifies that the mapping **table exists** with at least one non-placeholder row (placeholder rows containing `(example)` fail). Reviewers and verifiers still confirm the mapping is **correct and complete** against the task contract and that tests cover every case.
 
 ## Knowledge Graph and Component Map (Graphify)
 
@@ -79,7 +85,8 @@ The gardener owns this table. Update it when rules or checks change.
 | L64 — Settings invariant (`.rawviewer/setting.yaml`; default view `tree`; default preset `nature-single`). | `apps/macos/Scripts/check_index_cli.sh:65-69`; `apps/macos/Scripts/CoreSelfCheck.swift:2386-2398`; `core/src/config.rs:48-58` (`DEFAULT_VIEW` / `DEFAULT_PRESET`) | partial |
 | L65 — Profile fallback (load order; no writes under `.rawviewer/instrument/`). | `apps/macos/Scripts/CoreSelfCheck.swift:1076-1084` (priority/fallback); no automated check for the read-only write ban | partial |
 | L66 — Verification gate (macOS check scripts + Rust fmt/clippy/test). | `.github/workflows/ci.yml:46-51`, `73-76` | partial |
-| CI must be green on all jobs before merge. | `.github/workflows/ci.yml:15-76` (rust matrix + swift job steps) | enforced |
+| L10–L13 — Task contract acceptance coverage and PR mapping. | `Scripts/check_pr_acceptance_mapping.sh` and `Scripts/check_pr_acceptance_mapping_self_test.sh`; `.github/workflows/ci.yml` (`pr-acceptance-mapping` job, advisory); named tests/vectors, mapping correctness/completeness, and full multi-value assertions are review-/verifier-enforced | partial |
+| CI must be green on required jobs before merge. | `.github/workflows/ci.yml` (rust matrix, swift job) | enforced |
 
 Required GitHub status checks on `master` are not configured (Tai's decision).
 
