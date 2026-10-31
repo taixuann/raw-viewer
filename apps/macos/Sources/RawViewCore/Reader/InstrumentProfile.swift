@@ -521,7 +521,17 @@ struct ProfileCatalog: Sendable {
     ) -> String {
         let merged = ProfileWhenMatcher.mergeWhen(profile: profileWhen, variant: mode.when)
         var parts: [String] = []
-        if !merged.filenameTokens.isEmpty {
+        if let legacy = mode.filenameContainsAll, !legacy.isEmpty {
+            let base = basename.lowercased()
+            let missing = legacy.filter { !base.contains($0.lowercased()) }
+            if missing.isEmpty {
+                parts.append("filename_contains_all matched basename \"\(basename)\"")
+            } else {
+                parts.append(
+                    "filename_contains_all tokens \(missing.map { "\"\($0)\"" }.joined(separator: ", ")) not in basename \"\(basename)\""
+                )
+            }
+        } else if !merged.filenameTokens.isEmpty {
             parts.append(ProfileWhenMatcher.describeFilenameMiss(tokens: merged.filenameTokens, basename: basename))
         }
         if !merged.contentContainsAny.isEmpty {

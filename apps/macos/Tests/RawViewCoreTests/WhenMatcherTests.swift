@@ -428,6 +428,8 @@ struct WhenMatcherTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "rawview-when-v1-\(UUID().uuidString)")
         try writeMinimalProject(at: root)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
         try profile.write(
             to: root.appendingPathComponent("data/instruments/keysight-b1500a.yaml"),
             atomically: true, encoding: .utf8)
@@ -484,6 +486,8 @@ struct WhenMatcherTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "rawview-when-ambig-\(UUID().uuidString)")
         try writeMinimalProject(at: root)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
         try yaml.write(
             to: root.appendingPathComponent("data/instruments/synth.yaml"),
             atomically: true, encoding: .utf8)
