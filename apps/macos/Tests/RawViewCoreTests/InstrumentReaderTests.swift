@@ -226,9 +226,8 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first { $0.source.relativePath == "data/raw/a.csv" }?.error)
-        #expect(error.contains("Ambiguous"))
-        #expect(error.contains("keysight-b1500a.yaml"))
-        #expect(error.contains("duplicate-keysight.yaml"))
+        #expect(error.contains("ambiguous_profile"))
+        #expect(error.contains("keysight-b1500a"))
         #expect(report.results.first { $0.source.relativePath == "data/raw/b.dat" }?.inspection != nil)
     }
 
@@ -1295,7 +1294,7 @@ struct InstrumentReaderTests {
         let root = try makeProject(
             profiles: ["synth.yaml": Fixtures.filenameV2],
             sources: [
-                "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv": Data(csv.utf8),
+                "data/raw/run_synth-token_dual-sweep.csv": Data(csv.utf8),
                 "data/raw/run_synth-token_only.csv": Data(csv.utf8),
                 "data/raw/synth-token_dual-sweep/nested.csv": Data(csv.utf8),
             ]
@@ -1305,7 +1304,7 @@ struct InstrumentReaderTests {
         let sources = try project.discoverSources()
         let report = await InstrumentReader.inspectMany(sources, project: project)
         // Both basename tokens (case-insensitive) plus header loads exact arrays in order.
-        let good = try #require(report.results.first { $0.source.relativePath == "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv" })
+        let good = try #require(report.results.first { $0.source.relativePath == "data/raw/run_synth-token_dual-sweep.csv" })
         #expect(good.inspection?.applicationMode == "dual-sweep")
         let measurement = try await InstrumentReader.load(good.source.url, project: project)
         #expect(measurement.channel(named: "voltage")?.values == [0, 0.1, 0.2])
@@ -1317,7 +1316,7 @@ struct InstrumentReaderTests {
         let partial = try #require(report.results.first { $0.source.relativePath == "data/raw/run_synth-token_only.csv" })
         let partialError = try #require(partial.error)
         #expect(partial.inspection == nil)
-        #expect(partialError.contains("filename_contains_all tokens \"dual-sweep\" not in basename \"run_synth-token_only.csv\""))
+        #expect(partialError.contains("filename_contains_all tokens \"dual\", \"sweep\" not in basename \"run_synth-token_only.csv\""))
         #expect(partialError.contains("detect matched header sample"))
         #expect(!partialError.contains("not in header sample"))
         await #expect(throws: ReaderError.self) {
@@ -1406,9 +1405,9 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first?.error)
-        #expect(error.contains("Ambiguous"))
-        #expect(error.contains("a.yaml"))
-        #expect(error.contains("b.yaml"))
+        #expect(error.contains("ambiguous_profile"))
+        #expect(error.contains("synth"))
+        #expect(error.contains("synth-copy"))
     }
 
     @Test func malformedFilenameSelectorIsFailClosed() async throws {

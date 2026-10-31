@@ -872,11 +872,13 @@ fn validate(
                 "{field}.extract.x \"{x}\" must not also appear in extract.y."
             ));
         }
+        let when = super::when::when_from_legacy(&detect, filename_tokens.as_deref());
         modes.push(ProfileMode {
             id,
             format_id,
             detect,
             filename_contains_all: filename_tokens,
+            when,
             x,
             y,
         });
@@ -913,6 +915,7 @@ fn validate(
             relative_path: relative_path.to_string(),
             sha256: sha256.to_string(),
             schema_version: version,
+            profile_when: None,
         }),
         issues: vec![],
         extensions,

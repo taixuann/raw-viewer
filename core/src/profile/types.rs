@@ -39,6 +39,7 @@ pub struct ProfileMode {
     pub format_id: String,
     pub detect: Vec<String>,
     pub filename_contains_all: Option<Vec<String>>,
+    pub when: super::when::WhenClause,
     pub x: String,
     pub y: Vec<String>,
 }
@@ -56,6 +57,7 @@ pub struct InstrumentProfile {
     pub relative_path: String,
     pub sha256: String,
     pub schema_version: i32,
+    pub profile_when: Option<super::when::WhenClause>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,11 +67,7 @@ pub struct ProfileMatch {
     pub mode: ProfileMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProfileResolution {
-    Matched(Box<ProfileMatch>),
-    Failed(String),
-}
+pub use super::when::ProfileResolution;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokenModeSelectors {
@@ -91,19 +89,26 @@ impl BrokenClaim {
         if self.mode_selectors.is_empty() {
             return true;
         }
-        let sample = sample.to_lowercase();
-        let base = basename.to_lowercase();
+        let sample_lower = sample.to_lowercase();
         for mode in &self.mode_selectors {
             let filename_mismatch = mode
                 .filenames
                 .as_ref()
-                .map(|tokens| !tokens.iter().all(|t| base.contains(&t.to_lowercase())))
+                .map(|tokens| {
+                    let have: std::collections::HashSet<_> =
+                        super::when::tokenize_basename(basename)
+                            .into_iter()
+                            .collect();
+                    !super::when::split_legacy_filename_tokens(tokens)
+                        .iter()
+                        .all(|t| have.contains(t))
+                })
                 .unwrap_or(false);
             let header_mismatch = !mode.signatures.is_empty()
                 && !mode
                     .signatures
                     .iter()
-                    .any(|sig| sample.contains(&sig.to_lowercase()));
+                    .any(|sig| sample_lower.contains(&sig.to_lowercase()));
             if !filename_mismatch && !header_mismatch {
                 return true;
             }

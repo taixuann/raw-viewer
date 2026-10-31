@@ -4,7 +4,9 @@ use crate::measurement::{
     MetadataSection, NormalizedMeasurement, SourceIdentity,
 };
 use crate::profile::{
-    load_catalog, ProfileCatalog, ProfileFormat, ProfileMatch, ProfileResolution,
+    ambiguous_candidate_labels, format_ambiguous, grammar_context_from_catalog, load_catalog,
+    matches_when, merge_when, mode_is_candidate, GrammarMatchContext, ProfileCatalog,
+    ProfileFormat, ProfileMatch, ProfileResolution,
 };
 use crate::project::ProjectContext;
 use crate::reader::comment_tsv::extract_comment_tsv;
@@ -99,7 +101,13 @@ pub fn load_measurement(
         }
     }
 
-    let encoded = resolve_encoded(&prefix, &catalog, &extension, &basename);
+    let encoded = resolve_encoded(
+        &prefix,
+        &catalog,
+        &extension,
+        &basename,
+        grammar_context_from_catalog(grammar.catalog.as_ref(), &basename),
+    );
     let (profile_match, encoding, sample, pending) = match encoded {
         EncodedResolution::Failed(message) => {
             if let Ok(measurement) =
@@ -149,11 +157,24 @@ enum EncodedResolution {
     },
 }
 
+fn profile_resolution_error(resolution: ProfileResolution) -> String {
+    match resolution {
+        ProfileResolution::Failed(message) => message,
+        ProfileResolution::AmbiguousProfile { candidate_ids } => format_ambiguous(&candidate_ids),
+        ProfileResolution::GrammarMatchedNoProfile => {
+            "Filename matched the project grammar but no instrument profile mode matched this source."
+                .into()
+        }
+        ProfileResolution::Matched(_) => "internal profile resolution error".into(),
+    }
+}
+
 fn resolve_encoded(
     prefix: &[u8],
     catalog: &ProfileCatalog,
     file_extension: &str,
     basename: &str,
+    grammar: GrammarMatchContext,
 ) -> EncodedResolution {
     let mut candidates: Vec<(&crate::profile::InstrumentProfile, &ProfileFormat)> = Vec::new();
     for profile in &catalog.profiles {
@@ -164,11 +185,8 @@ fn resolve_encoded(
         }
     }
     if candidates.is_empty() {
-        let resolution = catalog.resolve(file_extension, "", basename);
-        return EncodedResolution::Failed(match resolution {
-            ProfileResolution::Failed(message) => message,
-            ProfileResolution::Matched(_) => "internal profile resolution error".into(),
-        });
+        let resolution = catalog.resolve(file_extension, "", basename, grammar.clone());
+        return EncodedResolution::Failed(profile_resolution_error(resolution));
     }
     struct CandidateHit {
         profile_match: ProfileMatch,
@@ -190,23 +208,15 @@ fn resolve_encoded(
             first_decoded = true;
         }
         decoded_any = true;
-        let sample_lower = text.to_lowercase();
-        let base_lower = basename.to_lowercase();
+        let basename_tokens = crate::profile::tokenize_basename(basename);
+        let grammar_fields = grammar.matched_fields.as_ref();
+        let profile_when = profile.profile_when.as_ref();
         for mode in profile.modes.iter().filter(|m| m.format_id == format.id) {
-            let filename_ok = mode
-                .filename_contains_all
-                .as_ref()
-                .map(|tokens| {
-                    tokens
-                        .iter()
-                        .all(|t| base_lower.contains(&t.to_lowercase()))
-                })
-                .unwrap_or(true);
-            let header_ok = mode
-                .detect
-                .iter()
-                .any(|sig| sample_lower.contains(&sig.to_lowercase()));
-            if filename_ok && header_ok {
+            let merged = merge_when(profile_when, Some(&mode.when));
+            if !mode_is_candidate(&merged, &grammar) {
+                continue;
+            }
+            if matches_when(&merged, grammar_fields, &basename_tokens, &text, basename) {
                 hits.push(CandidateHit {
                     profile_match: ProfileMatch {
                         profile: (*profile).clone(),
@@ -244,34 +254,30 @@ fn resolve_encoded(
         return EncodedResolution::Failed(messages.join("\n"));
     }
     if hits.len() > 1 {
-        let described = hits
-            .iter()
-            .map(|hit| {
-                format!(
-                    "{} mode {}",
-                    hit.profile_match.profile.relative_path, hit.profile_match.mode.id
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        return EncodedResolution::Failed(format!(
-            "Ambiguous profile match: {described}. Keep one profile mode per source format."
-        ));
+        let matches: Vec<_> = hits.iter().map(|hit| hit.profile_match.clone()).collect();
+        let candidate_ids = ambiguous_candidate_labels(&matches);
+        return EncodedResolution::Failed(format_ambiguous(&candidate_ids));
     }
     if !decoded_any {
         if catalog.has_broken_claim(file_extension) {
-            let resolution = catalog.resolve(file_extension, "", basename);
-            if let ProfileResolution::Failed(message) = resolution {
-                return EncodedResolution::Failed(message);
+            let resolution = catalog.resolve(file_extension, "", basename, grammar.clone());
+            if !matches!(resolution, ProfileResolution::Matched(_)) {
+                return EncodedResolution::Failed(profile_resolution_error(resolution));
             }
         }
         return EncodedResolution::Failed(
             "the file header could not be decoded with any accepted profile encoding.".into(),
         );
     }
-    let fallback = catalog.resolve(file_extension, &first_sample, basename);
+    let fallback = catalog.resolve(file_extension, &first_sample, basename, grammar);
     match fallback {
         ProfileResolution::Failed(message) => EncodedResolution::Failed(message),
+        ProfileResolution::AmbiguousProfile { candidate_ids } => {
+            EncodedResolution::Failed(format_ambiguous(&candidate_ids))
+        }
+        ProfileResolution::GrammarMatchedNoProfile => EncodedResolution::Failed(
+            profile_resolution_error(ProfileResolution::GrammarMatchedNoProfile),
+        ),
         ProfileResolution::Matched(foreign) => EncodedResolution::Failed(format!(
             "No profile mode matched this source using its own declared encoding (basename \"{basename}\"). A mode ({} mode {}) matches only in another candidate's decoded text and cannot decode this source.",
             foreign.profile.relative_path, foreign.mode.id

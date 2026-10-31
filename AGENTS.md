@@ -107,3 +107,4 @@ Required GitHub status checks on `master` are not configured (Tai's decision).
 - `graphify-out/` output directory may be missing until Graphify runs in a checkout.
 - Setup skills may still reference pre-`.agents/` paths; align with #20 when the install pipeline lands.
 - Setup profile skill targets Schema v3; schema **v4** (flat `variants:` map keyed by application-mode, namespaced `id`, `rows`/`plot`/`when` on the profile) lands in #18b — see `core/src/profile/v4.rs` and `InstrumentProfileV4.swift`.
+- Contract **18c-1** (`when` matching, exact basename tokens, `ambiguous_profile`): see `docs/handoff/2026-10-31-when-matcher-18c1.md` and `core/tests/when_matcher.rs` / `WhenMatcherTests.swift`.
