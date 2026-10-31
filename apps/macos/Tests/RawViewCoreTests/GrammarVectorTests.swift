@@ -4,12 +4,11 @@ import Testing
 
 struct GrammarVectorTests {
     private static func repoRoot() -> URL {
-        let thisFile = URL(fileURLWithPath: #filePath)
-        return thisFile
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            url.deleteLastPathComponent()
+        }
+        return url
     }
 
     private struct VectorCase {

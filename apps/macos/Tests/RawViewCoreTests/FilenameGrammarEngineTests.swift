@@ -174,7 +174,7 @@ struct FilenameGrammarEngineTests {
 
     @Test func standardScientificTemplateWithBatchAndDateTime() throws {
         let standard = FilenameGrammarCatalog.standardDefaults.first!
-        #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_{batch}")
+        #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_f.[{flags}]_{batch}")
         let (_, fieldNames) = try FilenameGrammarEngine.compile(template: standard.template, fields: standard.fields)
         #expect(fieldNames.contains("batch"))
 
