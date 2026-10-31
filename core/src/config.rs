@@ -325,7 +325,10 @@ fn value_kind(value: &toml::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     struct TempDir {
         path: PathBuf,
@@ -333,13 +336,15 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
+            let unique = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "raw-viewer-cfg-{}-{}",
+                "raw-viewer-cfg-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .expect("clock")
-                    .as_nanos()
+                    .as_nanos(),
+                unique
             ));
             fs::create_dir_all(&path).unwrap();
             Self { path }

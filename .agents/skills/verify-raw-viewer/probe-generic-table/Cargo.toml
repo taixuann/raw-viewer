@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "probe-generic-table"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+raw-viewer-core = { path = "../../../../core" }

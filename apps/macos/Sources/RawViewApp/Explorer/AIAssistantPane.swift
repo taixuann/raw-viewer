@@ -638,7 +638,8 @@ struct AIAssistantPane: View {
                 First 40 lines of file:
                 \(preview)
 
-                Generate a strict schema_version: 3 YAML under .rawviewer/instrument/ with proper encoding, delimiter, header_lines, data_start, and channel mappings.
+                Do not write profile YAML files yet. Instrument profiles are being redesigned (GitHub issues #18 and #24); Profile Studio was removed in #17 and the app no longer writes under .rawviewer/instrument/.
+                Instead, analyze the file and output a draft schema_version: 3 profile document in chat only (encoding, delimiter, header/data locators, column mappings, progression metadata) so a human can land it when the new pipeline ships.
                 """
             }
         } else if text.hasPrefix("/explain") {
