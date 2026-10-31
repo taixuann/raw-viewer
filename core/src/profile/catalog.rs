@@ -2,7 +2,10 @@ use super::schema;
 use super::sha256_hex;
 use super::types::{
     BrokenClaim, InstrumentProfile, LoadedV3Document, ProfileCatalog, ProfileMatch, ProfileMode,
-    ProfileResolution,
+};
+use super::when::{
+    candidate_profile_id, describe_content_miss, describe_filename_miss, matches_when, merge_when,
+    mode_is_candidate, GrammarMatchContext, ProfileResolution,
 };
 use crate::project::ProjectContext;
 use std::fs;
@@ -256,6 +259,7 @@ impl ProfileCatalog {
         file_extension: &str,
         header_sample: &str,
         basename: &str,
+        grammar: GrammarMatchContext,
     ) -> ProfileResolution {
         let valid: Vec<_> = self
             .profiles
@@ -273,13 +277,15 @@ impl ProfileCatalog {
             .filter(|claim| claim.extensions.iter().any(|e| e == file_extension))
             .collect();
 
-        let sample = header_sample.to_lowercase();
-        let base = basename.to_lowercase();
+        let basename_tokens = super::when::tokenize_basename(basename);
+        let grammar_fields = grammar.matched_fields.as_ref();
+        let sample_lower = header_sample.to_lowercase();
         let mut matches: Vec<ProfileMatch> = Vec::new();
         let mut misses: Vec<String> = Vec::new();
         let mut saw_filename_gate = false;
 
         for profile in &valid {
+            let merged_profile = profile.profile_when.as_ref();
             for format in &profile.formats {
                 if !format.extensions.iter().any(|e| e == file_extension) {
                     continue;
@@ -289,41 +295,50 @@ impl ProfileCatalog {
                     .iter()
                     .filter(|m| m.format_id == format.id)
                     .collect();
-                let saw_filename_in_modes = modes.iter().any(|m| m.filename_contains_all.is_some());
-                let matched: Vec<ProfileMode> = modes
-                    .iter()
-                    .filter(|mode| {
-                        let filename_ok = mode
-                            .filename_contains_all
-                            .as_ref()
-                            .map(|tokens| tokens.iter().all(|t| base.contains(&t.to_lowercase())))
-                            .unwrap_or(true);
-                        let header_ok = mode
-                            .detect
-                            .iter()
-                            .any(|sig| sample.contains(&sig.to_lowercase()));
-                        filename_ok && header_ok
-                    })
-                    .map(|mode| (*mode).clone())
-                    .collect();
-                let matched_empty = matched.is_empty();
-                for mode in matched {
-                    matches.push(ProfileMatch {
-                        profile: (*profile).clone(),
-                        format: format.clone(),
-                        mode,
-                    });
+                let saw_filename_in_modes =
+                    modes.iter().any(|m| !m.when.filename_tokens.is_empty());
+                for mode in &modes {
+                    let merged = merge_when(merged_profile, Some(&mode.when));
+                    if !mode_is_candidate(&merged, &grammar) {
+                        continue;
+                    }
+                    if matches_when(
+                        &merged,
+                        grammar_fields,
+                        &basename_tokens,
+                        header_sample,
+                        basename,
+                    ) {
+                        matches.push(ProfileMatch {
+                            profile: (*profile).clone(),
+                            format: format.clone(),
+                            mode: (*mode).clone(),
+                        });
+                    }
                 }
-                if matched_empty {
+                let matched_count = matches
+                    .iter()
+                    .filter(|m| m.profile.relative_path == profile.relative_path)
+                    .count();
+                if matched_count == 0 {
+                    let considered: Vec<_> = modes
+                        .iter()
+                        .filter(|m| {
+                            mode_is_candidate(&merge_when(merged_profile, Some(&m.when)), &grammar)
+                        })
+                        .collect();
+                    if considered.is_empty() {
+                        continue;
+                    }
                     if saw_filename_in_modes {
                         saw_filename_gate = true;
                     }
-                    let declared = if modes.is_empty() {
+                    let declared = if considered.is_empty() {
                         format!("no mode for format {}", format.id)
                     } else {
-                        modes
+                        considered
                             .iter()
-                            .map(|m| describe_miss(m, basename, &sample))
+                            .map(|m| describe_miss_mode(m, basename, &sample_lower, merged_profile))
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
@@ -332,11 +347,21 @@ impl ProfileCatalog {
             }
         }
 
+        if matches.len() >= 2 {
+            let mut candidate_ids: Vec<String> = matches
+                .iter()
+                .map(|m| candidate_profile_id(&m.profile))
+                .collect();
+            candidate_ids.sort();
+            candidate_ids.dedup();
+            return ProfileResolution::AmbiguousProfile { candidate_ids };
+        }
+
         if matches.len() == 1 {
             let sole = matches.swap_remove(0);
             let blocking: Vec<_> = claims
                 .iter()
-                .filter(|c| c.blocks(&sample, basename))
+                .filter(|c| c.blocks(&sample_lower, basename))
                 .collect();
             if blocking.is_empty() {
                 return ProfileResolution::Matched(Box::new(sole));
@@ -350,16 +375,11 @@ impl ProfileCatalog {
             messages.push(note);
             return ProfileResolution::Failed(messages.join("\n"));
         }
-        if matches.len() > 1 {
-            let described = matches
-                .iter()
-                .map(|m| format!("{} mode {}", m.profile.relative_path, m.mode.id))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return ProfileResolution::Failed(format!(
-                "Ambiguous profile match: {described}. Keep one profile mode per source format."
-            ));
+
+        if grammar.catalog_loaded && grammar.grammar_matched() {
+            return ProfileResolution::GrammarMatchedNoProfile;
         }
+
         if !claims.is_empty() {
             let conflict = if valid.is_empty() {
                 vec![]
@@ -389,43 +409,19 @@ impl ProfileCatalog {
     }
 }
 
-fn describe_miss(mode: &crate::profile::ProfileMode, basename: &str, sample: &str) -> String {
+fn describe_miss_mode(
+    mode: &ProfileMode,
+    basename: &str,
+    sample: &str,
+    profile_when: Option<&super::when::WhenClause>,
+) -> String {
+    let merged = merge_when(profile_when, Some(&mode.when));
     let mut parts = Vec::new();
-    if let Some(tokens) = &mode.filename_contains_all {
-        let missing: Vec<_> = tokens
-            .iter()
-            .filter(|t| !basename.to_lowercase().contains(&t.to_lowercase()))
-            .collect();
-        if missing.is_empty() {
-            parts.push(format!(
-                "filename_contains_all matched basename \"{basename}\""
-            ));
-        } else {
-            parts.push(format!(
-                "filename_contains_all tokens {} not in basename \"{basename}\"",
-                missing
-                    .iter()
-                    .map(|t| format!("\"{t}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
+    if !merged.filename_tokens.is_empty() {
+        parts.push(describe_filename_miss(&merged.filename_tokens, basename));
     }
-    if mode
-        .detect
-        .iter()
-        .any(|sig| sample.contains(&sig.to_lowercase()))
-    {
-        parts.push("detect matched header sample".into());
-    } else {
-        parts.push(format!(
-            "detect {} not in header sample",
-            mode.detect
-                .iter()
-                .map(|s| format!("\"{s}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+    if !merged.content_contains_any.is_empty() {
+        parts.push(describe_content_miss(&merged, sample));
     }
     format!("{} [{}]", mode.id, parts.join("; "))
 }

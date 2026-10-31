@@ -428,7 +428,7 @@ enum CoreSelfCheck {
         let partialProject = try ProjectContext.open(partialRoot)
         let partialReport = await InstrumentReader.inspectMany(try partialProject.discoverSources(), project: partialProject)
         precondition(partialReport.results.first?.inspection == nil)
-        precondition(partialReport.results.first?.error?.contains("filename_contains_all tokens \"dual-sweep\" not in basename \"run_synth-token_only.csv\"") == true)
+        precondition(partialReport.results.first?.error?.contains("filename_contains_all tokens \"dual\", \"sweep\" not in basename \"run_synth-token_only.csv\"") == true)
         precondition(partialReport.results.first?.error?.contains("not in header sample") == false)
         // (c) Without the optional selector the same header still matches.
         let legacyRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-legacy-\(UUID().uuidString)")

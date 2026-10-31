@@ -36,8 +36,9 @@ struct ProfileMode: Sendable, Equatable {
     let formatID: String
     let detect: [String]
     /// Schema v2 only, nil when absent: every token must occur
-    /// case-insensitively in the source basename.
+    /// as an exact basename token (case-sensitive).
     let filenameContainsAll: [String]?
+    let when: ProfileWhenMatcher.WhenClause
     let x: String
     let y: [String]
 }
@@ -53,6 +54,7 @@ struct InstrumentProfile: Sendable, Equatable {
     let relativePath: String
     let sha256: String
     let schemaVersion: Int
+    let profileWhen: ProfileWhenMatcher.WhenClause?
 }
 
 struct ProfileMatch: Sendable {
@@ -64,6 +66,16 @@ struct ProfileMatch: Sendable {
 enum ProfileResolution: Sendable {
     case matched(ProfileMatch)
     case failed(String)
+    case ambiguousProfile(candidateIDs: [String])
+    case grammarMatchedNoProfile
+
+    var resolveCode: ProfileWhenMatcher.ProfileResolveCode? {
+        switch self {
+        case .ambiguousProfile: return .ambiguousProfile
+        case .grammarMatchedNoProfile: return .grammarMatchedNoProfile
+        default: return nil
+        }
+    }
 }
 
 /// Per-mode selector evidence from one syntactically parseable mode of a
@@ -106,13 +118,14 @@ struct BrokenClaim: Sendable {
     /// blocks. A claim with no mode evidence at all blocks fail-closed.
     func blocks(sample: String, basename: String) -> Bool {
         if modeSelectors.isEmpty { return true }
-        let lowerBase = basename.lowercased()
+        let sampleLower = sample.lowercased()
+        let have = Set(ProfileWhenMatcher.tokenizeBasename(basename))
         for mode in modeSelectors {
             let filenameMismatch = mode.filenames.map { tokens in
-                !tokens.allSatisfy { lowerBase.contains($0.lowercased()) }
+                !ProfileWhenMatcher.splitLegacyFilenameTokens(tokens).allSatisfy { have.contains($0) }
             } ?? false
             let headerMismatch = !mode.signatures.isEmpty
-                && !mode.signatures.contains { sample.contains($0.lowercased()) }
+                && !mode.signatures.contains { sampleLower.contains($0.lowercased()) }
             if !filenameMismatch && !headerMismatch { return true }
         }
         return false
@@ -422,51 +435,71 @@ struct ProfileCatalog: Sendable {
     /// malformed/missing selector) keeps the source blocked instead of claiming
     /// a unique mapping. Filename evidence counts only for declared schema v2
     /// claims; other claims fall back to header evidence alone.
-    func resolve(extension fileExtension: String, headerSample: String, basename: String) -> ProfileResolution {
+    func resolve(
+        extension fileExtension: String,
+        headerSample: String,
+        basename: String,
+        grammar: ProfileWhenMatcher.GrammarMatchContext
+    ) -> ProfileResolution {
         let valid = profiles.filter { profile in
             profile.formats.contains { $0.extensions.contains(fileExtension) }
         }
         let claims = brokenClaims.filter { $0.extensions.contains(fileExtension) }
 
-        let sample = headerSample.lowercased()
-        let base = basename.lowercased()
+        let basenameTokens = ProfileWhenMatcher.tokenizeBasename(basename)
+        let grammarFields = grammar.matchedFields
+        let sampleLower = headerSample.lowercased()
         var matches: [ProfileMatch] = []
         var misses: [String] = []
         var sawFilenameGate = false
         for profile in valid {
+            let profileWhen = profile.profileWhen
             for format in profile.formats where format.extensions.contains(fileExtension) {
                 let modes = profile.modes.filter { $0.formatID == format.id }
-                let matched = modes.filter { mode in
-                    let filenameOK = mode.filenameContainsAll.map { $0.allSatisfy { base.contains($0.lowercased()) } } ?? true
-                    let headerOK = mode.detect.contains { sample.contains($0.lowercased()) }
-                    return filenameOK && headerOK
+                if modes.contains(where: { !$0.when.filenameTokens.isEmpty }) { sawFilenameGate = true }
+                for mode in modes {
+                    let merged = ProfileWhenMatcher.mergeWhen(profile: profileWhen, variant: mode.when)
+                    guard ProfileWhenMatcher.modeIsCandidate(merged, grammar: grammar) else { continue }
+                    if ProfileWhenMatcher.matchesWhen(
+                        merged,
+                        grammarFields: grammarFields,
+                        basenameTokens: basenameTokens,
+                        headerSample: headerSample,
+                        basenameForContent: basename
+                    ) {
+                        matches.append(ProfileMatch(profile: profile, format: format, mode: mode))
+                    }
                 }
-                for mode in matched {
-                    matches.append(ProfileMatch(profile: profile, format: format, mode: mode))
-                }
-                if matched.isEmpty {
-                    if modes.contains(where: { $0.filenameContainsAll != nil }) { sawFilenameGate = true }
-                    let declared = modes.isEmpty
-                        ? "no mode for format \(format.id)"
-                        : modes.map { describeMiss($0, basename: basename, sample: sample) }.joined(separator: ", ")
+                let profileHits = matches.filter { $0.profile.relativePath == profile.relativePath }
+                if profileHits.isEmpty {
+                    let considered = modes.filter {
+                        ProfileWhenMatcher.modeIsCandidate(
+                            ProfileWhenMatcher.mergeWhen(profile: profileWhen, variant: $0.when),
+                            grammar: grammar)
+                    }
+                    guard !considered.isEmpty else { continue }
+                    let declared = considered.map {
+                        describeMiss($0, basename: basename, sample: sampleLower, profileWhen: profileWhen)
+                    }.joined(separator: ", ")
                     misses.append("\(profile.relativePath): \(declared)")
                 }
             }
         }
+        if matches.count >= 2 {
+            var candidateIDs = matches.map { ProfileWhenMatcher.candidateProfileID($0.profile) }.sorted()
+            candidateIDs = Array(Set(candidateIDs)).sorted()
+            return .ambiguousProfile(candidateIDs: candidateIDs)
+        }
         if matches.count == 1 {
-            // Only the claims whose own selectors conflict with this source —
-            // or that carry no trustworthy selectors at all — block it. Claims
-            // with provably unrelated filename or header selectors stay out.
-            let blocking = claims.filter { $0.blocks(sample: sample, basename: basename) }
+            let blocking = claims.filter { $0.blocks(sample: sampleLower, basename: basename) }
             if blocking.isEmpty {
                 return .matched(matches[0])
             }
             let note = "A valid profile (\(matches[0].profile.relativePath) mode \(matches[0].mode.id)) also matches this source; the source stays blocked until the invalid profile is fixed or removed."
             return .failed((blocking.flatMap(\.issues) + [note]).joined(separator: "\n"))
         }
-        if matches.count > 1 {
-            let described = matches.map { "\($0.profile.relativePath) mode \($0.mode.id)" }.joined(separator: ", ")
-            return .failed("Ambiguous profile match: \(described). Keep one profile mode per source format.")
+        if grammar.catalogLoaded && grammar.grammarMatched {
+            return .grammarMatchedNoProfile
         }
         if !claims.isEmpty {
             let conflict = valid.isEmpty ? [] : ["A supported profile also claims \"\(fileExtension)\"; the source stays blocked until the invalid profile is fixed or removed."]
@@ -475,34 +508,25 @@ struct ProfileCatalog: Sendable {
         guard !valid.isEmpty else {
             return .failed("No instrument profile supports \"\(fileExtension)\" files. Add a versioned profile under data/instruments; see CONTRACT.md.")
         }
-
-        // The per-mode causes above name exactly which requirement missed, so
-        // the advice only mentions the v2-only field when a gated mode was
-        // actually involved; v1 profiles never see it.
         let advice = sawFilenameGate
             ? "A v2 mode with filename_contains_all needs every token in the basename and one detect signature in the first 64 KiB."
             : "Add a detect signature for this file or fix the profile."
         return .failed("No profile mode matched this source (basename \"\(basename)\"). Declared modes: \(misses.joined(separator: "; ")). \(advice)")
     }
 
-    /// Truthful per-mode miss cause: names filename tokens missing from the
-    /// basename separately from detect signatures missing from the header
-    /// sample, notes when the other side did match, and says when both miss.
-    /// Called only for modes that did not match, so at least one cause applies.
-    private func describeMiss(_ mode: ProfileMode, basename: String, sample: String) -> String {
+    private func describeMiss(
+        _ mode: ProfileMode,
+        basename: String,
+        sample: String,
+        profileWhen: ProfileWhenMatcher.WhenClause?
+    ) -> String {
+        let merged = ProfileWhenMatcher.mergeWhen(profile: profileWhen, variant: mode.when)
         var parts: [String] = []
-        if let tokens = mode.filenameContainsAll {
-            let missing = tokens.filter { !basename.lowercased().contains($0.lowercased()) }
-            if missing.isEmpty {
-                parts.append("filename_contains_all matched basename \"\(basename)\"")
-            } else {
-                parts.append("filename_contains_all tokens \(missing.map { "\"\($0)\"" }.joined(separator: ", ")) not in basename \"\(basename)\"")
-            }
+        if !merged.filenameTokens.isEmpty {
+            parts.append(ProfileWhenMatcher.describeFilenameMiss(tokens: merged.filenameTokens, basename: basename))
         }
-        if mode.detect.contains(where: { sample.contains($0.lowercased()) }) {
-            parts.append("detect matched header sample")
-        } else {
-            parts.append("detect \(mode.detect.map { "\"\($0)\"" }.joined(separator: ", ")) not in header sample")
+        if !merged.contentContainsAny.isEmpty {
+            parts.append(ProfileWhenMatcher.describeContentMiss(merged, sample: sample))
         }
         return "\(mode.id) [\(parts.joined(separator: "; "))]"
     }
@@ -993,7 +1017,8 @@ enum ProfileSchema {
                 }
             }
             if y.contains(x) { fail("\(field).extract.x \"\(x)\" must not also appear in extract.y.") }
-            modes.append(ProfileMode(id: id, formatID: formatID, detect: detect, filenameContainsAll: filenameTokens, x: x, y: y))
+            let when = ProfileWhenMatcher.whenFromLegacy(detect: detect, filenameContainsAll: filenameTokens)
+            modes.append(ProfileMode(id: id, formatID: formatID, detect: detect, filenameContainsAll: filenameTokens, when: when, x: x, y: y))
         }
 
         guard errors.isEmpty, let instrumentID, let instrumentName else {
@@ -1002,7 +1027,8 @@ enum ProfileSchema {
         let profileID = root.value(for: "id")?.scalarValue ?? instrumentID
         let profile = InstrumentProfile(profileID: profileID, instrumentID: instrumentID, instrumentName: instrumentName,
                                         vendor: vendor, model: model, formats: formats, modes: modes,
-                                        relativePath: relativePath, sha256: sha256, schemaVersion: version)
+                                        relativePath: relativePath, sha256: sha256, schemaVersion: version,
+                                        profileWhen: nil)
         return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, modeSelectors: [])
     }
 

@@ -78,6 +78,8 @@ RawView reads declarative instrument profiles (`schema_version: 1`, `2`, variant
 | **IoP Hanoi** | UV-Vis optical spectroscopy first-row CSV/TXT | Wavelength (nm) and Transmittance (%) |
 | **Generic Table Sniffer** | Delimited scientific files (`.csv`, `.tsv`, `.txt`) with auto-detected headers | Interactive channel mapper |
 
+Profile resolution (schema 1–4) evaluates declarative `when` clauses in Rust and Swift with identical rules: exact basename tokens, merged document/variant `when`, grammar-aware routing when `.rawviewer/grammar.yaml` is present, typed `ambiguous_profile` errors, and in-memory translation of legacy selectors. See `docs/handoff/2026-10-31-when-matcher-18c1.md`.
+
 ---
 
 ## Local Development & Verification

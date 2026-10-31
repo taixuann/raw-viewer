@@ -221,6 +221,7 @@ pub fn compile_instrument_profile(
         formats.push(compile_format(format_id.clone(), variant)?);
         modes.push(compile_mode(mode_id, variant)?);
     }
+    let profile_when = doc.when.as_ref().map(super::when::when_from_v4_clause);
     Ok(InstrumentProfile {
         profile_id: doc.profile_id.clone(),
         instrument_id: doc.instrument_id.clone(),
@@ -232,6 +233,7 @@ pub fn compile_instrument_profile(
         relative_path: relative_path.to_string(),
         sha256: sha256.to_string(),
         schema_version: 4,
+        profile_when,
     })
 }
 
@@ -321,21 +323,25 @@ fn compile_format(
 }
 
 fn compile_mode(mode_id: &str, variant: &ProfileVariantV4) -> Result<ProfileMode, ProfileV4Error> {
-    let when = variant.when.as_ref();
-    let detect = when
-        .and_then(|w| w.content_contains_any.clone())
-        .filter(|v| !v.is_empty())
+    let when_v4 = variant.when.as_ref();
+    let when = when_v4
+        .map(super::when::when_from_v4_clause)
         .unwrap_or_default();
-    if detect.is_empty() {
+    if !when.has_selectors() {
         return Err(invalid(format!(
-            "variants.{mode_id}.when.content_contains_any must list at least one selector for reader compilation."
+            "variants.{mode_id}.when must declare at least one selector for reader compilation."
         )));
     }
+    let detect = when.content_contains_any.clone();
+    let filename_contains_all = when_v4
+        .and_then(|w| w.filename_contains_all.clone())
+        .filter(|v| !v.is_empty());
     Ok(ProfileMode {
         id: mode_id.to_string(),
         format_id: mode_id.to_string(),
         detect,
-        filename_contains_all: when.and_then(|w| w.filename_contains_all.clone()),
+        filename_contains_all,
+        when,
         x: variant.plot.x.clone(),
         y: variant.plot.y.clone(),
     })

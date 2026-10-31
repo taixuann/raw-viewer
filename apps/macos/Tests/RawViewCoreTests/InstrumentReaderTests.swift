@@ -226,9 +226,8 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first { $0.source.relativePath == "data/raw/a.csv" }?.error)
-        #expect(error.contains("Ambiguous"))
-        #expect(error.contains("keysight-b1500a.yaml"))
-        #expect(error.contains("duplicate-keysight.yaml"))
+        #expect(error.contains("ambiguous_profile"))
+        #expect(error.contains("keysight-b1500a"))
         #expect(report.results.first { $0.source.relativePath == "data/raw/b.dat" }?.inspection != nil)
     }
 
@@ -1406,7 +1405,7 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first?.error)
-        #expect(error.contains("Ambiguous"))
+        #expect(error.contains("ambiguous_profile"))
         #expect(error.contains("a.yaml"))
         #expect(error.contains("b.yaml"))
     }
