@@ -162,13 +162,16 @@ fn no_grammar_content_only_path() {
 }
 
 fn temp_project() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "rawview-when-{}-{}",
+        "rawview-when-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -271,7 +274,7 @@ fn variant_and_profile_when_both_required() {
         content_contains_any: vec!["HDR".into()],
         ..Default::default()
     };
-    let variant_when = WhenClause {
+    let mut variant_when = WhenClause {
         grammar_tokens: [("instrument".into(), "autolab".into())].into(),
         ..Default::default()
     };
@@ -287,6 +290,17 @@ fn variant_and_profile_when_both_required() {
     let merged_bad = merge_when(Some(&profile_when), Some(&variant_when));
     assert!(!matches_when(
         &merged_bad,
+        Some(&fields),
+        &[],
+        "HDR",
+        "x.csv"
+    ));
+    variant_when
+        .grammar_tokens
+        .insert("instrument".into(), "wrong".into());
+    let merged_variant_bad = merge_when(Some(&profile_when), Some(&variant_when));
+    assert!(!matches_when(
+        &merged_variant_bad,
         Some(&fields),
         &[],
         "HDR",
@@ -381,4 +395,128 @@ fn v2_optional_id_fallback_direct() {
     let yaml = synth_v2_yaml().replace("dual-sweep", "optional-id");
     let outcome = validate_document(&yaml, "data/instruments/synth.yaml");
     assert!(outcome.profile.is_some());
+}
+
+const KEYSIGHT_V1_PROFILE: &str = r#"schema_version: 1
+instrument:
+  id: keysight-b1500a
+  name: Keysight B1500A
+formats:
+  - id: csv
+    kind: tabular
+    extensions: [".csv"]
+    delimiter: ","
+    rows:
+      names_prefix: "DataName"
+      data_prefix: "DataValue"
+    columns:
+      voltage:
+        header: "V1"
+        quantity: voltage
+        unit: "V"
+      current:
+        header: "I2"
+        aliases: ["I1"]
+        quantity: current
+        unit: "A"
+modes:
+  - id: dual-sweep
+    format: csv
+    detect: ["2-terminal dual Vsweep", "dual Vsweep"]
+    extract:
+      x: voltage
+      y: [current]
+"#;
+
+const DUAL_SWEEP_SAMPLE: &str = "SetupTitle, 2-terminal dual Vsweep
+DataName, V1, I1
+DataValue, 0, 1E-12
+DataValue, 0.1, 2E-12
+";
+
+#[test]
+fn v1_profile_resolves_end_to_end_via_when_matcher_filename_tokens() {
+    let tmp = temp_project();
+    write_minimal_project(&tmp);
+    std::fs::create_dir_all(tmp.join("data/instruments")).unwrap();
+    std::fs::write(
+        tmp.join("data/instruments/keysight-b1500a.yaml"),
+        KEYSIGHT_V1_PROFILE,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("data/raw/keysight-b1500a.dual-sweep_e2e.csv"),
+        DUAL_SWEEP_SAMPLE,
+    )
+    .unwrap();
+    let measurement = load_measurement(
+        &tmp,
+        Path::new("data/raw/keysight-b1500a.dual-sweep_e2e.csv"),
+    )
+    .expect("v1 profile resolves through when matcher");
+    assert_eq!(measurement.instrument.id, "keysight-b1500a");
+    assert_eq!(measurement.application_mode.as_deref(), Some("dual-sweep"));
+}
+
+#[test]
+fn ambiguous_same_profile_two_modes_lists_mode_candidates() {
+    let yaml = r#"schema_version: 2
+instrument:
+  id: synth
+  name: Synth
+formats:
+  - id: csv
+    kind: tabular
+    extensions: [".csv"]
+    delimiter: ","
+    rows:
+      names_prefix: "DataName"
+      data_prefix: "DataValue"
+    columns:
+      voltage:
+        header: "V1"
+        quantity: voltage
+        unit: "V"
+      current:
+        header: "I1"
+        quantity: current
+        unit: "A"
+modes:
+  - id: mode-a
+    format: csv
+    detect: ["SYNTH-SPECIFIC-HEADER"]
+    filename_contains_all: ["synth-token", "dual-sweep"]
+    extract:
+      x: voltage
+      y: [current]
+  - id: mode-b
+    format: csv
+    detect: ["SYNTH-SPECIFIC-HEADER"]
+    filename_contains_all: ["synth-token", "dual-sweep"]
+    extract:
+      x: voltage
+      y: [current]
+"#;
+    let tmp = temp_project();
+    write_minimal_project(&tmp);
+    std::fs::create_dir_all(tmp.join("data/instruments")).unwrap();
+    std::fs::write(tmp.join("data/instruments/synth.yaml"), yaml).unwrap();
+    let catalog = load_catalog(&tmp);
+    let resolution = catalog.resolve(
+        ".csv",
+        "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n",
+        "run_synth-token_dual-sweep.csv",
+        GrammarMatchContext::without_catalog(),
+    );
+    match resolution {
+        ProfileResolution::AmbiguousProfile { candidate_ids } => {
+            assert_eq!(candidate_ids.len(), 2);
+            assert!(candidate_ids.iter().any(|id| id.contains("mode-a")));
+            assert!(candidate_ids.iter().any(|id| id.contains("mode-b")));
+            let message = raw_viewer_core::profile::format_ambiguous(&candidate_ids);
+            assert!(message.contains("2 candidate"));
+            assert!(!message.contains("1 candidate"));
+        }
+        other => panic!("expected ambiguous_profile, got {other:?}"),
+    }
 }

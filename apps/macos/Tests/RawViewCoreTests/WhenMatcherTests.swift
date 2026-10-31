@@ -214,6 +214,13 @@ struct WhenMatcherTests {
             !ProfileWhenMatcher.matchesWhen(
                 mergedBad, grammarFields: fields, basenameTokens: [], headerSample: "HDR",
                 basenameForContent: "x.csv"))
+        var variantBad = variantWhen
+        variantBad.grammarTokens["instrument"] = "wrong"
+        let mergedVariantBad = ProfileWhenMatcher.mergeWhen(profile: profileWhen, variant: variantBad)
+        #expect(
+            !ProfileWhenMatcher.matchesWhen(
+                mergedVariantBad, grammarFields: fields, basenameTokens: [], headerSample: "HDR",
+                basenameForContent: "x.csv"))
     }
 
     @Test func variantWhenWithoutContentCompiles() throws {
@@ -378,5 +385,125 @@ struct WhenMatcherTests {
         #expect(result.inspection?.profileID == "generic-table")
         let measurement = try await InstrumentReader.load(source.url, project: project)
         #expect(measurement.instrument.id == "generic-table")
+    }
+
+    @Test func v1ProfileResolvesEndToEndViaWhenMatcherFilenameTokens() async throws {
+        let profile = """
+        schema_version: 1
+        instrument:
+          id: keysight-b1500a
+          name: Keysight B1500A
+        formats:
+          - id: csv
+            kind: tabular
+            extensions: [".csv"]
+            delimiter: ","
+            rows:
+              names_prefix: DataName
+              data_prefix: DataValue
+            columns:
+              voltage:
+                header: V1
+                quantity: voltage
+                unit: V
+              current:
+                header: I2
+                aliases: [I1]
+                quantity: current
+                unit: A
+        modes:
+          - id: dual-sweep
+            format: csv
+            detect: [2-terminal dual Vsweep, dual Vsweep]
+            extract:
+              x: voltage
+              y: [current]
+        """
+        let csv = """
+        SetupTitle, 2-terminal dual Vsweep
+        DataName, V1, I1
+        DataValue, 0, 1E-12
+        DataValue, 0.1, 2E-12
+        """
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "rawview-when-v1-\(UUID().uuidString)")
+        try writeMinimalProject(at: root)
+        try profile.write(
+            to: root.appendingPathComponent("data/instruments/keysight-b1500a.yaml"),
+            atomically: true, encoding: .utf8)
+        let sourceURL = root.appendingPathComponent("data/raw/keysight-b1500a.dual-sweep_e2e.csv")
+        try csv.write(to: sourceURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let source = try #require(
+            try project.discoverSources().first { $0.relativePath.hasSuffix("dual-sweep_e2e.csv") })
+        let measurement = try await InstrumentReader.load(source.url, project: project)
+        #expect(measurement.instrument.id == "keysight-b1500a")
+        #expect(measurement.applicationMode == "dual-sweep")
+    }
+
+    @Test func ambiguousSameProfileTwoModesListsModeCandidates() throws {
+        let yaml = """
+        schema_version: 2
+        instrument:
+          id: synth
+          name: Synth
+        formats:
+          - id: csv
+            kind: tabular
+            extensions: [".csv"]
+            delimiter: ","
+            rows:
+              names_prefix: DataName
+              data_prefix: DataValue
+            columns:
+              voltage:
+                header: V1
+                quantity: voltage
+                unit: V
+              current:
+                header: I1
+                quantity: current
+                unit: A
+        modes:
+          - id: mode-a
+            format: csv
+            detect: [SYNTH-SPECIFIC-HEADER]
+            filename_contains_all: [synth-token, dual-sweep]
+            extract:
+              x: voltage
+              y: [current]
+          - id: mode-b
+            format: csv
+            detect: [SYNTH-SPECIFIC-HEADER]
+            filename_contains_all: [synth-token, dual-sweep]
+            extract:
+              x: voltage
+              y: [current]
+        """
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "rawview-when-ambig-\(UUID().uuidString)")
+        try writeMinimalProject(at: root)
+        try yaml.write(
+            to: root.appendingPathComponent("data/instruments/synth.yaml"),
+            atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let catalog = ProfileCatalog.load(project: project)
+        let resolution = catalog.resolve(
+            extension: ".csv",
+            headerSample: "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n",
+            basename: "run_synth-token_dual-sweep.csv",
+            grammar: .withoutCatalog())
+        guard case .ambiguousProfile(let ids) = resolution else {
+            Issue.record("expected ambiguous_profile")
+            return
+        }
+        #expect(ids.count == 2)
+        #expect(ids.contains { $0.contains("mode-a") })
+        #expect(ids.contains { $0.contains("mode-b") })
+        let message = ProfileWhenMatcher.formatAmbiguous(ids)
+        #expect(message.contains("2 candidate"))
+        #expect(!message.contains("1 candidate"))
     }
 }

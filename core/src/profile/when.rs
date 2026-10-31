@@ -87,10 +87,34 @@ impl ProfileResolution {
 
 pub fn format_ambiguous(candidate_ids: &[String]) -> String {
     format!(
-        "ambiguous_profile: {} candidate profile(s): {}.",
+        "ambiguous_profile: {} candidate(s): {}.",
         candidate_ids.len(),
         candidate_ids.join(", ")
     )
+}
+
+pub fn ambiguous_candidate_labels(matches: &[super::ProfileMatch]) -> Vec<String> {
+    use std::collections::HashMap;
+    let mut per_profile: HashMap<String, usize> = HashMap::new();
+    for m in matches {
+        *per_profile
+            .entry(candidate_profile_id(&m.profile))
+            .or_default() += 1;
+    }
+    let mut labels: Vec<String> = matches
+        .iter()
+        .map(|m| {
+            let profile_id = candidate_profile_id(&m.profile);
+            if per_profile.get(&profile_id).copied().unwrap_or(0) > 1 {
+                format!("{profile_id} mode {}", m.mode.id)
+            } else {
+                profile_id
+            }
+        })
+        .collect();
+    labels.sort();
+    labels.dedup();
+    labels
 }
 
 pub fn split_legacy_filename_tokens(entries: &[String]) -> Vec<String> {

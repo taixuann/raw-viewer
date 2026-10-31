@@ -1069,5 +1069,12 @@ variants:
                 .map(|p| p.progression_type.as_str()),
             Some("index")
         );
+        assert_eq!(
+            cols["i"]
+                .progression
+                .as_ref()
+                .and_then(|p| p.behavior.as_deref()),
+            Some("discrete")
+        );
     }
 }

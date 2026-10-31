@@ -162,7 +162,24 @@ enum ProfileWhenMatcher {
     }
 
     static func formatAmbiguous(_ candidateIDs: [String]) -> String {
-        "ambiguous_profile: \(candidateIDs.count) candidate profile(s): \(candidateIDs.joined(separator: ", "))."
+        "ambiguous_profile: \(candidateIDs.count) candidate(s): \(candidateIDs.joined(separator: ", "))."
+    }
+
+    static func ambiguousCandidateLabels(_ matches: [ProfileMatch]) -> [String] {
+        var perProfile: [String: Int] = [:]
+        for match in matches {
+            let id = candidateProfileID(match.profile)
+            perProfile[id, default: 0] += 1
+        }
+        var labels: [String] = matches.map { match in
+            let profileID = candidateProfileID(match.profile)
+            if perProfile[profileID, default: 0] > 1 {
+                return "\(profileID) mode \(match.mode.id)"
+            }
+            return profileID
+        }
+        labels = Array(Set(labels)).sorted()
+        return labels
     }
 
     static func candidateProfileID(_ profile: InstrumentProfile) -> String {

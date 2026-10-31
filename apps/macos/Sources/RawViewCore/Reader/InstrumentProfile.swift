@@ -486,8 +486,7 @@ struct ProfileCatalog: Sendable {
             }
         }
         if matches.count >= 2 {
-            var candidateIDs = matches.map { ProfileWhenMatcher.candidateProfileID($0.profile) }.sorted()
-            candidateIDs = Array(Set(candidateIDs)).sorted()
+            let candidateIDs = ProfileWhenMatcher.ambiguousCandidateLabels(matches)
             return .ambiguousProfile(candidateIDs: candidateIDs)
         }
         if matches.count == 1 {

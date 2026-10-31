@@ -4,8 +4,8 @@ use super::types::{
     BrokenClaim, InstrumentProfile, LoadedV3Document, ProfileCatalog, ProfileMatch, ProfileMode,
 };
 use super::when::{
-    candidate_profile_id, describe_content_miss, describe_filename_miss, matches_when, merge_when,
-    mode_is_candidate, GrammarMatchContext, ProfileResolution,
+    describe_content_miss, describe_filename_miss, matches_when, merge_when, mode_is_candidate,
+    GrammarMatchContext, ProfileResolution,
 };
 use crate::project::ProjectContext;
 use std::fs;
@@ -348,12 +348,7 @@ impl ProfileCatalog {
         }
 
         if matches.len() >= 2 {
-            let mut candidate_ids: Vec<String> = matches
-                .iter()
-                .map(|m| candidate_profile_id(&m.profile))
-                .collect();
-            candidate_ids.sort();
-            candidate_ids.dedup();
+            let candidate_ids = super::when::ambiguous_candidate_labels(&matches);
             return ProfileResolution::AmbiguousProfile { candidate_ids };
         }
 

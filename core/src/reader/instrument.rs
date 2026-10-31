@@ -4,9 +4,9 @@ use crate::measurement::{
     MetadataSection, NormalizedMeasurement, SourceIdentity,
 };
 use crate::profile::{
-    format_ambiguous, grammar_context_from_catalog, load_catalog, matches_when, merge_when,
-    mode_is_candidate, GrammarMatchContext, ProfileCatalog, ProfileFormat, ProfileMatch,
-    ProfileResolution,
+    ambiguous_candidate_labels, format_ambiguous, grammar_context_from_catalog, load_catalog,
+    matches_when, merge_when, mode_is_candidate, GrammarMatchContext, ProfileCatalog,
+    ProfileFormat, ProfileMatch, ProfileResolution,
 };
 use crate::project::ProjectContext;
 use crate::reader::comment_tsv::extract_comment_tsv;
@@ -254,12 +254,8 @@ fn resolve_encoded(
         return EncodedResolution::Failed(messages.join("\n"));
     }
     if hits.len() > 1 {
-        let mut candidate_ids: Vec<String> = hits
-            .iter()
-            .map(|hit| crate::profile::candidate_profile_id(&hit.profile_match.profile))
-            .collect();
-        candidate_ids.sort();
-        candidate_ids.dedup();
+        let matches: Vec<_> = hits.iter().map(|hit| hit.profile_match.clone()).collect();
+        let candidate_ids = ambiguous_candidate_labels(&matches);
         return EncodedResolution::Failed(format_ambiguous(&candidate_ids));
     }
     if !decoded_any {
