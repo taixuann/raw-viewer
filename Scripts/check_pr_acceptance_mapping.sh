@@ -2,7 +2,8 @@
 # Validates that a pull request body documents acceptance-case → test/vector mapping.
 set -euo pipefail
 
-readonly HEADING='## Acceptance case → test mapping'
+readonly HEADING_UNICODE='## Acceptance case → test mapping'
+readonly HEADING_ASCII='## Acceptance case -> test mapping'
 
 usage() {
   echo "Usage: $0 [pr-body-file]" >&2
@@ -30,20 +31,33 @@ read_body() {
   usage
 }
 
-body="$(read_body "${1:-}")"
+strip_cr() {
+  tr -d '\r'
+}
+
+drop_fenced_blocks() {
+  awk '
+    /^```/ { infence = !infence; next }
+    !infence { print }
+  '
+}
+
+body="$(read_body "${1:-}" | strip_cr)"
 if [[ -z "$body" ]]; then
   echo "error: empty PR body" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "$body" | grep -qF "$HEADING"; then
-  echo "error: missing required section: $HEADING" >&2
+filtered="$(printf '%s\n' "$body" | drop_fenced_blocks)"
+
+if ! printf '%s\n' "$filtered" | grep -qE '^## Acceptance case (→|->) test mapping$'; then
+  echo "error: missing required section: $HEADING_UNICODE (or ASCII arrow variant)" >&2
   exit 1
 fi
 
-rows="$(
-  printf '%s\n' "$body" | awk -v h="$HEADING" '
-    $0 == h { insec = 1; next }
+read -r rows example_rows <<<"$(
+  printf '%s\n' "$filtered" | awk '
+    /^## Acceptance case (→|->) test mapping$/ { insec = 1; next }
     insec && /^## / { insec = 0 }
     insec && /^\|/ {
       line = $0
@@ -53,16 +67,27 @@ rows="$(
         next
       }
       if (past_sep) {
-        rows++
+        if ($0 ~ /\(example\)/) {
+          example_rows++
+        } else {
+          rows++
+        }
       }
     }
-    END { print rows + 0 }
+    END {
+      printf "%s %s", rows + 0, example_rows + 0
+    }
   '
 )"
+
+if [[ "$example_rows" -gt 0 ]]; then
+  echo "error: mapping table must not contain placeholder rows with (example)" >&2
+  exit 1
+fi
 
 if [[ "$rows" -lt 1 ]]; then
   echo "error: mapping section must include a markdown table with at least one acceptance-case row" >&2
   exit 1
 fi
 
-echo "ok: found $HEADING with $rows mapped row(s)"
+echo "ok: acceptance-case mapping table with $rows mapped row(s)"

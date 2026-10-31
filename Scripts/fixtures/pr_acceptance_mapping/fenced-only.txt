@@ -1,0 +1,9 @@
+## Acceptance case → test mapping
+
+Only the table below is fenced; it must not satisfy the check.
+
+```
+| Acceptance case | Test or vector |
+| --- | --- |
+| real case | namedTest |
+```

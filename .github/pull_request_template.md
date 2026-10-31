@@ -8,7 +8,7 @@
 
 | Acceptance case | Test or vector |
 | --- | --- |
-| _(example)_ | `myNamedTest` or `fixtures/.../vectors.yaml` row `vector-id` |
+| (example) | `myNamedTest` or `fixtures/.../vectors.yaml` row `vector-id` |
 
 ## Checklist
 
