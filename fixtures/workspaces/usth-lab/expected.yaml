@@ -7,7 +7,7 @@ discovery_ignored:
 entries:
   - id: keithley-dual-sweep
     relative_path: data/raw/2026-10-07/071026-143703_keithley-2400.dual-sweep_[cu-ec-pda.q14-ito.2_r2-c6]_iv.dual-sweep_r.[reproducible]_010.txt
-    profile_id: keithley-2400
+    profile_id: usth/keithley-2400
     variant: dual-sweep
     plottable: true
     data_row_count: 121
@@ -102,7 +102,7 @@ entries:
     metadata_keys: []
   - id: horiba-raman
     relative_path: data/raw/2026-05-25/250526-000000_horiba-labram.raman_[pda.q1-ito.3]_raman.sers.txt
-    profile_id: horiba-labram
+    profile_id: usth/horiba-labram
     variant: raman
     plottable: true
     data_row_count: 1853
@@ -162,7 +162,7 @@ entries:
     metadata_keys: []
   - id: keithley-header-only
     relative_path: data/raw/2026-10-07/SYNTHETIC_keithley-2400.dual-sweep_header-only_no-data-rows.txt
-    profile_id: keithley-2400
+    profile_id: usth/keithley-2400
     variant: dual-sweep
     plottable: false
     synthetic: true

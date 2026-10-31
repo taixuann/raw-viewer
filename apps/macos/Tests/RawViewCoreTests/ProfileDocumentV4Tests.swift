@@ -105,6 +105,9 @@ struct ProfileDocumentV4Tests {
         let t = try #require(doc.variants["run"]?.columns["t"])
         #expect(t.progression?.progressionType == "time")
         #expect(t.progression?.behavior == "continuous")
+        let i = try #require(doc.variants["run"]?.columns["i"])
+        #expect(i.progression?.progressionType == "index")
+        #expect(i.progression?.behavior == "discrete")
     }
 
     @Test func variantsMapIsKeyedByApplicationMode() throws {

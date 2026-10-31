@@ -108,4 +108,13 @@ variants:
         t.progression.as_ref().and_then(|p| p.behavior.as_deref()),
         Some("continuous")
     );
+    let i = &doc.variants["run"].columns["i"];
+    assert_eq!(
+        i.progression.as_ref().map(|p| p.progression_type.as_str()),
+        Some("index")
+    );
+    assert_eq!(
+        i.progression.as_ref().and_then(|p| p.behavior.as_deref()),
+        Some("discrete")
+    );
 }
