@@ -889,7 +889,7 @@ enum CoreSelfCheck {
         precondition(mode("keysight-b1500a.wgfmu_std.csv") == "wgfmu", "standard WGFMU mode moved to \(mode("keysight-b1500a.wgfmu_std.csv") ?? "blocked")")
         precondition(mode("unknown.csv") == nil, "unknown header was accepted")
         precondition(mode("foreign.csv") == nil, "foreign basename was claimed")
-        precondition(report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("keysight-b1500a.wgfmu") == true, "foreign basename diagnostic lost the missing token")
+        precondition(report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("\"wgfmu\"") == true, "foreign basename diagnostic lost the missing token")
         func load(_ name: String) async throws -> NormalizedMeasurement {
             try await InstrumentReader.load(root.appendingPathComponent("data/raw/\(name)"), project: project)
         }
@@ -987,7 +987,7 @@ enum CoreSelfCheck {
         do {
             _ = try await InstrumentReader.load(root.appendingPathComponent("data/raw/foreign-list.csv"), project: project)
             fatalError("foreign basename was loaded")
-        } catch { precondition("\(error)".contains("keysight-b1500a"), "foreign diagnostic lost the token: \(error)") }
+        } catch { precondition("\(error)".contains("\"keysight\""), "foreign diagnostic lost the token: \(error)") }
         // Generic I/V Sweep text in unrelated metadata must not pull a dual
         // export into list-sweep: the dual signature wins uniquely.
         let dualMetaResult = report.results.first { $0.id == "data/raw/keysight-b1500a.dual-sweep_meta.csv" }
