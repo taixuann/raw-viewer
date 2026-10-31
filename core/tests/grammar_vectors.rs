@@ -1,6 +1,6 @@
 //! Cross-language grammar vectors shared with Swift via fixtures/grammar/vectors.yaml.
 
-use raw_viewer_core::grammar::{extract, load_file, FilenameGrammar};
+use raw_viewer_core::grammar::{compile, extract, load_file, FilenameGrammar};
 use raw_viewer_core::yaml::parse;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -69,6 +69,24 @@ fn load_vectors() -> (FilenameGrammar, Vec<VectorCase>) {
         });
     }
     (grammar, cases)
+}
+
+#[test]
+fn shared_grammar_compile_pattern_matches_rust_reference() {
+    let catalog =
+        load_file(&grammar_path("standard-scientific.yaml")).expect("load standard-scientific");
+    let grammar = catalog.grammars.into_iter().next().expect("grammar entry");
+    let (regex, _) = compile(&grammar.template, &grammar.fields).expect("compile");
+    // Pinned to Swift `sharedGrammarCompilePatternMatchesRustReference` in GrammarVectorTests.swift.
+    // NSRegularExpression spells the negated-] class as `[^\]]`; the Rust `regex` crate uses `[^]]`.
+    // Those differ only in escaping; normalize before compare.
+    const EXPECTED: &str = r"^(\d{6}-\d{6})_([^._]+)\.([^._]+)_\[([^\]]+)\]_([^_]+(?:\.[^_]+)*)(?:_r\.\[([^\]]+)\])?(?:_f\.\[([^\]]+)\])?(?:_(\d{3}))?$";
+    let normalize = |s: &str| s.replace("[^\\]]", "[^]]");
+    assert_eq!(
+        normalize(regex.as_str()),
+        normalize(EXPECTED),
+        "compiled pattern must match Swift reference literal"
+    );
 }
 
 #[test]
