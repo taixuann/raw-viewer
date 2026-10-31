@@ -1194,7 +1194,4 @@ struct ProfileDocumentV3Tests {
         #expect(try Data(contentsOf: grammarFile) == grammarBefore)
         #expect(try FilenameGrammarEngine.load(fileURL: grammarFile) == catalog)
     }
-
-        }
-        return paths.sorted()
-    }
+}
