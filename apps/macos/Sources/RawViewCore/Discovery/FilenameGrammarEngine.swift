@@ -398,7 +398,7 @@ public enum FilenameGrammarEngine {
             if nextLeading.count == 1 {
                 let ch = nextLeading[nextLeading.startIndex]
                 if ch == "." || ch == "_" { return "([^._]+)" }
-                return "([^\(NSRegularExpression.escapedPattern(for: String(ch)))]+?)"
+                return "([^" + NSRegularExpression.escapedPattern(for: String(ch)) + "]+?)"
             }
             return "(.+?)"
         }
