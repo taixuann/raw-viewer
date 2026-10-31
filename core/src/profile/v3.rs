@@ -93,6 +93,12 @@ impl AxisV3 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnProgressionV3 {
+    pub progression_type: String,
+    pub behavior: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileColumnV3 {
     pub id: String,
     pub source: ColumnSourceV3,
@@ -102,6 +108,7 @@ pub struct ProfileColumnV3 {
     pub required: bool,
     pub role: ColumnRoleV3,
     pub axes: Vec<AxisV3>,
+    pub progression: Option<ColumnProgressionV3>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -869,6 +876,14 @@ fn decode_column(node: &YamlNode, field: &str) -> Result<ProfileColumnV3, Profil
     } else {
         vec![]
     };
+    let progression = if let Some(prog_node) = node.value_for_key("progression") {
+        Some(decode_progression(
+            prog_node,
+            &format!("{field}.progression"),
+        )?)
+    } else {
+        None
+    };
     Ok(ProfileColumnV3 {
         id,
         source: column_source,
@@ -878,6 +893,19 @@ fn decode_column(node: &YamlNode, field: &str) -> Result<ProfileColumnV3, Profil
         required,
         role,
         axes,
+        progression,
+    })
+}
+
+fn decode_progression(node: &YamlNode, field: &str) -> Result<ColumnProgressionV3, ProfileV3Error> {
+    if node.map_entries().is_none() {
+        return Err(invalid(format!("{field} must be a mapping.")));
+    }
+    reject_unknown(node, &["type", "name", "behavior"], field)?;
+    let progression_type = scalar_required(node, "type", &format!("{field}.type"))?;
+    Ok(ColumnProgressionV3 {
+        progression_type,
+        behavior: optional_scalar(node, "behavior"),
     })
 }
 

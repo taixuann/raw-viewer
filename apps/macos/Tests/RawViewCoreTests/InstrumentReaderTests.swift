@@ -170,7 +170,7 @@ struct InstrumentReaderTests {
         let error = try #require(report.results.first?.error)
         #expect(error.contains("unsupported schema_version 9"))
         #expect(error.contains("supports schema_version 1"))
-        #expect(error.contains("1, 2, and 3"))
+        #expect(error.contains("1, 2, 3, and 4"))
     }
 
     @Test func invalidProfileFieldNamesTheProfileAndField() async throws {

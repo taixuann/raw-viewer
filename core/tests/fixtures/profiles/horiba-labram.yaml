@@ -1,4 +1,5 @@
 schema_version: 2
+id: usth/horiba-labram
 instrument:
   id: horiba-labram
   name: Horiba LabRAM HR Evolution Raman Spectrometer

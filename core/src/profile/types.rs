@@ -45,6 +45,8 @@ pub struct ProfileMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentProfile {
+    /// Catalog profile identifier (`namespace/id` for v4 and namespaced v1/v2).
+    pub profile_id: String,
     pub instrument_id: String,
     pub instrument_name: String,
     pub vendor: Option<String>,

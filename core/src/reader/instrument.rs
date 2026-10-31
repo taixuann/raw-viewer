@@ -387,7 +387,7 @@ fn measurement_from_extraction(
             ("reader_version".into(), READER_VERSION.into()),
             (
                 "profile_id".into(),
-                profile_match.profile.instrument_id.clone(),
+                profile_match.profile.profile_id.clone(),
             ),
             ("profile_hash".into(), profile_match.profile.sha256.clone()),
             (

@@ -3,7 +3,12 @@ use super::types::{
     ProfileCatalog, ProfileColumn, ProfileFormat, ProfileLoadOutcome, ProfileMode,
 };
 use super::v3::{decode_v3, lenient_v3_extensions, validate_structure, ProfileV3Error};
+use super::v4::{
+    compile_instrument_profile, decode_v4, lenient_v4_extensions,
+    validate_structure as validate_v4, ProfileV4Error,
+};
 use crate::yaml::{parse, YamlNode};
+use std::collections::BTreeSet;
 
 struct Selectors {
     extensions: Vec<String>,
@@ -66,15 +71,66 @@ pub fn load_document(text: &str, relative_path: &str, sha256: &str) -> ProfileLo
     if version == 3 {
         return load_v3_document(&root, relative_path, sha256);
     }
+    if version == 4 {
+        return load_v4_document(&root, relative_path, sha256);
+    }
     if !ProfileCatalog::SUPPORTED_SCHEMA_VERSIONS.contains(&version) {
         return broken(
             &selectors,
             vec![format!(
-                "{relative_path}: unsupported schema_version {version}; this viewer supports schema_version 1, 2, and 3."
+                "{relative_path}: unsupported schema_version {version}; this viewer supports schema_version 1, 2, 3, and 4."
             )],
         );
     }
     validate(&root, relative_path, sha256, &selectors, version)
+}
+
+fn load_v4_document(root: &YamlNode, relative_path: &str, sha256: &str) -> ProfileLoadOutcome {
+    match decode_v4(root) {
+        Ok(document) => {
+            if let Err(ProfileV4Error::Invalid(reason)) = validate_v4(&document) {
+                return ProfileLoadOutcome {
+                    profile: None,
+                    issues: vec![format!("{relative_path}: {reason}")],
+                    extensions: lenient_v4_extensions(root),
+                    mode_selectors: vec![],
+                    v3_document: None,
+                };
+            }
+            match compile_instrument_profile(&document, relative_path, sha256) {
+                Ok(profile) => {
+                    let extensions: Vec<String> = profile
+                        .formats
+                        .iter()
+                        .flat_map(|f| f.extensions.clone())
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    ProfileLoadOutcome {
+                        profile: Some(profile),
+                        issues: vec![],
+                        extensions,
+                        mode_selectors: vec![],
+                        v3_document: None,
+                    }
+                }
+                Err(ProfileV4Error::Invalid(reason)) => ProfileLoadOutcome {
+                    profile: None,
+                    issues: vec![format!("{relative_path}: {reason}")],
+                    extensions: lenient_v4_extensions(root),
+                    mode_selectors: vec![],
+                    v3_document: None,
+                },
+            }
+        }
+        Err(ProfileV4Error::Invalid(reason)) => ProfileLoadOutcome {
+            profile: None,
+            issues: vec![format!("{relative_path}: {reason}")],
+            extensions: lenient_v4_extensions(root),
+            mode_selectors: vec![],
+            v3_document: None,
+        },
+    }
 }
 
 fn load_v3_document(root: &YamlNode, relative_path: &str, sha256: &str) -> ProfileLoadOutcome {
@@ -238,7 +294,7 @@ fn validate(
     }
     reject_unknown(
         root,
-        &["schema_version", "instrument", "formats", "modes"],
+        &["schema_version", "id", "instrument", "formats", "modes"],
         "",
         &mut fail,
         version,
@@ -843,6 +899,11 @@ fn validate(
 
     ProfileLoadOutcome {
         profile: Some(InstrumentProfile {
+            profile_id: root
+                .value_for_key("id")
+                .and_then(|n| n.scalar_value())
+                .map(str::to_string)
+                .unwrap_or_else(|| instrument_id.clone().unwrap()),
             instrument_id: instrument_id.unwrap(),
             instrument_name: instrument_name.unwrap(),
             vendor,

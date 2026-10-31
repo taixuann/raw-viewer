@@ -1,0 +1,194 @@
+workspace_id: usth-lab
+measured_at: "2026-10-31"
+issue: "https://github.com/taixuann/raw-viewer/issues/27"
+discovery_ignored:
+  - data/raw/2026-10-07/.intake.log
+  - data/raw/2026-10-07/.quarantine/
+entries:
+  - id: keithley-dual-sweep
+    relative_path: data/raw/2026-10-07/071026-143703_keithley-2400.dual-sweep_[cu-ec-pda.q14-ito.2_r2-c6]_iv.dual-sweep_r.[reproducible]_010.txt
+    profile_id: usth/keithley-2400
+    variant: dual-sweep
+    plottable: true
+    data_row_count: 121
+    size_bytes: 5636
+    sha256: 09f1bdda681db1c0ee6b658a791e8d8fd748ad4750bc088c35a4198090aa1b09
+    column_names:
+      - X_Value
+      - Untitled
+      - Untitled 1
+      - Untitled 2
+      - Comment
+    x_quantity: voltage
+    x_unit: V
+    y_quantity: current
+    y_unit: A
+    metadata_keys:
+      - Date
+      - Decimal_Separator
+      - LabVIEW Measurement
+      - Multi_Headings
+      - Operator
+      - Reader_Version
+      - Separator
+      - Time
+      - Time_Pref
+      - Writer_Version
+      - X_Columns
+  - id: autolab-cv
+    relative_path: data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt
+    profile_id: autolab-usth
+    variant: cv
+    plottable: true
+    data_row_count: 4100
+    size_bytes: 511544
+    sha256: ab18f32b83ff32fc0e84ed92a33610f590d7502fccafa704820683d827754738
+    column_names:
+      - Potential applied (V)
+      - Time (s)
+      - WE(1).Current (A)
+      - WE(1).Potential (V)
+      - Scan
+      - Index
+      - Q+
+      - Q-
+      - Current range
+    x_quantity: voltage
+    x_unit: V
+    y_quantity: current
+    y_unit: A
+    metadata_keys: []
+  - id: autolab-ca
+    relative_path: data/raw/2026-09-21/210926-131400_autolab-usth.ca_[cu-ec-pda.c5-ito.2]_ca.protonation.txt
+    profile_id: autolab-usth
+    variant: ca
+    plottable: true
+    data_row_count: 1000
+    size_bytes: 84000
+    sha256: 5a20af5c30db37e1f8a58de51593b752ddaa421d64fd2c29c1813f9fd81b45aa
+    column_names:
+      - Time (s)
+      - WE(1).Potential (V)
+      - WE(1).Current (A)
+      - Corrected time (s)
+      - Index
+      - Current range
+      - Overload
+    x_quantity: time
+    x_unit: s
+    y_quantity: current
+    y_unit: A
+    metadata_keys: []
+  - id: autolab-eis
+    relative_path: data/raw/2026-04-21/210426-000000_autolab-usth.eis_[gce-pda]_eis.characterization_r.[ph-6.65].txt
+    profile_id: autolab-usth
+    variant: eis
+    plottable: true
+    data_row_count: 50
+    size_bytes: 4816
+    sha256: 790aeefd1b1599d03b90bb7a66a57613f784843cb92e49d6b5f5f7b4daee75e5
+    column_names:
+      - Index
+      - Frequency (Hz)
+      - Z' (Ω)
+      - -Z'' (Ω)
+      - Z (Ω)
+      - -Phase (°)
+      - Time (s)
+    x_quantity: frequency
+    x_unit: Hz
+    y_quantity: impedance_real
+    y_unit: ohm
+    metadata_keys: []
+  - id: horiba-raman
+    relative_path: data/raw/2026-05-25/250526-000000_horiba-labram.raman_[pda.q1-ito.3]_raman.sers.txt
+    profile_id: usth/horiba-labram
+    variant: raman
+    plottable: true
+    data_row_count: 1853
+    size_bytes: 22442
+    sha256: f5dd03b4f2bbc3ea942db4a13144bac06ed6a53b138e34c4193fcd7dd01c3cff
+    column_names:
+      - Raman_shift
+      - intensity
+    x_quantity: wavenumber
+    x_unit: cm-1
+    y_quantity: intensity
+    y_unit: counts
+    metadata_keys: []
+  - id: iop-hanoi-uv-vis
+    relative_path: data/raw/2026-05-28/280526-000000_iop-hanoi.uv-vis_[pda.n2-ito.3]_uv-vis.transmission.txt
+    profile_id: iop-hanoi
+    variant: uv-vis
+    plottable: true
+    data_row_count: 326
+    size_bytes: 4882
+    sha256: 679da5f7b668500612e43126b14d84c4a97d43e6b1713243f6d03148f66dc0e0
+    column_names:
+      - Wavelength_nm
+      - T%
+    x_quantity: wavelength
+    x_unit: nm
+    y_quantity: transmittance
+    y_unit: %
+    metadata_keys: []
+  - id: gtiit-xps-survey
+    relative_path: data/raw/2026-06-26/260626-000000_gtiit-xps.survey_[pda.q3-ito.3]_xps.characterization.spe
+    profile_id: gtiit-xps
+    variant: survey
+    plottable: false
+    data_row_count: 0
+    size_bytes: 9988
+    sha256: 97e57d3028e31b0d5e376967ed36f319103551a218f6ea5b651492ba6e89934a
+    column_names: []
+    x_quantity: null
+    x_unit: null
+    y_quantity: null
+    y_unit: null
+    metadata_keys: []
+  - id: oxford-mfp-contact-afm
+    relative_path: data/raw/2024-11-10/241110-160606_oxford-mfp.contact-afm_[cu-c-pda.n2-ito.2]_afm.step-height_r.cu-glass_001.ibw
+    profile_id: oxford-mfp
+    variant: contact-afm
+    plottable: false
+    data_row_count: 0
+    size_bytes: 1508432
+    sha256: 6ac5f88569528b2f2ffbc7f943ce7ced38de373aa391e0f220cc307963370de1
+    column_names: []
+    x_quantity: null
+    x_unit: null
+    y_quantity: null
+    y_unit: null
+    metadata_keys: []
+  - id: keithley-header-only
+    relative_path: data/raw/2026-10-07/SYNTHETIC_keithley-2400.dual-sweep_header-only_no-data-rows.txt
+    profile_id: usth/keithley-2400
+    variant: dual-sweep
+    plottable: false
+    synthetic: true
+    expected_disposition: no_data_rows
+    data_row_count: 0
+    size_bytes: 539
+    sha256: 7cc2246b4bb102b1a4228ab9bb68b767168ded10936695eb1a2a3be0cfb4753c
+    column_names:
+      - X_Value
+      - Untitled
+      - Untitled 1
+      - Untitled 2
+      - Comment
+    x_quantity: voltage
+    x_unit: V
+    y_quantity: current
+    y_unit: A
+    metadata_keys:
+      - Date
+      - Decimal_Separator
+      - LabVIEW Measurement
+      - Multi_Headings
+      - Operator
+      - Reader_Version
+      - Separator
+      - Time
+      - Time_Pref
+      - Writer_Version
+      - X_Columns

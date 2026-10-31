@@ -283,7 +283,7 @@ public enum InstrumentReader {
                 supportStatus: "supported",
                 provenance: [
                     "reader_version": version,
-                    "profile_id": match.profile.instrumentID,
+                    "profile_id": match.profile.profileID,
                     "profile_hash": match.profile.sha256,
                     "profile_schema_version": String(match.profile.schemaVersion),
                     "mode": match.mode.id
@@ -446,7 +446,7 @@ public enum InstrumentReader {
                 applicationMode: match.mode.id, timestamp: facts.timestamp, deviceID: facts.deviceID, category: facts.category,
                 supportStatus: "supported",
                 validationState: "profile valid; source not loaded",
-                readerVersion: version, profileID: match.profile.instrumentID, profileHash: match.profile.sha256, error: nil
+                readerVersion: version, profileID: match.profile.profileID, profileHash: match.profile.sha256, error: nil
             )
             return .supported(inspection, .profileMatched)
         }

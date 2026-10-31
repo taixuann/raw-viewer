@@ -3,7 +3,7 @@
     {
       "id": "keysight-dual-sweep-v1",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+        "keysight-b1500a.yaml": "profiles/compat/keysight-b1500a-v1.yaml"
       },
       "source_files": {
         "data/raw/fixture-run/dual-sweep.csv": "sources/dual-sweep.csv"
@@ -13,7 +13,7 @@
     {
       "id": "keysight-gaps-v1",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+        "keysight-b1500a.yaml": "profiles/compat/keysight-b1500a-v1.yaml"
       },
       "source_files": {
         "data/raw/gaps.csv": "sources/gaps.csv"
@@ -23,7 +23,7 @@
     {
       "id": "keysight-gap-reasons-v1",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
+        "keysight-b1500a.yaml": "profiles/compat/keysight-b1500a-v1.yaml"
       },
       "source_files": {
         "data/raw/gap-reasons.csv": "sources/gap-reasons.csv"
@@ -63,7 +63,7 @@
     {
       "id": "b1500-dual-sweep-v2",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
       },
       "source_files": {
         "data/raw/keysight-b1500a.dual-sweep_one.csv": "sources/b1500-dual-sweep.csv"
@@ -73,7 +73,7 @@
     {
       "id": "b1500-list-sweep-v2",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
       },
       "source_files": {
         "data/raw/keysight-b1500a.list-sweep_one.csv": "sources/b1500-list-sweep.csv"
@@ -83,7 +83,7 @@
     {
       "id": "b1500-wgfmu-std-v2",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
       },
       "source_files": {
         "data/raw/keysight-b1500a.wgfmu_std.csv": "sources/b1500-wgfmu-std.csv"
@@ -93,7 +93,7 @@
     {
       "id": "b1500-wgfmu-ppf-time-v2",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
       },
       "source_files": {
         "data/raw/keysight-b1500a.wgfmu_ppf-time.csv": "sources/b1500-wgfmu-ppf-time.csv"
@@ -103,7 +103,7 @@
     {
       "id": "b1500-wgfmu-ppf-index-v2",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
       },
       "source_files": {
         "data/raw/keysight-b1500a.wgfmu_ppf-index.csv": "sources/b1500-wgfmu-ppf-index.csv"
@@ -113,7 +113,7 @@
     {
       "id": "b1500-wgfmu-large-v2",
       "profile_files": {
-        "keysight-b1500a.yaml": "profiles/keysight-b1500a-v2.yaml"
+        "keysight-b1500a.yaml": "profiles/keysight-b1500a.yaml"
       },
       "source_files": {
         "data/raw/keysight-b1500a.wgfmu_large.csv": "sources/b1500-wgfmu-large.csv"
