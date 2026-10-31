@@ -63,8 +63,6 @@ enum ProfileWhenMatcher {
         return tokenizeFragment(stem)
     }
 
-    private static func tokenizeFragment(_ text: String) -> [String] {
-
     static func mergeWhen(profile: WhenClause?, variant: WhenClause?) -> WhenClause {
         var merged = WhenClause()
         if let profile {
