@@ -49,7 +49,7 @@ struct ProfileDocumentV4Tests {
     @Test func keysightV4ProfileLoadsAndCompiles() throws {
         let yaml = try Self.fixtureText("core/tests/fixtures/profiles/keysight-b1500a.yaml")
         let outcome = loadProfile(yaml: yaml, path: "keysight-b1500a.yaml")
-        #expect(outcome.issues.isEmpty, outcome.issues.joined(separator: "\n"))
+        #expect(outcome.issues.isEmpty, "\(outcome.issues.joined(separator: "\n"))")
         let profile = try #require(outcome.profile)
         #expect(profile.profileID == "usth/keysight-b1500a")
         #expect(profile.schemaVersion == 4)
