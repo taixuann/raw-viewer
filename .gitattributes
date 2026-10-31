@@ -1,4 +1,12 @@
-# Golden tests hash raw fixture bytes; keep LF on all platforms.
+# Golden tests hash raw fixture bytes; keep LF on text fixtures.
 core/tests/fixtures/** text eol=lf
 core/tests/golden/** text eol=lf
 fixtures/** text eol=lf
+
+# Instrument raw files must stay byte-exact (CRLF and binary); overrides fixtures/** above.
+fixtures/**/data/raw/** -text
+
+fixtures/**/*.yaml text eol=lf
+fixtures/**/*.yml text eol=lf
+fixtures/**/.raw-viewer/** text eol=lf
+core/**/*.rs text eol=lf
