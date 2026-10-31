@@ -31,7 +31,7 @@ When a project grammar catalog is loaded:
 
 ## Ambiguity
 
-Two or more profile hits → `ambiguous_profile` with **sorted** candidate profile ids (Rust and Swift share the same code string).
+Two or more profile hits → `ambiguous_profile` with **sorted** candidate labels; each label is either a profile id or `{profile_id} mode {mode_id}` when one profile matches in several modes (Rust and Swift share the same code string).
 
 ## Legacy → `when` mapping (in memory only; YAML unchanged)
 
