@@ -889,7 +889,10 @@ enum CoreSelfCheck {
         precondition(mode("keysight-b1500a.wgfmu_std.csv") == "wgfmu", "standard WGFMU mode moved to \(mode("keysight-b1500a.wgfmu_std.csv") ?? "blocked")")
         precondition(mode("unknown.csv") == nil, "unknown header was accepted")
         precondition(mode("foreign.csv") == nil, "foreign basename was claimed")
-        precondition(report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("keysight-b1500a.wgfmu") == true, "foreign basename diagnostic lost the missing token")
+        precondition(
+            report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("keysight-b1500a") == true
+                && report.results.first { $0.id == "data/raw/foreign.csv" }?.error?.contains("\"wgfmu\"") == true,
+            "foreign basename diagnostic lost the profile id or missing token")
         func load(_ name: String) async throws -> NormalizedMeasurement {
             try await InstrumentReader.load(root.appendingPathComponent("data/raw/\(name)"), project: project)
         }

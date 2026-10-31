@@ -353,7 +353,8 @@ struct B1500AProfileModesTests {
         // token, so the source stays blocked naming the missing token.
         let report = await InstrumentReader.inspectMany(sources, project: project)
         #expect(report.results.first?.inspection == nil)
-        #expect(report.results.first?.error?.contains("keysight-b1500a.wgfmu") == true)
+        #expect(report.results.first?.error?.contains("keysight-b1500a") == true)
+        #expect(report.results.first?.error?.contains("\"wgfmu\"") == true)
         await #expect(throws: ReaderError.self) {
             try await InstrumentReader.load(sources[0].url, project: project)
         }

@@ -412,29 +412,7 @@ fn describe_miss_mode(
 ) -> String {
     let merged = merge_when(profile_when, Some(&mode.when));
     let mut parts = Vec::new();
-    if let Some(legacy) = &mode.filename_contains_all {
-        if !legacy.is_empty() {
-            let base = basename.to_lowercase();
-            let missing: Vec<_> = legacy
-                .iter()
-                .filter(|token| !base.contains(&token.to_lowercase()))
-                .collect();
-            if missing.is_empty() {
-                parts.push(format!(
-                    "filename_contains_all matched basename \"{basename}\""
-                ));
-            } else {
-                parts.push(format!(
-                    "filename_contains_all tokens {} not in basename \"{basename}\"",
-                    missing
-                        .iter()
-                        .map(|t| format!("\"{t}\""))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-    } else if !merged.filename_tokens.is_empty() {
+    if !merged.filename_tokens.is_empty() {
         parts.push(describe_filename_miss(&merged.filename_tokens, basename));
     }
     if !merged.content_contains_any.is_empty() {
