@@ -549,22 +549,6 @@ fn swift_capitalized_words(text: &str) -> String {
     out
 }
 
-#[cfg(test)]
-mod label_tests {
-    use super::swift_capitalized_label;
-
-    #[test]
-    fn swift_capitalized_label_matches_word_boundaries() {
-        assert_eq!(swift_capitalized_label("SetupTitle"), "Setuptitle");
-        assert_eq!(swift_capitalized_label("Writer_Version"), "Writer Version");
-        assert_eq!(swift_capitalized_label("Acq. time (s)"), "Acq. Time (S)");
-        assert_eq!(
-            swift_capitalized_label("***End_of_Header*** "),
-            "***End Of Header*** "
-        );
-    }
-}
-
 fn metadata_sections(
     header_fields: &[(String, String)],
     filename: &str,
@@ -662,4 +646,20 @@ fn is_symlink(path: &Path) -> bool {
     std::fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::swift_capitalized_label;
+
+    #[test]
+    fn swift_capitalized_label_matches_word_boundaries() {
+        assert_eq!(swift_capitalized_label("SetupTitle"), "Setuptitle");
+        assert_eq!(swift_capitalized_label("Writer_Version"), "Writer Version");
+        assert_eq!(swift_capitalized_label("Acq. time (s)"), "Acq. Time (S)");
+        assert_eq!(
+            swift_capitalized_label("***End_of_Header*** "),
+            "***End Of Header*** "
+        );
+    }
 }
