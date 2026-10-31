@@ -13,6 +13,7 @@ core/          Rust library crate raw-viewer-core. Resolves config paths and loa
 bindings/      Rust library reserved for a future UniFFI Swift bridge.
 apps/macos/    SwiftUI app: Package.swift, Sources, Tests, Scripts, and Examples.
 apps/tauri/    Minimal Tauri 2 shell. src-tauri calls raw-viewer-core.
+fixtures/      Committed test workspaces (e.g. `workspaces/usth-lab/` real-data fixture, #27).
 docs/          Design notes and handoff records.
 ```
 

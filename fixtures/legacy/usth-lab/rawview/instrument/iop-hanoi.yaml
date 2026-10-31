@@ -1,0 +1,39 @@
+# RawView companion instrument profile schema v2 — IOP Hanoi UV-Vis.
+# Single first-row-header layout for comma-separated ".txt"/".csv" with the
+# default decimal point. The exact observed project export token scopes the
+# mode by basename; detect signatures cover wavelength/transmittance aliases.
+# There is no transforms mechanism.
+schema_version: 2
+
+instrument:
+  id: iop-hanoi
+  name: IOP Hanoi UV-Vis
+
+formats:
+  - id: uvvis
+    kind: first-row-header
+    extensions: [".txt", ".csv"]
+    delimiter: ","
+    encoding: [utf-8, windows-1252, iso-8859-1]
+    columns:
+      wavelength:
+        header: "Wavelength_nm"
+        aliases: ["wavelength (nm)"]
+        quantity: wavelength
+        unit: "nm"
+        label: "Wavelength"
+      transmittance:
+        header: "T%"
+        aliases: ["%t", "transmission (%)"]
+        quantity: transmittance
+        unit: "%"
+        label: "Transmittance"
+
+modes:
+  - id: uvvis
+    format: uvvis
+    detect: ["Wavelength_nm", "wavelength (nm)", "T%", "%t", "transmission (%)"]
+    filename_contains_all: ["iop-hanoi.uv-vis_"]
+    extract:
+      x: wavelength
+      y: [transmittance]

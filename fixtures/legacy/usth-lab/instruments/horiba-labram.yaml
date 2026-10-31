@@ -1,0 +1,181 @@
+id: horiba-labram
+name: Horiba LabRAM HR Evolution Raman Spectrometer
+vendor: Horiba Scientific
+model: LabRAM HR Evolution
+
+metadata_verification:
+  format: ASCII (Comment Header + European Tab Data)
+  has_hardware_timestamp: true
+  hardware_time_available: true
+  confirmation_action: "Parse #Acquired (or #Date) comment header to confirm DDMMYY-HHMMSS in raw filenames."
+  header_signatures:
+    lead_signature: '#Instrument=\tLabRAM HR Evol'
+    laser: '#Laser='
+    acq_time: '#Acq. time (s)='
+    accumulations: '#Accumulations='
+  timestamp_purpose: "Extract acquisition date and time from #Acquired or #Date comment header."
+  timestamp_extraction:
+    method: header_regex
+    combined_datetime_pattern: '#(?:Acquired|Date)=\t(?P<day>\d{2})\.(?P<month>\d{2})\.(?P<year>\d{4})\s+(?P<hour>\d{2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?'
+    fallback_time: "000000"
+  collision_policy:
+    unique_rule: omit_sequence
+    collision_rule: append_sequence_nnn
+    duplicate_rule: flag_duplicate
+
+formats:
+  - id: tab_comma
+    description: Newer format with ~45 # comment lines, tab delimiter, and European comma decimal.
+    extensions: [".txt"]
+    support: validated
+    encoding:
+      accepted: [utf-8, latin-1, cp1252]
+      fallback: replace
+    signatures:
+      comment_char: "#"
+      delimiter: "\t"
+      decimal: ","
+    metadata:
+      laser_wavelength:
+        source: comment
+        key: "Laser"
+        output_type: string
+      accumulations:
+        source: comment
+        key: "Accumulations"
+        output_type: integer
+      acquisition_time:
+        source: comment
+        key: "Acq. time (s)"
+        output_type: float
+        unit: "s"
+      objective:
+        source: comment
+        key: "Objective"
+        output_type: string
+      grating:
+        source: comment
+        key: "Grating"
+        output_type: string
+      detector_temp:
+        source: comment
+        key: "Detector temperature (°C)"
+        output_type: float
+        unit: "degC"
+
+  - id: header_semicolon
+    description: Older format with explicit header row 'raman_shift;intensity' and period decimal.
+    extensions: [".txt"]
+    support: validated
+    signatures:
+      header_row: "raman_shift;intensity"
+      delimiter: ";"
+      decimal: "."
+
+application_modes:
+  - id: raman
+    instrument_token: horiba-labram.raman
+    raw_token: raman.sers
+    alias_tokens:
+      - raman.characterization
+      - raman
+    format_ref: tab_comma
+    secondary_format_refs:
+      - header_semicolon
+    description: Micro-Raman vibrational spectroscopy and surface-enhanced Raman scattering (SERS).
+    supported_studies:
+      - structural-spectroscopy
+    detect:
+      method: header-comments
+      signatures: ["#Instrument=\tLabRAM HR Evol", "#Laser="]
+    extract:
+      layout: tabular_columns
+      data_start: "after_comment_hash_lines"
+      delimiter: "\t"
+      columns:
+        wavenumber:
+          header_name: null
+          column_index: 0
+          label: "Raman shift"
+          unit: "cm-1"
+          required: true
+        intensity:
+          header_name: null
+          column_index: 1
+          label: "Intensity"
+          unit: "counts"
+          required: true
+    extract_by_format:
+      tab_comma:
+        layout: tabular_columns
+        data_start: "after_comment_hash_lines"
+        delimiter: "\t"
+        columns:
+          wavenumber:
+            header_name: null
+            column_index: 0
+            label: "Raman shift"
+            unit: "cm-1"
+            required: true
+          intensity:
+            header_name: null
+            column_index: 1
+            label: "Intensity"
+            unit: "counts"
+            required: true
+        transforms:
+          - field: all_numeric
+            operation: comma_to_period
+            rationale: "European decimal separator normalization for float conversion."
+      header_semicolon:
+        layout: tabular_columns
+        data_start: "after_header"
+        header_line: 0
+        delimiter: ";"
+        columns:
+          wavenumber:
+            header_name: "raman_shift"
+            column_index: 0
+            label: "Raman shift"
+            unit: "cm-1"
+            required: true
+          intensity:
+            header_name: "intensity"
+            column_index: 1
+            label: "Intensity"
+            unit: "counts"
+            required: true
+        transforms: []
+    transforms: []
+    normalized_output:
+      required_fields: [wavenumber, intensity]
+    summary:
+      kind: metadata
+      fields:
+        - laser_wavelength
+        - accumulations
+        - acquisition_time
+        - objective
+        - grating
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-05-26/260526-141100_horiba-labram.raman_[pda.n1-ito.3]_raman.sers.txt"
+          sha256: "643031fb47c2e598c8040b8857e5237ea877363b3c46f37929ed62e373471cb2"
+          size_bytes: 27883
+          observed_format: tab_comma
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [wavenumber, intensity]
+        - source_ref: "data/raw/2026-05-25/250526-000000_horiba-labram.raman_[ito.3]_raman.characterization_001.txt"
+          sha256: "e11b28a38658a65ba3698a04be0cb3752b552eaa3d3f2daa00cd0355503dc762"
+          size_bytes: 42161
+          observed_format: header_semicolon
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [wavenumber, intensity]

@@ -1,0 +1,98 @@
+id: keithley-2400
+name: Keithley 2400 SourceMeter
+vendor: Keithley Instruments
+model: "2400"
+
+metadata_verification:
+  format: LVM (LabVIEW Measurement)
+  delimiter: '\t'
+  header_end_marker: '***End_of_Header***'
+  has_hardware_timestamp: true
+  hardware_time_available: true
+  confirmation_action: "Parse Date and Time fields before ***End_of_Header*** to confirm and auto-correct DDMMYY-HHMMSS in raw filenames."
+  header_fields:
+    date_field: 'Date'
+    time_field: 'Time'
+  timestamp_purpose: "Extract measurement acquisition date and time from LVM header to construct and verify canonical DDMMYY-HHMMSS prefix."
+  timestamp_extraction:
+    method: header_regex
+    date_pattern: 'Date\t(?P<year>20\d{2})/(?P<month>\d{2})/(?P<day>\d{2})'
+    time_pattern: 'Time\t(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})'
+    fallback_time: "000000"
+  collision_policy:
+    unique_rule: omit_sequence
+    collision_rule: append_sequence_nnn
+    duplicate_rule: flag_duplicate
+
+formats:
+  - id: lvm
+    description: LabVIEW Measurement ASCII export with dual header blocks and tab-separated columns.
+    extensions: [".lvm", ".txt"]
+    support: validated
+    encoding:
+      accepted: [utf-8, latin-1, cp1252]
+      fallback: replace
+    signatures:
+      lead_marker: "LabVIEW Measurement"
+      header_end_marker: "***End_of_Header***"
+      header_occurrences: 2
+
+application_modes:
+  - id: dual-sweep
+    instrument_token: keithley-2400.dual-sweep
+    canonical_token: keithley-2400.dual-sweep
+    raw_token: iv.dual-sweep
+    alias_tokens:
+      - iv.endurance
+      - keithley-2400.dual-sweep-v2
+    format_ref: lvm
+    description: Standard dual-sweep voltage loop and endurance cycling for bipolar threshold and memory switching.
+    supported_studies:
+      - dc-switching
+      - temperature-dependent-transport
+    detect:
+      method: header-column-signature
+      signatures: ["Untitled", "Untitled 1"]
+    extract:
+      layout: tabular_columns
+      data_start: "after_second_End_of_Header"
+      delimiter: '\t'
+      column_offset_rule: "skip_empty_leading_col"
+      columns:
+        voltage:
+          header_name: "Untitled"
+          column_index: 1
+          label: "Voltage"
+          unit: "V"
+          required: true
+        current:
+          header_name: "Untitled 1"
+          column_index: 2
+          label: "Current"
+          unit: "A"
+          required: true
+        timestamp:
+          header_name: "Untitled 2"
+          column_index: 3
+          label: "Time"
+          unit: "s"
+          required: false
+    transforms: []
+    normalized_output:
+      required_fields: [voltage, current]
+      optional_fields: [timestamp]
+    summary:
+      kind: iv
+    evidence:
+      support_status: validated
+      validation_scope: local-fixture
+      validated_against:
+        - source_ref: "data/raw/2026-08-13/130826-080101_keithley-2400.dual-sweep_[cu-ec-pda.q6-ito.2_r3-c1]_iv.dual-sweep_r.[310k]_007.txt"
+          sha256: "997bf10a81f1d6e96c02cccedb6f975229f335d7a92882f51d143b85d1905cc7"
+          size_bytes: 6432
+          observed_format: lvm
+          validation:
+            timestamp: pass
+            mode_detection: pass
+            extraction: pass
+            normalized_fields: [voltage, current, timestamp]

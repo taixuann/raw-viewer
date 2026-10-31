@@ -1,0 +1,22 @@
+LabVIEW Measurement	
+Writer_Version	2
+Reader_Version	2
+Separator	Tab
+Decimal_Separator	.
+Multi_Headings	Yes
+X_Columns	No
+Time_Pref	Relative
+Operator	AMSN
+Date	2026/10/07
+Time	14:37:03.3081121444702148437
+***End_of_Header***	
+	
+Channels	3			
+Samples	121	121	121	
+Date	1904/01/01	1904/01/01	1904/01/01	
+Time	07:00:00	07:00:00	07:00:00	
+X_Dimension	Time	Time	Time	
+X0	0.0000000000000000E+0	0.0000000000000000E+0	0.0000000000000000E+0	
+Delta_X	1.000000	1.000000	1.000000	
+***End_of_Header***				
+X_Value	Untitled	Untitled 1	Untitled 2	Comment
