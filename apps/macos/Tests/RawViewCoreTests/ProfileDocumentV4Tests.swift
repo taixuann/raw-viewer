@@ -4,11 +4,11 @@ import Testing
 
 struct ProfileDocumentV4Tests {
     private static var repoRoot: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            url.deleteLastPathComponent()
+        }
+        return url
     }
 
     private static func fixtureText(_ relative: String) throws -> String {
