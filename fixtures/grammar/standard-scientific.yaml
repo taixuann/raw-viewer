@@ -1,0 +1,40 @@
+schema_version: 1
+grammars:
+  - id: standard-scientific
+    name: Standard Filename Pattern
+    template: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_f.[{flags}]_{batch}"
+    fields:
+      - name: date
+        role: datetime
+        type: datetime
+        format: DDMMYY-HHmmSS
+        optional: false
+      - name: instrument
+        role: instrument
+        type: string
+        optional: false
+      - name: mode
+        role: mode
+        type: string
+        optional: false
+      - name: device-id
+        role: device
+        type: string
+        optional: false
+      - name: study
+        role: category
+        type: string
+        optional: false
+      - name: remarks
+        role: remarks
+        type: string
+        optional: true
+      - name: flags
+        role: flags
+        type: string
+        optional: true
+      - name: batch
+        role: batch
+        type: number
+        format: "001"
+        optional: true

@@ -1,0 +1,69 @@
+grammar_file: standard-scientific.yaml
+vectors:
+  - id: acceptance-full
+    filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda.c1-ito.2_r1-c4]_iv.dual-sweep_r.[300K]_f.[x]_001"
+    matched: true
+    tokens:
+      date: "201226-154955"
+      instrument: keithley-2400
+      mode: dual-sweep
+      device-id: cu-ec-pda.c1-ito.2_r1-c4
+      study: iv.dual-sweep
+      remarks: 300K
+      flags: x
+      batch: "001"
+  - id: acceptance-full-csv
+    filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda.c1-ito.2_r1-c4]_iv.dual-sweep_r.[300K]_f.[x]_001.csv"
+    matched: true
+    tokens:
+      date: "201226-154955"
+      instrument: keithley-2400
+      mode: dual-sweep
+      device-id: cu-ec-pda.c1-ito.2_r1-c4
+      study: iv.dual-sweep
+      remarks: 300K
+      flags: x
+      batch: "001"
+  - id: optional-suffix-absent
+    filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda.c1-ito.2_r1-c4]_iv.dual-sweep"
+    matched: true
+    tokens:
+      date: "201226-154955"
+      instrument: keithley-2400
+      mode: dual-sweep
+      device-id: cu-ec-pda.c1-ito.2_r1-c4
+      study: iv.dual-sweep
+  - id: time-midnight-placeholder
+    filename: "271125-000000_keithley-2400.dual-sweep_[d01]_iv.dual-sweep_r.[300K]_f.[x]_001"
+    matched: true
+    tokens:
+      date: "271125-000000"
+      instrument: keithley-2400
+      mode: dual-sweep
+      device-id: d01
+      study: iv.dual-sweep
+      remarks: 300K
+      flags: x
+      batch: "001"
+  - id: bracket-close-rejected
+    filename: "201226-154955_keithley-2400.dual-sweep_[bad]extra]_iv.dual-sweep_r.[300K]_f.[x]_001"
+    matched: false
+  - id: reserved-dot-in-instrument
+    filename: "201226-154955_keithley.2400.dual-sweep_[cu-ec-pda]_iv.dual-sweep_r.[300K]_f.[x]_001"
+    matched: false
+  - id: fake-extension-not-stripped
+    filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda.c1-ito.2_r1-c4]_iv.dual-sweep_001"
+    matched: true
+    tokens:
+      date: "201226-154955"
+      instrument: keithley-2400
+      mode: dual-sweep
+      device-id: cu-ec-pda.c1-ito.2_r1-c4
+      study: iv.dual-sweep
+      batch: "001"
+  - id: date-width-rejected
+    filename: "20126-154955_keithley-2400.dual-sweep_[cu-ec-pda]_iv.dual-sweep_r.[300K]_f.[x]_001"
+    matched: false
+  - id: counter-format-rejected
+    filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda]_iv.dual-sweep_r.[300K]_f.[x]_01"
+    matched: false
