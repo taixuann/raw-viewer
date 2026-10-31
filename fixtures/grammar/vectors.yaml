@@ -67,3 +67,9 @@ vectors:
   - id: counter-format-rejected
     filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda]_iv.dual-sweep_r.[300K]_f.[x]_01"
     matched: false
+  - id: bare-underscore-in-instrument
+    filename: "201226-154955_keithley_2400.dual-sweep_[d01]_iv.dual-sweep_r.[300K]_f.[x]_001"
+    matched: false
+  - id: fake-extension-v2-not-stripped
+    filename: "201226-154955_keithley-2400.dual-sweep_[cu-ec-pda]_iv.dual-sweep_r.[300K]_f.[x]_001.v2"
+    matched: false
