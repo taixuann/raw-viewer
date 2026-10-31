@@ -320,6 +320,7 @@ struct WhenMatcherTests {
             "rawview-when-generic-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
+        try writeMinimalProject(at: root)
         try synthGrammarYAML.write(
             to: root.appendingPathComponent(".rawviewer/grammar.yaml"),
             atomically: true, encoding: .utf8)
@@ -358,7 +359,6 @@ struct WhenMatcherTests {
         try profile.write(
             to: root.appendingPathComponent("data/instruments/synth.yaml"),
             atomically: true, encoding: .utf8)
-        try writeMinimalProject(at: root)
         let csvURL = root.appendingPathComponent("data/raw/table.csv")
         try "X,Y\n0,1\n".write(to: csvURL, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: root) }
