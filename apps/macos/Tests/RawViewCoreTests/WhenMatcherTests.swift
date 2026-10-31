@@ -7,6 +7,8 @@ struct WhenMatcherTests {
         let setting = """
         schema_version: 1
         data_root: data/raw
+        default_view: tree
+        default_preset: nature-single
         """
         let url = root.appendingPathComponent(".rawviewer/setting.yaml")
         try FileManager.default.createDirectory(

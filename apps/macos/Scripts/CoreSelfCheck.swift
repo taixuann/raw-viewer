@@ -414,7 +414,7 @@ enum CoreSelfCheck {
         try writeFixture(root, "data/instruments/synth.yaml", filenameV2Profile)
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
-        let good = report.results.first { $0.source.relativePath == "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv" }
+        let good = report.results.first { $0.source.relativePath == "data/raw/run_synth-token_dual-sweep.csv" }
         precondition(good?.inspection?.applicationMode == "dual-sweep")
         let measurement = try await InstrumentReader.load(good!.source.url, project: project)
         precondition(measurement.channel(named: "voltage")?.values == [0, 0.1, 0.2])
