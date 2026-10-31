@@ -410,7 +410,7 @@ enum CoreSelfCheck {
         // (a) All basename tokens plus a header alternative load every value.
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-filename-gate-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        try writeFixture(root, "data/raw/RUN_SYNTH-TOKEN_DUAL-SWEEP.csv", csv)
+        try writeFixture(root, "data/raw/run_synth-token_dual-sweep.csv", csv)
         try writeFixture(root, "data/instruments/synth.yaml", filenameV2Profile)
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)

@@ -112,7 +112,14 @@ fn no_grammar_content_only_path() {
 }
 
 fn temp_project() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("rawview-when-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "rawview-when-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

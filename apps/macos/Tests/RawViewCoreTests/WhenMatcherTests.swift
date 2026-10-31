@@ -3,6 +3,17 @@ import Testing
 @testable import RawViewCore
 
 struct WhenMatcherTests {
+    private func writeMinimalProject(at root: URL) throws {
+        let setting = """
+        schema_version: 1
+        data_root: data/raw
+        """
+        let url = root.appendingPathComponent(".rawviewer/setting.yaml")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try setting.write(to: url, atomically: true, encoding: .utf8)
+    }
+
     @Test func tokenExactMatchRejectsNearMissSubstring() {
         let merged = ProfileWhenMatcher.whenFromLegacy(
             detect: ["SIG"], filenameContainsAll: ["needle"])
@@ -90,6 +101,7 @@ struct WhenMatcherTests {
             "rawview-when-swift-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
         try yaml.write(to: root.appendingPathComponent("data/instruments/x.yaml"), atomically: true, encoding: .utf8)
+        try writeMinimalProject(at: root)
         let project = try ProjectContext.open(root)
         let catalog = ProfileCatalog.load(project: project)
         let grammar = ProfileWhenMatcher.GrammarMatchContext(
@@ -139,6 +151,7 @@ struct WhenMatcherTests {
         try base.write(to: root.appendingPathComponent("data/instruments/a.yaml"), atomically: true, encoding: .utf8)
         try base.replacingOccurrences(of: "id: synth", with: "id: synth-alt").write(
             to: root.appendingPathComponent("data/instruments/b.yaml"), atomically: true, encoding: .utf8)
+        try writeMinimalProject(at: root)
         let project = try ProjectContext.open(root)
         let catalog = ProfileCatalog.load(project: project)
         let resolution = catalog.resolve(
