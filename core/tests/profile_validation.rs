@@ -46,7 +46,7 @@ modes:
 
 #[test]
 fn missing_unit_names_profile_and_field() {
-    let yaml = include_str!("fixtures/profiles/keysight-b1500a.yaml")
+    let yaml = include_str!("fixtures/profiles/compat/keysight-b1500a-v1.yaml")
         .replace("unit: \"V\"", "unit_label: \"V\"");
     let outcome = validate_document(&yaml, "data/instruments/missing-unit.yaml");
     assert!(outcome.profile.is_none());
@@ -57,20 +57,20 @@ fn missing_unit_names_profile_and_field() {
 
 #[test]
 fn unsupported_schema_version_is_actionable() {
-    let yaml = include_str!("fixtures/profiles/keysight-b1500a.yaml")
+    let yaml = include_str!("fixtures/profiles/compat/keysight-b1500a-v1.yaml")
         .replace("schema_version: 1", "schema_version: 9");
     let outcome = validate_document(&yaml, "data/instruments/keysight-b1500a.yaml");
     assert!(outcome.profile.is_none());
     let text = issues_joined(&outcome);
     assert!(text.contains("unsupported schema_version 9"), "{text}");
-    assert!(text.contains("schema_version 1, 2, and 3"), "{text}");
+    assert!(text.contains("schema_version 1, 2, 3, and 4"), "{text}");
 }
 
 #[test]
 fn unknown_top_level_key_names_field() {
     let yaml = format!(
         "{}\ntheme: dark\n",
-        include_str!("fixtures/profiles/keysight-b1500a.yaml")
+        include_str!("fixtures/profiles/compat/keysight-b1500a-v1.yaml")
     );
     let outcome = validate_document(&yaml, "data/instruments/keysight-b1500a.yaml");
     assert!(outcome.profile.is_none());

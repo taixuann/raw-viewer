@@ -68,7 +68,7 @@ Swift commands run from `apps/macos/` (`swift build`, `swift test`). The package
 
 ## Supported Instruments & Reader Families
 
-RawView reads declarative instrument profiles (`schema_version: 1`, `2`, or variant-based `3` with key-routed variants in one file) from `data/instruments/` (or `data/instruments/rawview/`):
+RawView reads declarative instrument profiles (`schema_version: 1`, `2`, variant-based `3`, or flat `4` with a `variants:` map keyed by application-mode) from `data/instruments/` (or `data/instruments/rawview/`):
 
 | Instrument / Family | Supported Layouts | Plotted Channels |
 | :--- | :--- | :--- |

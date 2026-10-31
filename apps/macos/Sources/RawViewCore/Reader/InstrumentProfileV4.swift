@@ -193,9 +193,18 @@ enum ProfileV4Codec {
 
     // MARK: - compile
 
+    private static func columnSortKey(_ key: String, plot: PlotSpecV4) -> (UInt8, Int, String) {
+        if key == plot.x { return (0, 0, key) }
+        if let index = plot.y.firstIndex(of: key) { return (1, index, key) }
+        return (2, 0, key)
+    }
+
     private static func compileFormat(formatID: String, variant: ProfileVariantV4) throws -> ProfileFormat {
         var columns: [ProfileColumn] = []
-        for key in variant.columns.keys.sorted() {
+        let orderedKeys = variant.columns.keys.sorted {
+            columnSortKey($0, plot: variant.plot) < columnSortKey($1, plot: variant.plot)
+        }
+        for key in orderedKeys {
             guard let col = variant.columns[key] else { continue }
             if col.role == .skip { continue }
             let quantity = col.quantity ?? "unknown"

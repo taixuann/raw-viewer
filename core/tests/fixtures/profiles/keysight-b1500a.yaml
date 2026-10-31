@@ -1,34 +1,315 @@
-schema_version: 1
+schema_version: 4
+id: usth/keysight-b1500a
+revision: 1
 instrument:
   id: keysight-b1500a
   name: Keysight B1500A Semiconductor Device Parameter Analyzer
   vendor: Keysight Technologies
   model: B1500A
-formats:
-  - id: csv
-    kind: tabular
-    extensions: [".csv"]
-    delimiter: ","
-    encoding: [utf-8, windows-1252, iso-8859-1]
+variants:
+  dual-sweep:
+    when:
+      content_contains_any:
+        - 2-terminal dual Vsweep
+        - dual Vsweep
+      filename_contains_all:
+        - keysight-b1500a.dual-sweep
+    format:
+      kind: tabular
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
     rows:
-      names_prefix: "DataName"
-      data_prefix: "DataValue"
+      names_prefix: DataName
+      data_prefix: DataValue
+    metadata: []
     columns:
       voltage:
-        header: "V1"
+        role: channel
+        header: V1
         quantity: voltage
-        unit: "V"
-        label: "Voltage"
+        unit: V
+        label: Voltage
       current:
-        header: "I2"
-        aliases: ["I1"]
+        role: channel
+        header: I2
         quantity: current
-        unit: "A"
-        label: "Current"
-modes:
-  - id: dual-sweep
-    format: csv
-    detect: ["2-terminal dual Vsweep", "dual Vsweep"]
-    extract:
+        unit: A
+        label: Current
+        aliases:
+          - I1
+    plot:
       x: voltage
-      y: [current]
+      y:
+        - current
+  list-sweep:
+    when:
+      content_contains_any:
+        - I/V List Sweep
+      filename_contains_all:
+        - keysight-b1500a
+    format:
+      kind: tabular
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
+    rows:
+      names_prefix: DataName
+      data_prefix: DataValue
+    metadata: []
+    columns:
+      voltage:
+        role: channel
+        header: V1
+        quantity: voltage
+        unit: V
+        label: Voltage
+      current:
+        role: channel
+        header: I2
+        quantity: current
+        unit: A
+        label: Current
+        aliases:
+          - I1
+    plot:
+      x: voltage
+      y:
+        - current
+  wgfmu:
+    when:
+      content_contains_any:
+        - MeasResult
+      filename_contains_all:
+        - keysight-b1500a.wgfmu
+    format:
+      kind: tabular
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
+    rows:
+      names_prefix: DataName
+      data_prefix: DataValue
+    metadata: []
+    columns:
+      time:
+        role: channel
+        header: Time
+        quantity: time
+        unit: s
+        label: Time
+      signal_1:
+        role: channel
+        header: MeasResult1_value
+        quantity: unknown
+        unit: unspecified
+        label: Channel 1
+      signal_2:
+        role: channel
+        header: MeasResult2_value
+        quantity: unknown
+        unit: unspecified
+        label: Channel 2
+      meas_time1:
+        role: channel
+        header: MeasResult1_time
+        quantity: time
+        unit: s
+        label: Meas time 1
+        required: false
+      meas_time2:
+        role: channel
+        header: MeasResult2_time
+        quantity: time
+        unit: s
+        label: Meas time 2
+        required: false
+    plot:
+      x: time
+      y:
+        - signal_1
+  wgfmu-ppf-time:
+    when:
+      content_contains_any:
+        - "time_s,current_a"
+        - "time_s, current_a"
+      filename_contains_all:
+        - keysight-b1500a.wgfmu
+    format:
+      kind: first-row-header
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      time:
+        role: channel
+        header: time_s
+        quantity: time
+        unit: s
+        label: Time
+      current:
+        role: channel
+        header: current_a
+        quantity: current
+        unit: A
+        label: Current
+    plot:
+      x: time
+      y:
+        - current
+  wgfmu-ppf-index:
+    when:
+      content_contains_any:
+        - index-pulse
+      filename_contains_all:
+        - keysight-b1500a.wgfmu
+    format:
+      kind: first-row-header
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      pulse_index:
+        role: channel
+        header: index-pulse
+        quantity: pulse
+        unit: pulse
+        label: Pulse index
+      current:
+        role: channel
+        header: current_a
+        quantity: current
+        unit: A
+        label: Current
+    plot:
+      x: pulse_index
+      y:
+        - current
+  wgfmu-stp:
+    when:
+      content_contains_any:
+        - "time_s,voltage_v,current_v"
+        - "time_s, voltage_v, current_v"
+      filename_contains_all:
+        - keysight-b1500a.wgfmu
+    format:
+      kind: first-row-header
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      time:
+        role: channel
+        header: time_s
+        quantity: time
+        unit: s
+        label: Time
+      voltage:
+        role: channel
+        header: voltage_v
+        quantity: voltage
+        unit: V
+        label: Voltage
+      current:
+        role: channel
+        header: current_v
+        quantity: unknown
+        unit: unspecified
+        label: current_v
+      fit:
+        role: channel
+        header: fit
+        quantity: unknown
+        unit: unspecified
+        label: Fit
+        required: false
+      fit_current:
+        role: channel
+        header: fit_current
+        quantity: unknown
+        unit: unspecified
+        label: Fit current
+        required: false
+    plot:
+      x: time
+      y:
+        - voltage
+  wgfmu-endurance:
+    when:
+      content_contains_any:
+        - raw_cycles
+      filename_contains_all:
+        - keysight-b1500a.wgfmu
+    format:
+      kind: tabular
+      extensions:
+        - .csv
+      delimiter: ","
+      encoding:
+        - utf-8
+        - windows-1252
+        - iso-8859-1
+    rows:
+      names_prefix: DataName
+      data_prefix: DataValue
+    metadata: []
+    columns:
+      cycles:
+        role: channel
+        header: raw_cycles
+        quantity: cycles
+        unit: cycles
+        label: Cycles
+      channel_2:
+        role: channel
+        header: raw_ch2
+        quantity: unknown
+        unit: unspecified
+        label: Channel 2
+      channel_1:
+        role: channel
+        header: raw_ch1
+        quantity: unknown
+        unit: unspecified
+        label: Channel 1
+        required: false
+    plot:
+      x: cycles
+      y:
+        - channel_2
