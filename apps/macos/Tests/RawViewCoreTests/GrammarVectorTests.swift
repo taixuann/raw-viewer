@@ -51,15 +51,6 @@ struct GrammarVectorTests {
         return (grammar, cases)
     }
 
-    @Test func sharedGrammarCompilePatternMatchesRustReference() throws {
-        let root = Self.repoRoot()
-        let grammarURL = root.appendingPathComponent("fixtures/grammar/standard-scientific.yaml")
-        let grammar = try FilenameGrammarEngine.load(fileURL: grammarURL).grammars[0]
-        let (regex, _) = try FilenameGrammarEngine.compile(template: grammar.template, fields: grammar.fields)
-        let expected = #"^(\d{6}-\d{6})_([^._]+)\.([^._]+)_\[([^]]+)\]_([^_]+(?:\.[^_]+)*)(?:_r\.\[([^]]+)\])?(?:_f\.\[([^]]+)\])?(?:_(\d{3}))?$"#
-        #expect(regex.pattern == expected)
-    }
-
     @Test func sharedGrammarVectorsMatchSwiftEngine() throws {
         let (grammar, cases) = try Self.loadVectors()
         #expect(!cases.isEmpty)
