@@ -1,5 +1,5 @@
 # Placeholder project settings for the usth-lab workspace fixture (#27).
-# The Rust core reads `.raw-viewer/config.toml`; profiles arrive in #18 under `profiles/`.
+# Locked layout: YAML only under `.raw-viewer/` (no config.toml). Profiles arrive in #18 under `profiles/`.
 data_root: data/raw
 default_view: tree
 default_preset: nature-single

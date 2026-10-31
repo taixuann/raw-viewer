@@ -12,7 +12,7 @@ Keysight B1500A modes remain deferred.
 flowchart TB
   root[fixtures/workspaces/usth-lab]
   root --> data[data/raw/YYYY-MM-DD/original filenames]
-  root --> rv[.raw-viewer/config.toml + config.yaml placeholder]
+  root --> rv[.raw-viewer/config.yaml placeholder]
   root --> prof[.raw-viewer/profiles/README.md]
   root --> exp[expected.yaml measured table]
   root --> readme[README.md]
