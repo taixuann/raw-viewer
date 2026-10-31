@@ -53,14 +53,14 @@ struct GrammarVectorTests {
     }
 
     @Test func sharedGrammarVectorsMatchSwiftEngine() throws {
-        let (grammar, cases) = try loadVectors()
+        let (grammar, cases) = try Self.loadVectors()
         #expect(!cases.isEmpty)
         for vector in cases {
             let facts = FilenameGrammarEngine.extract(from: vector.filename, grammar: grammar)
-            #expect(facts.isMatched == vector.matched, Comment("\(vector.id): is_matched"))
+            #expect(facts.isMatched == vector.matched, "\(vector.id): is_matched")
             if vector.matched {
                 for (key, expected) in vector.tokens {
-                    #expect(facts.extractedFields[key] == expected, Comment("\(vector.id): token \(key)"))
+                    #expect(facts.extractedFields[key] == expected, "\(vector.id): token \(key)")
                 }
             }
         }
