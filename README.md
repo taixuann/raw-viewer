@@ -81,6 +81,8 @@ RawView reads declarative instrument profiles (`schema_version: 1`, `2`, or vari
 
 ## Local Development & Verification
 
+Agents and contributors: read [AGENTS.md](AGENTS.md) before changing code.
+
 ### Prerequisites
 - macOS 13.0+ (Ventura, Sonoma, Sequoia), Xcode 15+ or Swift 6.0+ Command Line Tools, for the Swift package
 - Rust stable (1.90 or newer) for the Cargo workspace. The Tauri shell links WebKit on Linux.
