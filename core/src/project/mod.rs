@@ -1,35 +1,63 @@
+use crate::config::{load_project_config, ConfigError};
+use crate::paths::PROJECT_CONFIG_DIRECTORY_NAME;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ProjectError {
     InvalidRoot(String),
+    Config(ConfigError),
 }
 
 impl std::fmt::Display for ProjectError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProjectError::InvalidRoot(msg) => f.write_str(msg),
+            ProjectError::Config(err) => write!(f, "{err}"),
         }
     }
 }
 
-impl std::error::Error for ProjectError {}
+impl std::error::Error for ProjectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ProjectError::InvalidRoot(_) => None,
+            ProjectError::Config(err) => Some(err),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ProjectContext {
     pub root: PathBuf,
     pub raw_root: PathBuf,
     pub data_root_relative_path: String,
+    pub config: crate::config::ProjectConfig,
 }
 
 impl ProjectContext {
     pub const DEFAULT_DATA_ROOT: &'static str = "data/raw";
 
     pub fn open(root: &Path) -> Result<Self, ProjectError> {
-        Self::open_with_data_root(root, Self::DEFAULT_DATA_ROOT)
+        let config_dir = root.join(PROJECT_CONFIG_DIRECTORY_NAME);
+        let config = load_project_config(&config_dir).map_err(ProjectError::Config)?;
+        Self::open_with_config(root, config)
     }
 
     pub fn open_with_data_root(root: &Path, data_root: &str) -> Result<Self, ProjectError> {
+        Self::open_with_config(
+            root,
+            crate::config::ProjectConfig {
+                data_root: data_root.to_string(),
+                ..crate::config::ProjectConfig::default()
+            },
+        )
+    }
+
+    pub fn open_with_config(
+        root: &Path,
+        config: crate::config::ProjectConfig,
+    ) -> Result<Self, ProjectError> {
+        let data_root = config.data_root.as_str();
         if data_root.contains("..") || data_root.starts_with('/') {
             return Err(ProjectError::InvalidRoot(format!(
                 "invalid data root \"{data_root}\""
@@ -45,6 +73,7 @@ impl ProjectContext {
             root: canonical_root,
             raw_root: raw,
             data_root_relative_path: data_root.to_string(),
+            config,
         })
     }
 

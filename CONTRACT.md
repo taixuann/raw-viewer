@@ -14,8 +14,8 @@ when that entry exists.
   for normal inventory.
 
 - A project is a directory with a configured data root specified in
-  `.rawviewer/setting/setting.yaml` (`schema_version: 1`, default view `tree`)
-  or explicitly provided to the headless CLI or selected via the native setup
+  `.raw-viewer/config.yaml` (`schema_version: 1`, default view `tree`) for the Rust core,
+  legacy `.rawviewer/setting/setting.yaml` on Swift, or explicitly provided to the headless CLI or selected via the native setup
   sheet. The suggested data root is `data/raw` when readable and regular. The data
   root may be `.` (the project directory itself) or any contained regular
   directory. External paths, parent navigation (`..`), and symlinked path

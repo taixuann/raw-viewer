@@ -13,9 +13,9 @@ fn temp_project() -> PathBuf {
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("data/raw")).unwrap();
-    fs::create_dir_all(dir.join(".rawviewer")).unwrap();
+    std::fs::create_dir_all(dir.join(".raw-viewer")).unwrap();
     fs::write(
-        dir.join(".rawviewer/setting.yaml"),
+        dir.join(".raw-viewer/config.yaml"),
         "schema_version: 1\ndata_root: data/raw\ndefault_view: tree\ndefault_preset: nature-single\n",
     )
     .unwrap();

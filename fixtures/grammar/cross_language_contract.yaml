@@ -22,3 +22,23 @@ grammar_compile_pattern_tests:
   swift:
     test_file: apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift
     test_name: sharedGrammarCompilePatternMatchesRustReference
+
+config_vectors:
+  file: ../config/vectors.yaml
+  rust:
+    test_file: core/tests/project_layout_config.rs
+    test_name: config_parity_vectors_match_rust_loader
+  swift:
+    test_file: apps/macos/Tests/RawViewCoreTests/ProjectLayoutConfigVectorsTests.swift
+    test_name: sharedConfigVectorsMatchSwiftLoader
+    status: rust-only-pending
+
+cache_vectors:
+  file: ../config/vectors.yaml
+  rust:
+    test_file: core/tests/project_layout_cache.rs
+    test_name: cache_dir_parity_vectors_match_sha256_layout
+  swift:
+    test_file: apps/macos/Tests/RawViewCoreTests/ProjectLayoutCacheVectorsTests.swift
+    test_name: sharedCacheVectorsMatchSwiftLayout
+    status: rust-only-pending

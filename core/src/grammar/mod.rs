@@ -8,7 +8,15 @@ mod compile;
 
 pub use compile::compile;
 
-pub const RELATIVE_PATH: &str = ".rawviewer/grammar.yaml";
+/// Primary grammar path (`.raw-viewer/grammar.yaml`).
+pub const RELATIVE_PATH: &str = ".raw-viewer/grammar.yaml";
+
+/// Grammar read order: new layout first, then legacy paths (read-only).
+pub const GRAMMAR_READ_ORDER: [&str; 3] = [
+    ".raw-viewer/grammar.yaml",
+    ".rawviewer/grammar.yaml",
+    ".rawviewer/view/grammar.yaml",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrammarFieldType {
@@ -71,27 +79,41 @@ pub struct GrammarContext {
     pub error: Option<String>,
 }
 
+pub fn resolve_grammar_path(
+    project_root: &std::path::Path,
+) -> Option<(std::path::PathBuf, &'static str)> {
+    for relative in GRAMMAR_READ_ORDER {
+        let path = project_root.join(relative);
+        if path.is_file() {
+            return Some((path, relative));
+        }
+    }
+    None
+}
+
 pub fn load_file(path: &std::path::Path) -> Result<FilenameGrammarCatalog, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     parse_catalog_text(&text)
 }
 
 pub fn grammar_context(project_root: &std::path::Path) -> GrammarContext {
-    let path = project_root.join(RELATIVE_PATH);
-    if !path.is_file() {
+    let Some((path, relative)) = resolve_grammar_path(project_root) else {
         return GrammarContext {
             catalog: None,
             sha256: None,
-            error: Some(format!("grammar catalog {RELATIVE_PATH} not found")),
+            error: Some(format!(
+                "grammar catalog not found (searched {})",
+                GRAMMAR_READ_ORDER.join(", ")
+            )),
         };
-    }
+    };
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(_) => {
             return GrammarContext {
                 catalog: None,
                 sha256: None,
-                error: Some(format!("grammar catalog {RELATIVE_PATH} could not be read")),
+                error: Some(format!("grammar catalog {relative} could not be read")),
             };
         }
     };

@@ -38,7 +38,7 @@ fn write_case_project(root: &Path, case: &Case) {
     let base = fixtures_root();
     if let Some(grammar_rel) = &case.grammar_file {
         let src = base.join(grammar_rel);
-        let dest = root.join(".rawviewer/grammar.yaml");
+        let dest = root.join(".raw-viewer/grammar.yaml");
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
         fs::copy(&src, &dest).unwrap_or_else(|err| {
             panic!(
