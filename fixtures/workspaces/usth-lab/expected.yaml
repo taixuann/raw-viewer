@@ -86,9 +86,9 @@ entries:
       - Z (Ω)
       - -Phase (°)
       - Time (s)
-    x_quantity: frequency
-    x_unit: Hz
-    y_quantity: impedance_real
+    x_quantity: impedance_real
+    x_unit: ohm
+    y_quantity: impedance
     y_unit: ohm
     metadata_keys: []
   - id: horiba-raman

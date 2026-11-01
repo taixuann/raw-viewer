@@ -25,10 +25,10 @@ variants:
       data_start: 2
     metadata: []
     columns:
-      applied_voltage:
+      electrode_potential:
         role: channel
-        header: "Potential applied (V)"
-        aliases: ["Potential_applied_(V)", "Potential_applied(V)"]
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
         quantity: voltage
         unit: V
         label: Voltage
@@ -39,24 +39,36 @@ variants:
         quantity: current
         unit: A
         label: Current
-      electrode_potential:
-        role: channel
-        header: "WE(1).Potential (V)"
-        aliases: ["WE(1).Potential_(V)"]
-        quantity: voltage
-        unit: V
-        label: Voltage
-        required: false
+      scan:
+        role: progression
+        type: custom
+        behavior: discrete
+        header: Scan
+        quantity: index
+        unit: "1"
+        label: Scan
+      applied_voltage:
+        role: skip
+        header: "Potential applied (V)"
+        aliases: ["Potential_applied_(V)", "Potential_applied(V)"]
       time:
-        role: channel
+        role: skip
         header: "Time (s)"
         aliases: ["Time_(s)"]
-        quantity: time
-        unit: s
-        label: Time
-        required: false
+      index:
+        role: skip
+        header: Index
+      q_plus:
+        role: skip
+        header: Q+
+      q_minus:
+        role: skip
+        header: Q-
+      current_range:
+        role: skip
+        header: Current range
     plot:
-      x: applied_voltage
+      x: electrode_potential
       y: [current]
   ca:
     when:
@@ -92,21 +104,22 @@ variants:
         unit: A
         label: Current
       electrode_potential:
-        role: channel
+        role: skip
         header: "WE(1).Potential (V)"
         aliases: ["WE(1).Potential_(V)"]
-        quantity: voltage
-        unit: V
-        label: Voltage
-        required: false
       corrected_time:
-        role: channel
+        role: skip
         header: "Corrected time (s)"
         aliases: ["Corrected_time_(s)"]
-        quantity: time
-        unit: s
-        label: Time
-        required: false
+      index:
+        role: skip
+        header: Index
+      current_range:
+        role: skip
+        header: Current range
+      overload:
+        role: skip
+        header: Overload
     plot:
       x: time
       y: [current]
@@ -159,9 +172,16 @@ variants:
         unit: deg
         label: "−Phase"
         required: false
+      index:
+        role: skip
+        header: Index
+      time:
+        role: skip
+        header: "Time (s)"
+        aliases: ["Time_(s)"]
     plot:
-      x: frequency
-      y: [z_prime]
+      x: z_prime
+      y: [z_double_prime]
   cv_2col:
     when:
       content_contains_any:

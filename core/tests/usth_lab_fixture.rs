@@ -113,6 +113,148 @@ fn measured_row_count(relative: &str, text: &str) -> usize {
 }
 
 #[test]
+fn usth_lab_expected_yaml_entry_counts() {
+    let doc = parse_expected();
+    let all = entries(&doc);
+    assert_eq!(all.len(), 9, "usth-lab expected.yaml entry count");
+    let plottable = all
+        .iter()
+        .filter(|entry| optional_bool(entry, "plottable"))
+        .count();
+    assert_eq!(plottable, 6, "usth-lab plottable entry count");
+}
+
+fn channel_names(measurement: &raw_viewer_core::measurement::NormalizedMeasurement) -> Vec<String> {
+    let mut names: Vec<String> = measurement
+        .channels
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+const AUTOLAB_PROFILE_YAML: &str =
+    include_str!("../../fixtures/workspaces/usth-lab/.raw-viewer/profiles/autolab-usth.yaml");
+
+fn autolab_v4_document() -> raw_viewer_core::profile::ProfileDocumentV4 {
+    raw_viewer_core::profile::parse_profile_v4(AUTOLAB_PROFILE_YAML)
+        .expect("parse autolab-usth.yaml")
+}
+
+#[test]
+fn usth_lab_autolab_cv_axes_progression_and_skip_columns() {
+    let root = workspace_root();
+    let doc = parse_expected();
+    let entry = entries(&doc)
+        .into_iter()
+        .find(|e| scalar(map_get(e, "id")) == "autolab-cv")
+        .expect("autolab-cv entry");
+    let relative = scalar(map_get(entry, "relative_path"));
+    let measurement = load_measurement(&root, Path::new(relative))
+        .unwrap_or_else(|err| panic!("{relative}: load failed: {err}"));
+    assert_eq!(
+        channel_names(&measurement),
+        vec!["current", "electrode_potential", "scan"],
+        "{relative}: emitted channels"
+    );
+    let scan = channel_by_key(&measurement, "scan");
+    assert_eq!(scan.quantity.as_deref(), Some("index"));
+    assert_eq!(measurement.view.x.as_deref(), Some("electrode_potential"));
+    assert_eq!(
+        measurement.view.y.as_deref(),
+        Some(["current".to_string()].as_slice())
+    );
+    let profile = autolab_v4_document();
+    let cv = profile.variants.get("cv").expect("cv variant");
+    let scan_col = cv.columns.get("scan").expect("scan column");
+    assert!(matches!(
+        scan_col.role,
+        raw_viewer_core::profile::ColumnRoleV4::Progression
+    ));
+    assert_eq!(
+        scan_col
+            .progression
+            .as_ref()
+            .and_then(|p| p.behavior.as_deref()),
+        Some("discrete")
+    );
+    assert_eq!(cv.plot.x, "electrode_potential");
+    assert_eq!(cv.plot.y, vec!["current"]);
+}
+
+#[test]
+fn usth_lab_autolab_ca_axes_and_skip_columns() {
+    let root = workspace_root();
+    let relative =
+        "data/raw/2026-09-21/210926-131400_autolab-usth.ca_[cu-ec-pda.c5-ito.2]_ca.protonation.txt";
+    let measurement = load_measurement(&root, Path::new(relative))
+        .unwrap_or_else(|err| panic!("{relative}: load failed: {err}"));
+    assert_eq!(
+        channel_names(&measurement),
+        vec!["current", "time"],
+        "{relative}: emitted channels"
+    );
+    assert_eq!(measurement.view.x.as_deref(), Some("time"));
+    assert_eq!(
+        measurement.view.y.as_deref(),
+        Some(["current".to_string()].as_slice())
+    );
+}
+
+#[test]
+fn usth_lab_autolab_eis_nyquist_view_and_bode_channels() {
+    let root = workspace_root();
+    let relative =
+        "data/raw/2026-04-21/210426-000000_autolab-usth.eis_[gce-pda]_eis.characterization_r.[ph-6.65].txt";
+    let measurement = load_measurement(&root, Path::new(relative))
+        .unwrap_or_else(|err| panic!("{relative}: load failed: {err}"));
+    assert_eq!(
+        channel_names(&measurement),
+        vec![
+            "frequency".to_string(),
+            "phase".to_string(),
+            "z_double_prime".to_string(),
+            "z_magnitude".to_string(),
+            "z_prime".to_string(),
+        ],
+        "{relative}: emitted channels"
+    );
+    assert_eq!(measurement.view.x.as_deref(), Some("z_prime"));
+    assert_eq!(
+        measurement.view.y.as_deref(),
+        Some(["z_double_prime".to_string()].as_slice())
+    );
+    let (x_q, x_u) = channel_quantity(&measurement, "z_prime");
+    assert_eq!(x_q, "impedance_real");
+    assert_eq!(x_u, "ohm");
+    let (y_q, y_u) = channel_quantity(&measurement, "z_double_prime");
+    assert_eq!(y_q, "impedance");
+    assert_eq!(y_u, "ohm");
+    let (bode_x_q, bode_x_u) = channel_quantity(&measurement, "frequency");
+    assert_eq!(bode_x_q, "frequency");
+    assert_eq!(bode_x_u, "Hz");
+    let (mag_q, mag_u) = channel_quantity(&measurement, "z_magnitude");
+    assert_eq!(mag_q, "impedance");
+    assert_eq!(mag_u, "ohm");
+    let (phase_q, phase_u) = channel_quantity(&measurement, "phase");
+    assert_eq!(phase_q, "phase");
+    assert_eq!(phase_u, "deg");
+    let profile = autolab_v4_document();
+    let eis = profile.variants.get("eis").expect("eis variant");
+    assert_eq!(eis.plot.x, "z_prime");
+    assert_eq!(eis.plot.y, vec!["z_double_prime"]);
+    // Bode axes (frequency vs |Z| and −Phase) are declared as channels; v4 exposes one plot per variant.
+    assert!(eis.columns.contains_key("frequency"));
+    assert!(eis.columns.contains_key("z_magnitude"));
+    assert!(eis.columns.contains_key("phase"));
+    assert!(matches!(
+        eis.columns.get("index").expect("index").role,
+        raw_viewer_core::profile::ColumnRoleV4::Skip
+    ));
+}
+
+#[test]
 fn usth_lab_expected_entries_match_committed_files() {
     let root = workspace_root();
     let doc = parse_expected();

@@ -22,3 +22,7 @@ Generic tabular `header_metadata` on the dual-sweep fixture pulls second-block n
 ## Grammar
 
 Deferred to #24; usth routing uses `when` filename/content selectors only.
+
+## Repair cycle 3 (2026-11-01)
+
+Autolab column/plot decisions and v4 skip-role wiring: [2026-11-01-usth-profiles-18c2-repair3.md](./2026-11-01-usth-profiles-18c2-repair3.md).

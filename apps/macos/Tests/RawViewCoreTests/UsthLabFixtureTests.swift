@@ -35,20 +35,37 @@ struct UsthLabFixtureTests {
     private static func parseExpectedEntries(text: String) throws -> [ExpectedEntry] {
         let root = try YAMLParser.parse(text, allowIndentlessSequences: false)
         guard let items = root.value(for: "entries")?.listItems else { return [] }
-        return try items.compactMap { item in
-            guard let map = item.mapEntries else { return nil }
+        return try items.map { item in
+            guard let map = item.mapEntries else {
+                throw ExpectedParseError.invalid("entry must be a mapping")
+            }
             func optionalScalar(_ key: String) -> String? {
                 map.first(where: { $0.key == key })?.value.scalarValue
             }
-            guard let relativePath = optionalScalar("relative_path"),
-                  let profileID = optionalScalar("profile_id"),
-                  let variant = optionalScalar("variant"),
-                  let plottableText = optionalScalar("plottable"),
-                  let xQuantity = optionalScalar("x_quantity"),
-                  let xUnit = optionalScalar("x_unit"),
-                  let yQuantity = optionalScalar("y_quantity"),
-                  let yUnit = optionalScalar("y_unit")
-            else { return nil }
+            guard let relativePath = optionalScalar("relative_path") else {
+                throw ExpectedParseError.invalid("missing relative_path")
+            }
+            guard let profileID = optionalScalar("profile_id") else {
+                throw ExpectedParseError.invalid("missing profile_id")
+            }
+            guard let variant = optionalScalar("variant") else {
+                throw ExpectedParseError.invalid("missing variant")
+            }
+            guard let plottableText = optionalScalar("plottable") else {
+                throw ExpectedParseError.invalid("missing plottable")
+            }
+            guard let xQuantity = optionalScalar("x_quantity") else {
+                throw ExpectedParseError.invalid("missing x_quantity")
+            }
+            guard let xUnit = optionalScalar("x_unit") else {
+                throw ExpectedParseError.invalid("missing x_unit")
+            }
+            guard let yQuantity = optionalScalar("y_quantity") else {
+                throw ExpectedParseError.invalid("missing y_quantity")
+            }
+            guard let yUnit = optionalScalar("y_unit") else {
+                throw ExpectedParseError.invalid("missing y_unit")
+            }
             let plottable: Bool
             switch plottableText {
             case "true": plottable = true
@@ -96,6 +113,14 @@ struct UsthLabFixtureTests {
                 if case .string(let text) = field.value { return text }
                 return nil
             }
+    }
+
+    @Test func expectedYAMLEntryCounts() async throws {
+        let expectedText = try String(
+            contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
+        let rows = try Self.parseExpectedEntries(text: expectedText)
+        #expect(rows.count == 9)
+        #expect(rows.filter(\.plottable).count == 6)
     }
 
     @Test func plottableRowsMatchExpectedProfileAndAxes() async throws {
@@ -178,5 +203,74 @@ struct UsthLabFixtureTests {
             #expect(Self.acquisitionString(measurement, key: "Date") == "2026/10/07")
             #expect(Self.acquisitionString(measurement, key: "Time") == "14:37:03.3081121444702148437")
         }
+    }
+
+    @Test func autolabCvProgressionAndSkipColumns() async throws {
+        let project = try ProjectContext.open(Self.workspaceRoot)
+        let relative =
+            "data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt"
+        let source = try #require(try project.discoverSources().first { $0.relativePath == relative })
+        let measurement = try await InstrumentReader.load(source.url, project: project)
+        let channelNames = measurement.channels.map(\.name).sorted()
+        #expect(channelNames == ["current", "electrode_potential", "scan"])
+        let scan = try #require(measurement.channel(named: "scan"))
+        #expect(scan.quantity == "index")
+        #expect(measurement.view.x == "electrode_potential")
+        #expect(measurement.view.y == ["current"])
+        let profileURL = Self.workspaceRoot
+            .appendingPathComponent(".raw-viewer/profiles/autolab-usth.yaml")
+        let yaml = try String(contentsOf: profileURL, encoding: .utf8)
+        let doc = try ProfileV4Codec.parse(text: yaml)
+        let cv = try #require(doc.variants["cv"])
+        let scanCol = try #require(cv.columns["scan"])
+        #expect(scanCol.role == .progression)
+        #expect(scanCol.progression?.behavior == "discrete")
+    }
+
+    @Test func autolabCaAxesAndSkipColumns() async throws {
+        let project = try ProjectContext.open(Self.workspaceRoot)
+        let relative =
+            "data/raw/2026-09-21/210926-131400_autolab-usth.ca_[cu-ec-pda.c5-ito.2]_ca.protonation.txt"
+        let source = try #require(try project.discoverSources().first { $0.relativePath == relative })
+        let measurement = try await InstrumentReader.load(source.url, project: project)
+        #expect(measurement.channels.map(\.name).sorted() == ["current", "time"])
+        #expect(measurement.view.x == "time")
+        #expect(measurement.view.y == ["current"])
+    }
+
+    @Test func autolabEisNyquistViewAndBodeChannels() async throws {
+        let project = try ProjectContext.open(Self.workspaceRoot)
+        let relative =
+            "data/raw/2026-04-21/210426-000000_autolab-usth.eis_[gce-pda]_eis.characterization_r.[ph-6.65].txt"
+        let source = try #require(try project.discoverSources().first { $0.relativePath == relative })
+        let measurement = try await InstrumentReader.load(source.url, project: project)
+        #expect(measurement.channels.map(\.name).sorted() == [
+            "frequency", "phase", "z_double_prime", "z_magnitude", "z_prime",
+        ])
+        #expect(measurement.view.x == "z_prime")
+        #expect(measurement.view.y == ["z_double_prime"])
+        let zPrime = try #require(measurement.channel(named: "z_prime"))
+        #expect(zPrime.quantity == "impedance_real")
+        #expect(zPrime.unit == "ohm")
+        let zDouble = try #require(measurement.channel(named: "z_double_prime"))
+        #expect(zDouble.quantity == "impedance")
+        #expect(zDouble.unit == "ohm")
+        let frequency = try #require(measurement.channel(named: "frequency"))
+        #expect(frequency.quantity == "frequency")
+        #expect(frequency.unit == "Hz")
+        let magnitude = try #require(measurement.channel(named: "z_magnitude"))
+        #expect(magnitude.quantity == "impedance")
+        #expect(magnitude.unit == "ohm")
+        let phase = try #require(measurement.channel(named: "phase"))
+        #expect(phase.quantity == "phase")
+        #expect(phase.unit == "deg")
+        let profileURL = Self.workspaceRoot
+            .appendingPathComponent(".raw-viewer/profiles/autolab-usth.yaml")
+        let yaml = try String(contentsOf: profileURL, encoding: .utf8)
+        let doc = try ProfileV4Codec.parse(text: yaml)
+        let eis = try #require(doc.variants["eis"])
+        #expect(eis.plot.x == "z_prime")
+        #expect(eis.plot.y == ["z_double_prime"])
+        #expect(eis.columns["index"]?.role == .skip)
     }
 }
