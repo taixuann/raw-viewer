@@ -47,6 +47,22 @@ jobs:
           git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...HEAD" > /tmp/changed.txt
           ./Scripts/check_pr_owned_files.sh /dev/null /tmp/changed.txt
 
+  cross-language-test-contract:
+    name: cross-language test contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Cross-language contract check self-test
+        run: ./Scripts/check_cross_language_test_contract_self_test.sh
+      - name: Cross-language grammar contract check
+        run: ./Scripts/check_cross_language_test_contract.sh
+      - name: Rust grammar vector tests
+        run: cargo test -p raw-viewer-core --test grammar_vectors
+
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

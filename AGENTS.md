@@ -13,6 +13,7 @@ When a case has multiple values, columns, or elements, assert every value in the
 Map each contract acceptance case to its test or vector in the pull request body under `## Acceptance case → test mapping` (ASCII `->` is also accepted in the heading).
 List every repo-relative path or glob the task owns in the pull request body under `## Owned files`, one entry per line.
 Do not edit files outside that owned list without explicit human approval.
+Wire Rust and Swift grammar parity tests to shared fixtures under `fixtures/grammar/`; do not pin compile regex strings in only one language.
 
 The `pr-acceptance-mapping` CI job is **advisory**: it is not a required GitHub ruleset check for merge, and Tai decides separately whether to treat it as mandatory. The job only verifies that the mapping **table exists** with at least one non-placeholder row (placeholder rows containing `(example)` fail). Reviewers and verifiers still confirm the mapping is **correct and complete** against the task contract and that tests cover every case.
 
@@ -91,6 +92,7 @@ The gardener owns this table. Update it when rules or checks change.
 | L66 — Verification gate (macOS check scripts + Rust fmt/clippy/test). | `.github/workflows/ci.yml:46-51`, `73-76` | partial |
 | L10–L13 — Task contract acceptance coverage and PR mapping. | `Scripts/check_pr_acceptance_mapping.sh` and `Scripts/check_pr_acceptance_mapping_self_test.sh`; `.github/workflows/ci.yml` (`pr-acceptance-mapping` job, advisory); named tests/vectors, mapping correctness/completeness, and full multi-value assertions are review-/verifier-enforced | partial |
 | L14–L16 — Task owned-file list in PR body; no edits outside owned paths without human approval. | `Scripts/check_pr_owned_files.sh` and `Scripts/check_pr_owned_files_self_test.sh`; `.github/workflows/ci.yml` (`pr-owned-files` job, advisory); semantic creep inside owned files is review-/verifier-enforced | partial |
+| L14 — Rust/Swift cross-language grammar test parity (shared fixtures; no hand-copied compile regex). | `Scripts/check_cross_language_test_contract.sh`, `Scripts/check_cross_language_test_contract_self_test.sh`, `fixtures/grammar/cross_language_contract.yaml`; `.github/workflows/ci.yml` (`cross-language-test-contract` job); profile/progression assertions outside grammar vectors remain review-enforced | partial |
 | CI must be green on required jobs before merge. | `.github/workflows/ci.yml` (rust matrix, swift job) | enforced |
 
 Required GitHub status checks on `master` are not configured (Tai's decision).
