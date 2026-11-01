@@ -74,6 +74,8 @@ pub enum MetadataEntryV4 {
         row: i32,
         key: String,
     },
+    /// Ordered Acquisition header key for tabular pre-header metadata.
+    AcquisitionHeaderKey(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +313,14 @@ fn compile_format(
     {
         data_prefix = Some(String::new());
     }
+    let acquisition_header_keys = variant
+        .metadata
+        .iter()
+        .filter_map(|entry| match entry {
+            MetadataEntryV4::AcquisitionHeaderKey(key) => Some(key.clone()),
+            _ => None,
+        })
+        .collect();
     Ok(ProfileFormat {
         id: format_id,
         kind: variant.format.kind.clone(),
@@ -325,6 +335,7 @@ fn compile_format(
         decimal_separator: variant.format.decimal_separator,
         names_prefix: variant.rows.names_prefix.clone(),
         data_prefix,
+        acquisition_header_keys,
         columns,
     })
 }
@@ -676,9 +687,20 @@ fn decode_metadata(
     let mut out = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let meta_field = format!("{field}.metadata[{index}]");
-        let entries = item
-            .map_entries()
-            .ok_or_else(|| invalid(format!("{meta_field} must be a mapping.")))?;
+        if let Some(scalar) = item.scalar_value() {
+            if scalar.is_empty() {
+                return Err(invalid(format!(
+                    "{meta_field} must be a non-empty acquisition header key."
+                )));
+            }
+            out.push(MetadataEntryV4::AcquisitionHeaderKey(scalar.to_string()));
+            continue;
+        }
+        let entries = item.map_entries().ok_or_else(|| {
+            invalid(format!(
+                "{meta_field} must be a mapping or header key string."
+            ))
+        })?;
         if entries.iter().any(|(k, _)| k == "column") {
             reject_unknown(item, &["column", "row", "key"], &meta_field)?;
             let column = positive_int(
@@ -979,6 +1001,47 @@ variants:
 "#;
         let doc = parse(yaml).expect("parse");
         assert_eq!(doc.variants.keys().cloned().collect::<Vec<_>>(), vec!["cv"]);
+    }
+
+    #[test]
+    fn acquisition_header_key_scalars_decode() {
+        let yaml = r#"schema_version: 4
+id: usth/demo
+instrument:
+  id: demo
+  name: Demo
+variants:
+  m:
+    format:
+      kind: tabular
+      extensions: [".txt"]
+      delimiter: ","
+    rows:
+      header: 1
+    metadata:
+      - Alpha
+      - Beta
+    columns:
+      x:
+        role: channel
+        header: X
+        quantity: voltage
+        unit: V
+        label: X
+    plot:
+      x: x
+      y: [x]
+    when:
+      content_contains_any: ["x"]
+"#;
+        let doc = parse(yaml).expect("parse");
+        assert_eq!(
+            doc.variants["m"].metadata,
+            vec![
+                MetadataEntryV4::AcquisitionHeaderKey("Alpha".into()),
+                MetadataEntryV4::AcquisitionHeaderKey("Beta".into()),
+            ]
+        );
     }
 
     #[test]

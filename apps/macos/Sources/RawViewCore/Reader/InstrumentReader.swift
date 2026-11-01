@@ -286,12 +286,11 @@ public enum InstrumentReader {
             let gapCount = extracted.columns.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
             let facts = parseFilename(basename)
             let headerFields = match.format.kind == "tabular"
-                && match.profile.profileID == "usth/keithley-2400"
                 && match.profile.schemaVersion == 4
-                ? trimLVMAcquisitionHeaderFields(
+                && !match.format.acquisitionHeaderKeys.isEmpty
+                ? applyProfileAcquisitionHeaderFields(
                     extracted.headerFields,
-                    profileID: match.profile.profileID,
-                    schemaVersion: match.profile.schemaVersion)
+                    orderedKeys: match.format.acquisitionHeaderKeys)
                 : extracted.headerFields
             let measurement = NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
@@ -659,27 +658,20 @@ public enum InstrumentReader {
         return true
     }
 
-    private static func trimLVMAcquisitionHeaderFields(
+    private static func applyProfileAcquisitionHeaderFields(
         _ headerFields: [(key: String, value: String)],
-        profileID: String,
-        schemaVersion: Int
+        orderedKeys: [String]
     ) -> [(key: String, value: String)] {
-        if profileID == "usth/keithley-2400", schemaVersion == 4 {
-            let ordered = [
-                "Date", "Decimal_Separator", "LabVIEW Measurement", "Multi_Headings", "Operator",
-                "Reader_Version", "Separator", "Time", "Time_Pref", "Writer_Version", "X_Columns",
-            ]
-            var out: [(key: String, value: String)] = []
-            for key in ordered {
-                if let hit = headerFields.first(where: { $0.key == key }) {
-                    out.append(hit)
-                } else if key == "LabVIEW Measurement" {
-                    out.append((key: key, value: ""))
-                }
+        guard !orderedKeys.isEmpty else { return headerFields }
+        var out: [(key: String, value: String)] = []
+        for key in orderedKeys {
+            if let hit = headerFields.first(where: { $0.key == key }) {
+                out.append(hit)
+            } else if key == "LabVIEW Measurement" {
+                out.append((key: key, value: ""))
             }
-            return out
         }
-        return headerFields
+        return out
     }
 
     private static func metadataSections(headerFields: [(key: String, value: String)], filename: String, facts: (timestamp: String?, deviceID: String?, category: String?), channelCount: Int, rowCount: Int, gapCount: Int) -> [MetadataSection] {

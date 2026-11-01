@@ -2329,6 +2329,106 @@ struct InstrumentReaderTests {
         let url2 = try project.discoverSources().first!.url
         await #expect(throws: ReaderError.self) { try await InstrumentReader.load(url2, project: project) }
     }
+
+    @Test func v4AcquisitionHeaderMetadataFromProfileScalars() async throws {
+        let profile = """
+        schema_version: 4
+        id: test/acquisition-filter
+        instrument:
+          id: demo
+          name: Demo
+        variants:
+          sweep:
+            when:
+              content_contains_any: [ACQ-META-MARKER]
+            format:
+              kind: tabular
+              extensions: [".txt"]
+              delimiter: "\\t"
+              encoding: [utf-8]
+            rows:
+              names_prefix: DataName
+              data_prefix: DataValue
+            metadata:
+              - Alpha
+              - Beta
+            columns:
+              voltage:
+                role: channel
+                header: voltage
+                quantity: voltage
+                unit: V
+                label: Voltage
+              current:
+                role: channel
+                header: current
+                quantity: current
+                unit: A
+                label: Current
+            plot:
+              x: voltage
+              y: [current]
+        """
+        let source = "ACQ-META-MARKER\t\nAlpha\tfirst\nExtra\tignored\nBeta\tsecond\nDataName\tvoltage\tcurrent\nDataValue\t0\t1\n"
+        let root = try makeRawViewerProfilesProject(profiles: ["filter.yaml": profile], sources: ["data/raw/sample.txt": Data(source.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let url = root.appendingPathComponent("data/raw/sample.txt")
+        let measurement = try await InstrumentReader.load(url, project: project)
+        let keys = measurement.metadataSections
+            .filter { $0.title == "Acquisition" }
+            .flatMap { $0.fields.map(\.key) }
+        #expect(keys == ["Alpha", "Beta"])
+    }
+
+    @Test func v4EmptyMetadataLeavesAcquisitionUnfiltered() async throws {
+        let profile = """
+        schema_version: 4
+        id: test/acquisition-plain
+        instrument:
+          id: demo
+          name: Demo
+        variants:
+          sweep:
+            when:
+              content_contains_any: [ACQ-META-MARKER]
+            format:
+              kind: tabular
+              extensions: [".txt"]
+              delimiter: "\\t"
+              encoding: [utf-8]
+            rows:
+              names_prefix: DataName
+              data_prefix: DataValue
+            metadata: []
+            columns:
+              voltage:
+                role: channel
+                header: voltage
+                quantity: voltage
+                unit: V
+                label: Voltage
+              current:
+                role: channel
+                header: current
+                quantity: current
+                unit: A
+                label: Current
+            plot:
+              x: voltage
+              y: [current]
+        """
+        let source = "ACQ-META-MARKER\t\nAlpha\tfirst\nExtra\tignored\nBeta\tsecond\nDataName\tvoltage\tcurrent\nDataValue\t0\t1\n"
+        let root = try makeRawViewerProfilesProject(profiles: ["plain.yaml": profile], sources: ["data/raw/sample.txt": Data(source.utf8)])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = try ProjectContext.open(root)
+        let url = root.appendingPathComponent("data/raw/sample.txt")
+        let measurement = try await InstrumentReader.load(url, project: project)
+        let keys = measurement.metadataSections
+            .filter { $0.title == "Acquisition" }
+            .flatMap { $0.fields.map(\.key) }
+        #expect(keys.contains("Extra"))
+    }
 }
 
 private actor ProgressRecorder {
@@ -2753,6 +2853,28 @@ private func makeProject(profiles: [String: String], sources: [String: Data]) th
     for (name, contents) in profiles {
         let url = root.appendingPathComponent("data/instruments/\(name)")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(contents.utf8).write(to: url)
+    }
+    return root
+}
+
+private func makeRawViewerProfilesProject(profiles: [String: String], sources: [String: Data]) throws -> URL {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-test-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("data/raw"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".raw-viewer/profiles"), withIntermediateDirectories: true)
+    try Data("""
+    schema_version: 1
+    data_root: data/raw
+    default_view: tree
+    default_preset: nature-single
+    """.utf8).write(to: root.appendingPathComponent(".rawviewer/setting.yaml"))
+    for (relativePath, data) in sources {
+        let url = root.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+    }
+    for (name, contents) in profiles {
+        let url = root.appendingPathComponent(".raw-viewer/profiles/\(name)")
         try Data(contents.utf8).write(to: url)
     }
     return root

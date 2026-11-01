@@ -247,7 +247,7 @@ fn metadata_keys(measurement: &raw_viewer_core::measurement::NormalizedMeasureme
     keys
 }
 
-/// Recorded in PR #18c-2: generic LVM `header_metadata` alone did not yield the 11 Keithley keys; reader filters to the v4 contract list.
+/// Recorded in PR #18c-2: generic LVM `header_metadata` alone did not yield the 11 Keithley keys; v4 variant `metadata` scalars filter Acquisition headers.
 pub const KEITHLEY_LVM_PROBE_SUFFICIENT: bool = false;
 
 #[test]

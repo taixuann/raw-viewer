@@ -50,6 +50,7 @@ fn usth_fixture_profiles_compile_with_tabular_row_markers() {
         .expect("dual-sweep format");
     assert_eq!(format.names_prefix.as_deref(), Some("X_Value"));
     assert_eq!(format.data_prefix.as_deref(), Some(""));
+    assert_eq!(format.acquisition_header_keys.len(), 11);
 }
 
 #[test]

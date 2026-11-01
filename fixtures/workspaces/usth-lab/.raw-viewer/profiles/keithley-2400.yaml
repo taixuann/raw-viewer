@@ -23,7 +23,18 @@ variants:
     rows:
       names_prefix: X_Value
       data_prefix: ""
-    metadata: []
+    metadata:
+      - Date
+      - Decimal_Separator
+      - LabVIEW Measurement
+      - Multi_Headings
+      - Operator
+      - Reader_Version
+      - Separator
+      - Time
+      - Time_Pref
+      - Writer_Version
+      - X_Columns
     columns:
       voltage:
         role: channel

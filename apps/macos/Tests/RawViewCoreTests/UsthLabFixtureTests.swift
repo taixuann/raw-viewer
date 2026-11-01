@@ -27,82 +27,51 @@ struct UsthLabFixtureTests {
         let metadataKeys: [String]
     }
 
-    private static func parseExpectedEntries(text: String) -> [ExpectedEntry] {
-        var entries: [ExpectedEntry] = []
-        var relativePath: String?
-        var profileID: String?
-        var variant: String?
-        var plottable = false
-        var xQuantity: String?
-        var xUnit: String?
-        var yQuantity: String?
-        var yUnit: String?
-        var metadataKeys: [String] = []
-        var inMetadataList = false
+    private enum ExpectedParseError: Error {
+        case invalid(String)
+    }
 
-        func flush() {
-            guard let rp = relativePath, let pid = profileID, let varnt = variant,
-                  let xq = xQuantity, let xu = xUnit, let yq = yQuantity, let yu = yUnit else { return }
-            entries.append(
-                ExpectedEntry(
-                    relativePath: rp,
-                    profileID: pid,
-                    variant: varnt,
-                    plottable: plottable,
-                    xQuantity: xq,
-                    xUnit: xu,
-                    yQuantity: yq,
-                    yUnit: yu,
-                    metadataKeys: metadataKeys))
-            relativePath = nil
-            profileID = nil
-            variant = nil
-            plottable = false
-            xQuantity = nil
-            xUnit = nil
-            yQuantity = nil
-            yUnit = nil
-            metadataKeys = []
-            inMetadataList = false
-        }
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("- id:") {
-                flush()
-                continue
+    private static func parseExpectedEntries(text: String) throws -> [ExpectedEntry] {
+        let root = try YAMLParser.parse(text)
+        guard let items = root.value(for: "entries")?.listItems else { return [] }
+        return try items.map { item in
+            guard let map = item.mapEntries else {
+                throw ExpectedParseError.invalid("expected entry map")
             }
-            if inMetadataList {
-                if trimmed.hasPrefix("- ") {
-                    metadataKeys.append(String(trimmed.dropFirst(2)))
-                    continue
+            func scalar(_ key: String) throws -> String {
+                guard let value = map.first(where: { $0.key == key })?.value.scalarValue else {
+                    throw ExpectedParseError.invalid("missing \(key)")
                 }
-                inMetadataList = false
+                return value
             }
-            guard let colon = trimmed.firstIndex(of: ":") else { continue }
-            let key = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces)
-            let value = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            switch key {
-            case "relative_path": relativePath = value
-            case "profile_id": profileID = value
-            case "variant": variant = value
-            case "plottable": plottable = value == "true"
-            case "x_quantity": xQuantity = value
-            case "x_unit": xUnit = value
-            case "y_quantity": yQuantity = value
-            case "y_unit": yUnit = value
-            case "metadata_keys":
-                if value == "[]" {
-                    metadataKeys = []
-                } else {
-                    inMetadataList = true
+            func bool(_ key: String) throws -> Bool {
+                switch try scalar(key) {
+                case "true": return true
+                case "false": return false
+                default:
+                    throw ExpectedParseError.invalid("\(key) not bool")
                 }
-            default:
-                break
             }
+            let metadataNode = map.first(where: { $0.key == "metadata_keys" })?.value
+            let metadataKeys: [String]
+            if let list = metadataNode?.listItems {
+                metadataKeys = list.compactMap(\.scalarValue)
+            } else if metadataNode?.scalarValue == "[]" {
+                metadataKeys = []
+            } else {
+                metadataKeys = []
+            }
+            return ExpectedEntry(
+                relativePath: try scalar("relative_path"),
+                profileID: try scalar("profile_id"),
+                variant: try scalar("variant"),
+                plottable: try bool("plottable"),
+                xQuantity: try scalar("x_quantity"),
+                xUnit: try scalar("x_unit"),
+                yQuantity: try scalar("y_quantity"),
+                yUnit: try scalar("y_unit"),
+                metadataKeys: metadataKeys)
         }
-        flush()
-        return entries
     }
 
     private static func acquisitionMetadataKeys(_ measurement: NormalizedMeasurement) -> [String] {
@@ -116,7 +85,7 @@ struct UsthLabFixtureTests {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
-        let rows = Self.parseExpectedEntries(text: expectedText).filter(\.plottable)
+        let rows = try Self.parseExpectedEntries(text: expectedText).filter(\.plottable)
         #expect(rows.count == 6)
         let sources = try project.discoverSources()
         for entry in rows {
@@ -140,7 +109,7 @@ struct UsthLabFixtureTests {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
-        let rows = Self.parseExpectedEntries(text: expectedText)
+        let rows = try Self.parseExpectedEntries(text: expectedText)
             .filter { $0.plottable && !$0.metadataKeys.isEmpty }
         #expect(rows.count == 1)
         let sources = try project.discoverSources()

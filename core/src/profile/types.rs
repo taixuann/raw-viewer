@@ -24,6 +24,8 @@ pub struct ProfileFormat {
     pub decimal_separator: char,
     pub names_prefix: Option<String>,
     pub data_prefix: Option<String>,
+    /// Schema v4 tabular: ordered Acquisition keys from variant `metadata` scalars.
+    pub acquisition_header_keys: Vec<String>,
     pub columns: Vec<ProfileColumn>,
 }
 
