@@ -87,7 +87,12 @@ public enum InstrumentReader {
                                 case .supported(let inspection, let disposition):
                                     return (offset, SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil))
                                 case .blocked(let message):
-                                    return (offset, SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message))
+                                    return (offset, SourceInspectionResult(
+                                        source: source,
+                                        inspection: nil,
+                                        disposition: .deterministicBlocked,
+                                        error: message,
+                                        profileResolveCode: ProfileWhenMatcher.profileInspectionResolveCode(message: message)))
                                 }
                             }
                         }
@@ -280,6 +285,7 @@ public enum InstrumentReader {
             let rowCount = extracted.columns.first?.1.count ?? 0
             let gapCount = extracted.columns.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
             let facts = parseFilename(basename)
+            let headerFields = extracted.headerFields
             let measurement = NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
                 instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName,
@@ -287,7 +293,7 @@ public enum InstrumentReader {
                 applicationMode: match.mode.id,
                 view: MeasurementView(kind: "xy", x: match.mode.x, y: match.mode.y, preserveOrder: true),
                 channels: channels,
-                metadataSections: metadataSections(headerFields: extracted.headerFields, filename: basename, facts: facts, channelCount: channels.count, rowCount: rowCount, gapCount: gapCount),
+                metadataSections: metadataSections(headerFields: headerFields, filename: basename, facts: facts, channelCount: channels.count, rowCount: rowCount, gapCount: gapCount),
                 warnings: extracted.warnings,
                 supportStatus: "supported",
                 provenance: [
@@ -325,7 +331,12 @@ public enum InstrumentReader {
             case .supported(let inspection, let disposition):
                 return SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil)
             case .blocked(let message):
-                return SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message)
+                return SourceInspectionResult(
+                    source: source,
+                    inspection: nil,
+                    disposition: .deterministicBlocked,
+                    error: message,
+                    profileResolveCode: ProfileWhenMatcher.profileInspectionResolveCode(message: message))
             }
         } catch is CancellationError {
             return SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: ReaderError.cancelled.localizedDescription)
@@ -1094,8 +1105,60 @@ enum TabularExtractor {
             }
             throw ReaderError.invalidSource("\(relativePath): no \"\(dataPrefix)\" data rows were found after the header.")
         }
-        let headerFields = try headerMetadata(lines: headerLineTexts, delimiter: format.delimiter, relativePath: relativePath)
+        let headerFields: [(key: String, value: String)]
+        if !format.metadata.isEmpty {
+            headerFields = try applyV4ProfileMetadata(
+                preHeaderLines: headerLineTexts,
+                delimiter: format.delimiter,
+                entries: format.metadata,
+                relativePath: relativePath)
+        } else {
+            headerFields = try headerMetadata(lines: headerLineTexts, delimiter: format.delimiter, relativePath: relativePath)
+        }
         return TabularExtraction(columns: columns.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: headerFields, sha256: puller.digestHex())
+    }
+
+    static func applyV4ProfileMetadata(
+        preHeaderLines: [String],
+        delimiter: Character,
+        entries: [ProfileMetadataEntry],
+        relativePath: String
+    ) throws -> [(key: String, value: String)] {
+        var out: [(key: String, value: String)] = []
+        for entry in entries {
+            switch entry {
+            case .rowKeyValue(let row, let key, _, _):
+                guard row >= 1, row <= preHeaderLines.count else {
+                    throw ReaderError.invalidSource("\(relativePath): metadata \"\(key)\" source row \(row) is before the header or past the end of the pre-header section.")
+                }
+                let cells = try split(preHeaderLines[row - 1], delimiter: delimiter, context: "\(relativePath) metadata row \(row)")
+                if cells.count >= 2 {
+                    let value = cells[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !value.isEmpty {
+                        out.append((key: key, value: truncateMetadataValue(value)))
+                    }
+                }
+            case .cellKey(let column, let row, let key):
+                guard row >= 1, row <= preHeaderLines.count else {
+                    throw ReaderError.invalidSource("\(relativePath): metadata \"\(key)\" source row \(row) is before the header or past the end of the pre-header section.")
+                }
+                let cells = try split(preHeaderLines[row - 1], delimiter: delimiter, context: "\(relativePath) metadata row \(row)")
+                let index = column - 1
+                guard index >= 0, index < cells.count else { continue }
+                let value = cells[index].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty {
+                    out.append((key: key, value: truncateMetadataValue(value)))
+                }
+            }
+        }
+        return out
+    }
+
+    private static func truncateMetadataValue(_ trimmed: String) -> String {
+        if trimmed.count > 512 {
+            return String(trimmed.prefix(509)) + "..."
+        }
+        return trimmed
     }
 
     /// Ordered header fields from lines before the names row. Lines are split on

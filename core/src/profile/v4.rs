@@ -1,7 +1,7 @@
 //! Schema-v4 flat instrument profiles (decode, validate, compile to v1/v2 reader shape).
 
 use crate::profile::types::{
-    humanized, InstrumentProfile, ProfileColumn, ProfileFormat, ProfileMode,
+    humanized, InstrumentProfile, ProfileColumn, ProfileFormat, ProfileMetadataEntry, ProfileMode,
 };
 use crate::yaml::YamlNode;
 use std::collections::{BTreeMap, HashSet};
@@ -61,20 +61,7 @@ pub struct RowSpanV4 {
     pub end: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MetadataEntryV4 {
-    RowKeyValue {
-        row: i32,
-        key: String,
-        value_type: String,
-        format: Option<String>,
-    },
-    CellKey {
-        column: i32,
-        row: i32,
-        key: String,
-    },
-}
+pub type MetadataEntryV4 = ProfileMetadataEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnRoleV4 {
@@ -304,6 +291,14 @@ fn compile_format(
             required: col.required,
         });
     }
+    let mut data_prefix = variant.rows.data_prefix.clone();
+    if data_prefix.is_none()
+        && variant.format.kind == "tabular"
+        && variant.rows.names_prefix.is_some()
+    {
+        data_prefix = Some(String::new());
+    }
+    let metadata = variant.metadata.clone();
     Ok(ProfileFormat {
         id: format_id,
         kind: variant.format.kind.clone(),
@@ -317,7 +312,8 @@ fn compile_format(
         encoding_names: variant.format.encoding_names.clone(),
         decimal_separator: variant.format.decimal_separator,
         names_prefix: variant.rows.names_prefix.clone(),
-        data_prefix: variant.rows.data_prefix.clone(),
+        data_prefix,
+        metadata,
         columns,
     })
 }
@@ -599,8 +595,14 @@ fn decode_rows(node: &YamlNode, field: &str) -> Result<RowsBlockV4, ProfileV4Err
             node.value_for_key("data_start"),
             &format!("{field}.data_start"),
         )?,
-        names_prefix: optional_scalar(node, "names_prefix"),
-        data_prefix: optional_scalar(node, "data_prefix"),
+        names_prefix: node
+            .value_for_key("names_prefix")
+            .and_then(|n| n.scalar_value())
+            .map(str::to_string),
+        data_prefix: node
+            .value_for_key("data_prefix")
+            .and_then(|n| n.scalar_value())
+            .map(str::to_string),
     })
 }
 
@@ -663,9 +665,11 @@ fn decode_metadata(
     let mut out = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let meta_field = format!("{field}.metadata[{index}]");
-        let entries = item
-            .map_entries()
-            .ok_or_else(|| invalid(format!("{meta_field} must be a mapping.")))?;
+        let entries = item.map_entries().ok_or_else(|| {
+            invalid(format!(
+                "{meta_field} must be a mapping with row/key/type or column/row/key."
+            ))
+        })?;
         if entries.iter().any(|(k, _)| k == "column") {
             reject_unknown(item, &["column", "row", "key"], &meta_field)?;
             let column = positive_int(
@@ -674,13 +678,13 @@ fn decode_metadata(
             )?;
             let row = positive_int(item.value_for_key("row"), &format!("{meta_field}.row"))?;
             let key = scalar_required(item, "key", &format!("{meta_field}.key"))?;
-            out.push(MetadataEntryV4::CellKey { column, row, key });
+            out.push(ProfileMetadataEntry::CellKey { column, row, key });
         } else {
             reject_unknown(item, &["row", "key", "type", "format"], &meta_field)?;
             let row = positive_int(item.value_for_key("row"), &format!("{meta_field}.row"))?;
             let key = scalar_required(item, "key", &format!("{meta_field}.key"))?;
             let value_type = scalar_required(item, "type", &format!("{meta_field}.type"))?;
-            out.push(MetadataEntryV4::RowKeyValue {
+            out.push(ProfileMetadataEntry::RowKeyValue {
                 row,
                 key,
                 value_type,

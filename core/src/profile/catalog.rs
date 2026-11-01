@@ -25,6 +25,13 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
         }
     };
 
+    // Precedence: `.raw-viewer/profiles/` → `.rawviewer/instrument/` →
+    // `data/.rawview/instrument/` → `data/instruments/` (companion `rawview/` when present).
+    let raw_viewer_profiles = project.root.join(".raw-viewer/profiles");
+    if is_directory_with_yamls(&raw_viewer_profiles, &project.root) {
+        return load_profiles(&raw_viewer_profiles, ".raw-viewer/profiles", &project);
+    }
+
     let rawviewer = project.root.join(".rawviewer/instrument");
     if is_directory_with_yamls(&rawviewer, &project.root) {
         return load_profiles(&rawviewer, ".rawviewer/instrument", &project);
@@ -182,7 +189,7 @@ fn load_profiles(root: &Path, display_root: &str, project: &ProjectContext) -> P
             continue;
         }
         let claimed_relative = match project.relative_path_of(&entry) {
-            Some(p) => p,
+            Some(p) => p.replace('\\', "/"),
             None => {
                 let name = entry.file_name().unwrap_or_default().to_string_lossy();
                 issues.push(format!(

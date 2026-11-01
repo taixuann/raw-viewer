@@ -1,6 +1,6 @@
 use super::ReaderError;
 use crate::measurement::GapReason;
-use crate::profile::{ProfileColumn, ProfileFormat, ProfileMode};
+use crate::profile::{ProfileColumn, ProfileFormat, ProfileMetadataEntry, ProfileMode};
 use crate::reader::cell::{append_cell, CellLedger};
 use crate::reader::line_puller::{LinePuller, TextEncoding};
 use std::fs::File;
@@ -336,7 +336,16 @@ pub fn extract_tabular(
         };
         return Err(ReaderError::InvalidSource(message));
     }
-    let header_fields = header_metadata(&header_line_texts, format.delimiter, relative_path)?;
+    let header_fields = if !format.metadata.is_empty() {
+        apply_v4_profile_metadata(
+            &header_line_texts,
+            format.delimiter,
+            &format.metadata,
+            relative_path,
+        )?
+    } else {
+        header_metadata(&header_line_texts, format.delimiter, relative_path)?
+    };
     let warnings = ledger.summarize(relative_path);
     Ok(TabularExtraction {
         columns: columns
@@ -407,6 +416,65 @@ pub fn header_metadata(
         result.push((key, stored));
     }
     Ok(result)
+}
+
+fn truncate_metadata_value(trimmed: &str) -> String {
+    if trimmed.len() > 512 {
+        format!("{}...", &trimmed[..509])
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn apply_v4_profile_metadata(
+    pre_header_lines: &[String],
+    delimiter: char,
+    entries: &[ProfileMetadataEntry],
+    relative_path: &str,
+) -> Result<Vec<(String, String)>, ReaderError> {
+    let mut out = Vec::new();
+    for entry in entries {
+        match entry {
+            ProfileMetadataEntry::RowKeyValue { row, key, .. } => {
+                let line = pre_header_lines.get((*row as usize).saturating_sub(1)).ok_or_else(|| {
+                    ReaderError::InvalidSource(format!(
+                        "{relative_path}: metadata \"{key}\" source row {row} is before the header or past the end of the pre-header section."
+                    ))
+                })?;
+                let cells = split_line(
+                    line,
+                    delimiter,
+                    &format!("{relative_path} metadata row {row}"),
+                )?;
+                if cells.len() >= 2 {
+                    let value = cells[1].trim();
+                    if !value.is_empty() {
+                        out.push((key.clone(), truncate_metadata_value(value)));
+                    }
+                }
+            }
+            ProfileMetadataEntry::CellKey { column, row, key } => {
+                let line = pre_header_lines.get((*row as usize).saturating_sub(1)).ok_or_else(|| {
+                    ReaderError::InvalidSource(format!(
+                        "{relative_path}: metadata \"{key}\" source row {row} is before the header or past the end of the pre-header section."
+                    ))
+                })?;
+                let cells = split_line(
+                    line,
+                    delimiter,
+                    &format!("{relative_path} metadata row {row}"),
+                )?;
+                let index = (*column as usize).saturating_sub(1);
+                if let Some(cell) = cells.get(index) {
+                    let value = cell.trim();
+                    if !value.is_empty() {
+                        out.push((key.clone(), truncate_metadata_value(value)));
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Re-open helper: seek file to end of prefix already consumed by caller.

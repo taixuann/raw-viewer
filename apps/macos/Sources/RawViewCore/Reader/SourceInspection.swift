@@ -26,22 +26,32 @@ public enum InspectionDisposition: String, Sendable, Codable, Equatable {
     case cancelled = "cancelled"
 }
 
+/// Typed profile-resolution codes surfaced on blocked inspection results.
+public enum ProfileInspectionResolveCode: String, Sendable, Equatable {
+    case ambiguousProfile = "ambiguous_profile"
+    case grammarMatchedNoProfile = "grammar_matched_no_profile"
+    case schemaV3AmbiguousProfile = "schema_v3_ambiguous_profile"
+}
+
 public struct SourceInspectionResult: Identifiable, Sendable {
     public var id: String { source.relativePath }
     public let source: RawSource
     public let inspection: SourceInspection?
     public let disposition: InspectionDisposition
     public let error: String?
+    public let profileResolveCode: ProfileInspectionResolveCode?
 
     public init(
         source: RawSource,
         inspection: SourceInspection?,
         disposition: InspectionDisposition = .profileMatched,
-        error: String?
+        error: String?,
+        profileResolveCode: ProfileInspectionResolveCode? = nil
     ) {
         self.source = source
         self.inspection = inspection
         self.disposition = disposition
         self.error = error
+        self.profileResolveCode = profileResolveCode
     }
 }

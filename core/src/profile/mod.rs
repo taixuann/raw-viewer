@@ -26,9 +26,10 @@ pub use types::*;
 pub use when::{
     ambiguous_candidate_labels, candidate_profile_id, format_ambiguous,
     grammar_context_from_catalog, matches_when, merge_when, mode_is_candidate,
-    split_legacy_filename_tokens, tokenize_basename, when_from_application_mode_id,
-    when_from_header_signature, when_from_legacy, when_from_v4_clause, GrammarMatchContext,
-    ProfileResolveCode, WhenClause, CONTENT_MATCH_BYTE_LIMIT,
+    profile_inspection_resolve_code, split_legacy_filename_tokens, tokenize_basename,
+    when_from_application_mode_id, when_from_header_signature, when_from_legacy,
+    when_from_v4_clause, GrammarMatchContext, ProfileResolveCode, WhenClause,
+    CONTENT_MATCH_BYTE_LIMIT,
 };
 
 use sha2::{Digest, Sha256};

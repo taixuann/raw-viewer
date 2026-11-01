@@ -61,6 +61,11 @@ struct RowSpanV4: Sendable, Equatable {
     var end: Int
 }
 
+enum ProfileMetadataEntry: Sendable, Equatable {
+    case rowKeyValue(row: Int, key: String, valueType: String, format: String?)
+    case cellKey(column: Int, row: Int, key: String)
+}
+
 enum MetadataEntryV4: Sendable, Equatable {
     case rowKeyValue(row: Int, key: String, valueType: String, format: String?)
     case cellKey(column: Int, row: Int, key: String)
@@ -228,6 +233,18 @@ enum ProfileV4Codec {
             }
             encodings.append(encoding)
         }
+        var dataPrefix = variant.rows.dataPrefix
+        if dataPrefix == nil, variant.format.kind == "tabular", variant.rows.namesPrefix != nil {
+            dataPrefix = ""
+        }
+        let metadata = variant.metadata.map { entry -> ProfileMetadataEntry in
+            switch entry {
+            case .rowKeyValue(let row, let key, let valueType, let format):
+                return .rowKeyValue(row: row, key: key, valueType: valueType, format: format)
+            case .cellKey(let column, let row, let key):
+                return .cellKey(column: column, row: row, key: key)
+            }
+        }
         return ProfileFormat(
             id: formatID,
             kind: variant.format.kind,
@@ -237,7 +254,8 @@ enum ProfileV4Codec {
             encodingNames: variant.format.encodingNames,
             decimalSeparator: variant.format.decimalSeparator,
             namesPrefix: variant.rows.namesPrefix,
-            dataPrefix: variant.rows.dataPrefix,
+            dataPrefix: dataPrefix,
+            metadata: metadata,
             columns: columns
         )
     }
@@ -470,8 +488,11 @@ enum ProfileV4Codec {
         var out: [MetadataEntryV4] = []
         for (index, item) in items.enumerated() {
             let metaField = "\(field).metadata[\(index)]"
+            if let scalar = item.scalarValue {
+                throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping with row/key/type or column/row/key.")
+            }
             guard item.mapEntries != nil else {
-                throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping.")
+                throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping with row/key/type or column/row/key.")
             }
             if item.value(for: "column") != nil {
                 try rejectUnknown(item, allowed: ["column", "row", "key"], scope: metaField)

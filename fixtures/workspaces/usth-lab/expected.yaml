@@ -25,19 +25,10 @@ entries:
     y_unit: A
     metadata_keys:
       - Date
-      - Decimal_Separator
-      - LabVIEW Measurement
-      - Multi_Headings
-      - Operator
-      - Reader_Version
-      - Separator
       - Time
-      - Time_Pref
-      - Writer_Version
-      - X_Columns
   - id: autolab-cv
     relative_path: data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt
-    profile_id: autolab-usth
+    profile_id: usth/autolab-usth
     variant: cv
     plottable: true
     data_row_count: 4100
@@ -60,7 +51,7 @@ entries:
     metadata_keys: []
   - id: autolab-ca
     relative_path: data/raw/2026-09-21/210926-131400_autolab-usth.ca_[cu-ec-pda.c5-ito.2]_ca.protonation.txt
-    profile_id: autolab-usth
+    profile_id: usth/autolab-usth
     variant: ca
     plottable: true
     data_row_count: 1000
@@ -81,7 +72,7 @@ entries:
     metadata_keys: []
   - id: autolab-eis
     relative_path: data/raw/2026-04-21/210426-000000_autolab-usth.eis_[gce-pda]_eis.characterization_r.[ph-6.65].txt
-    profile_id: autolab-usth
+    profile_id: usth/autolab-usth
     variant: eis
     plottable: true
     data_row_count: 50
@@ -95,9 +86,9 @@ entries:
       - Z (Ω)
       - -Phase (°)
       - Time (s)
-    x_quantity: frequency
-    x_unit: Hz
-    y_quantity: impedance_real
+    x_quantity: impedance_real
+    x_unit: ohm
+    y_quantity: impedance
     y_unit: ohm
     metadata_keys: []
   - id: horiba-raman
@@ -118,7 +109,7 @@ entries:
     metadata_keys: []
   - id: iop-hanoi-uv-vis
     relative_path: data/raw/2026-05-28/280526-000000_iop-hanoi.uv-vis_[pda.n2-ito.3]_uv-vis.transmission.txt
-    profile_id: iop-hanoi
+    profile_id: usth/iop-hanoi
     variant: uv-vis
     plottable: true
     data_row_count: 326
@@ -182,13 +173,4 @@ entries:
     y_unit: A
     metadata_keys:
       - Date
-      - Decimal_Separator
-      - LabVIEW Measurement
-      - Multi_Headings
-      - Operator
-      - Reader_Version
-      - Separator
       - Time
-      - Time_Pref
-      - Writer_Version
-      - X_Columns

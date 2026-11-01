@@ -1,0 +1,44 @@
+schema_version: 4
+id: usth/iop-hanoi
+revision: 1
+instrument:
+  id: iop-hanoi
+  name: IOP Hanoi UV-Vis
+variants:
+  uv-vis:
+    when:
+      content_contains_any:
+        - Wavelength_nm
+        - wavelength (nm)
+        - T%
+        - "%t"
+        - transmission (%)
+      filename_contains_all:
+        - iop-hanoi.uv-vis_
+    format:
+      kind: first-row-header
+      extensions: [".txt", ".csv"]
+      delimiter: ","
+      encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      wavelength:
+        role: channel
+        header: Wavelength_nm
+        aliases: ["wavelength (nm)"]
+        quantity: wavelength
+        unit: nm
+        label: Wavelength
+      transmittance:
+        role: channel
+        header: T%
+        aliases: ["%t", "transmission (%)"]
+        quantity: transmittance
+        unit: "%"
+        label: Transmittance
+    plot:
+      x: wavelength
+      y: [transmittance]

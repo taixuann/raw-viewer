@@ -360,6 +360,7 @@ fn measurement_from_extraction(
         .map(|(_, values)| values.iter().filter(|v| v.is_none()).count())
         .sum();
     let facts = parse_filename(basename);
+    let header_fields = extracted.header_fields.clone();
     Ok(NormalizedMeasurement {
         source: SourceIdentity {
             path: relative_path.to_string(),
@@ -380,7 +381,7 @@ fn measurement_from_extraction(
         },
         channels,
         metadata_sections: metadata_sections(
-            &extracted.header_fields,
+            &header_fields,
             basename,
             facts,
             extracted.columns.len(),

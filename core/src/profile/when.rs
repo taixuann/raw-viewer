@@ -53,6 +53,7 @@ impl GrammarMatchContext {
 pub enum ProfileResolveCode {
     AmbiguousProfile,
     GrammarMatchedNoProfile,
+    SchemaV3AmbiguousProfile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +92,21 @@ pub fn format_ambiguous(candidate_ids: &[String]) -> String {
         candidate_ids.len(),
         candidate_ids.join(", ")
     )
+}
+
+/// Typed resolve code carried on reader/inspection blocked messages (Rust tests and parity).
+pub fn profile_inspection_resolve_code(message: &str) -> Option<ProfileResolveCode> {
+    if message.starts_with("ambiguous_profile:") {
+        Some(ProfileResolveCode::AmbiguousProfile)
+    } else if message
+        == "Filename matched the project grammar but no instrument profile mode matched this source."
+    {
+        Some(ProfileResolveCode::GrammarMatchedNoProfile)
+    } else if message.contains("Ambiguous profile match:") {
+        Some(ProfileResolveCode::SchemaV3AmbiguousProfile)
+    } else {
+        None
+    }
 }
 
 pub fn ambiguous_candidate_labels(matches: &[super::ProfileMatch]) -> Vec<String> {
