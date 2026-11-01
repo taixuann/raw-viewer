@@ -35,23 +35,25 @@ struct UsthLabFixtureTests {
         let root = try YAMLParser.parse(text, allowIndentlessSequences: false)
         guard let items = root.value(for: "entries")?.listItems else { return [] }
         return try items.compactMap { item in
-            guard item.value(for: "relative_path") != nil else { return nil }
-            guard let map = item.mapEntries else {
-                throw ExpectedParseError.invalid("expected entry map")
+            guard let map = item.mapEntries else { return nil }
+            func optionalScalar(_ key: String) -> String? {
+                map.first(where: { $0.key == key })?.value.scalarValue
             }
-            func scalar(_ key: String) throws -> String {
-                guard let value = map.first(where: { $0.key == key })?.value.scalarValue else {
-                    throw ExpectedParseError.invalid("missing \(key)")
-                }
-                return value
-            }
-            func bool(_ key: String) throws -> Bool {
-                switch try scalar(key) {
-                case "true": return true
-                case "false": return false
-                default:
-                    throw ExpectedParseError.invalid("\(key) not bool")
-                }
+            guard let relativePath = optionalScalar("relative_path"),
+                  let profileID = optionalScalar("profile_id"),
+                  let variant = optionalScalar("variant"),
+                  let plottableText = optionalScalar("plottable"),
+                  let xQuantity = optionalScalar("x_quantity"),
+                  let xUnit = optionalScalar("x_unit"),
+                  let yQuantity = optionalScalar("y_quantity"),
+                  let yUnit = optionalScalar("y_unit")
+            else { return nil }
+            let plottable: Bool
+            switch plottableText {
+            case "true": plottable = true
+            case "false": plottable = false
+            default:
+                throw ExpectedParseError.invalid("plottable not bool")
             }
             let metadataNode = map.first(where: { $0.key == "metadata_keys" })?.value
             let metadataKeys: [String]
@@ -63,14 +65,14 @@ struct UsthLabFixtureTests {
                 metadataKeys = []
             }
             return ExpectedEntry(
-                relativePath: try scalar("relative_path"),
-                profileID: try scalar("profile_id"),
-                variant: try scalar("variant"),
-                plottable: try bool("plottable"),
-                xQuantity: try scalar("x_quantity"),
-                xUnit: try scalar("x_unit"),
-                yQuantity: try scalar("y_quantity"),
-                yUnit: try scalar("y_unit"),
+                relativePath: relativePath,
+                profileID: profileID,
+                variant: variant,
+                plottable: plottable,
+                xQuantity: xQuantity,
+                xUnit: xUnit,
+                yQuantity: yQuantity,
+                yUnit: yUnit,
                 metadataKeys: metadataKeys)
         }
     }
