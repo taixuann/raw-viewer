@@ -44,6 +44,25 @@ cp "$broken_swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests
 mkdir -p "$tmpdir/core/tests"
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
 run_expect swift-contract-reference-removed 1 "$tmpdir/check.sh" || fail=1
+cp "$root/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
+cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+
+# Drift: hardcoded vectors.yaml path in Rust (check must fail).
+hardcoded_rust="$tmpdir/core/tests/grammar_vectors_hardcoded.rs"
+cp "$root/core/tests/grammar_vectors.rs" "$hardcoded_rust"
+sed -i 's/grammar_vectors_relative_path_from_contract()/String::from("vectors.yaml")/g' "$hardcoded_rust"
+sed -i 's/value_for_key("grammar_vectors")/value_for_key("grammar_vectors_removed")/g' "$hardcoded_rust"
+cp "$hardcoded_rust" "$tmpdir/core/tests/grammar_vectors.rs"
+run_expect rust-hardcoded-vectors-path 1 "$tmpdir/check.sh" || fail=1
+cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+
+# Contract points at renamed vectors copy; wiring check must still pass.
+cp "$root/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
+cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+cp "$tmpdir/fixtures/grammar/vectors.yaml" "$tmpdir/fixtures/grammar/vectors_ci.yaml"
+sed -i 's/file: vectors.yaml/file: vectors_ci.yaml/' "$tmpdir/fixtures/grammar/cross_language_contract.yaml"
+run_expect contract-renamed-vectors-file 0 "$tmpdir/check.sh" || fail=1
+
 unset REPO_ROOT
 
 # Drift: shared compile pattern in fixture no longer matches compiled engine (Rust test must fail).

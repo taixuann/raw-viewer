@@ -4,7 +4,6 @@ set -euo pipefail
 
 root="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 contract="$root/fixtures/grammar/cross_language_contract.yaml"
-vectors="$root/fixtures/grammar/vectors.yaml"
 
 die() {
   echo "error: $*" >&2
@@ -12,7 +11,6 @@ die() {
 }
 
 [[ -f "$contract" ]] || die "missing contract: $contract"
-[[ -f "$vectors" ]] || die "missing vectors: $vectors"
 
 scalar_after_key() {
   local file="$1"
@@ -67,22 +65,48 @@ nested_pair() {
 }
 
 vectors_file="$(nested_scalar "$contract" "grammar_vectors" "file")"
-[[ "$vectors_file" == "vectors.yaml" ]] || die "grammar_vectors.file must be vectors.yaml (got: $vectors_file)"
+[[ -n "$vectors_file" ]] || die "grammar_vectors.file is empty"
+vectors="$root/fixtures/grammar/$vectors_file"
+[[ -f "$vectors" ]] || die "missing vectors file from contract: fixtures/grammar/$vectors_file"
 
 expected_pattern="$(nested_scalar "$contract" "grammar_compile_pattern" "expected_pattern")"
 [[ -n "$expected_pattern" ]] || die "grammar_compile_pattern.expected_pattern is empty"
 
 mapfile -t vector_ids < <(grep -E '^  - id: ' "$vectors" | sed 's/^  - id: //')
-[[ "${#vector_ids[@]}" -gt 0 ]] || die "vectors.yaml defines no vector ids"
+[[ "${#vector_ids[@]}" -gt 0 ]] || die "vectors file defines no vector ids"
 
 declare -A seen_ids=()
 for id in "${vector_ids[@]}"; do
-  [[ -n "$id" ]] || die "empty vector id in vectors.yaml"
+  [[ -n "$id" ]] || die "empty vector id in vectors file"
   if [[ -n "${seen_ids[$id]:-}" ]]; then
-    die "duplicate vector id in vectors.yaml: $id"
+    die "duplicate vector id in vectors file: $id"
   fi
   seen_ids["$id"]=1
 done
+
+assert_vectors_path_from_contract() {
+  local test_file="$1"
+  local lang="$2"
+  case "$lang" in
+    rust)
+      grep -q 'value_for_key("grammar_vectors")' "$test_file" || die "$test_file must read grammar_vectors from cross_language_contract.yaml"
+      grep -q 'value_for_key("file")' "$test_file" || die "$test_file must read grammar_vectors.file from cross_language_contract.yaml"
+      if grep -qE 'join\("vectors\.yaml"\)|fixtures/grammar/vectors\.yaml' "$test_file"; then
+        die "$test_file must not hardcode vectors.yaml; use grammar_vectors.file from cross_language_contract.yaml"
+      fi
+      ;;
+    swift)
+      grep -q 'value(for: "grammar_vectors")' "$test_file" || die "$test_file must read grammar_vectors from cross_language_contract.yaml"
+      grep -q 'value(for: "file")' "$test_file" || die "$test_file must read grammar_vectors.file from cross_language_contract.yaml"
+      if grep -q 'appendingPathComponent("fixtures/grammar/vectors.yaml")' "$test_file"; then
+        die "$test_file must not hardcode vectors.yaml; use grammar_vectors.file from cross_language_contract.yaml"
+      fi
+      ;;
+    *)
+      die "unknown language: $lang"
+      ;;
+  esac
+}
 
 require_consumer() {
   local section="$1"
@@ -95,7 +119,9 @@ require_consumer() {
   test_file="$root/$rel"
   [[ -f "$test_file" ]] || die "missing $lang test file: $rel"
   grep -q "$test_name" "$test_file" || die "$rel must define consumer test $test_name"
-  grep -q "vectors.yaml" "$test_file" || die "$rel must load fixtures/grammar/vectors.yaml"
+  if [[ "$section" == "grammar_vectors" ]]; then
+    assert_vectors_path_from_contract "$test_file" "$lang"
+  fi
   if [[ "$require_contract" == "yes" ]]; then
     grep -q "cross_language_contract.yaml" "$test_file" || die "$rel must load fixtures/grammar/cross_language_contract.yaml"
   fi
@@ -111,4 +137,4 @@ swift_vectors="$root/$(nested_pair "$contract" "grammar_vectors" "swift" "test_f
 grep -q 'for case in cases' "$rust_vectors" || die "rust vector consumer must iterate all loaded cases"
 grep -q 'for vector in cases' "$swift_vectors" || die "swift vector consumer must iterate all loaded cases"
 
-echo "cross-language grammar contract ok (${#vector_ids[@]} vector ids, compile pattern pinned)"
+echo "cross-language grammar contract ok (${#vector_ids[@]} vector ids via $vectors_file, compile pattern pinned)"

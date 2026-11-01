@@ -1,7 +1,8 @@
-//! Cross-language grammar vectors shared with Swift via fixtures/grammar/vectors.yaml.
+//! Cross-language grammar vectors shared with Swift via fixtures/grammar/cross_language_contract.yaml.
 
 use raw_viewer_core::grammar::{compile, extract, load_file, FilenameGrammar};
 use raw_viewer_core::yaml::parse;
+use raw_viewer_core::yaml::YamlNode;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -9,17 +10,32 @@ fn grammar_fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/grammar")
 }
 
-fn vectors_path() -> PathBuf {
-    grammar_fixtures_dir().join("vectors.yaml")
-}
-
 fn cross_language_contract_path() -> PathBuf {
     grammar_fixtures_dir().join("cross_language_contract.yaml")
 }
 
+fn load_cross_language_contract() -> YamlNode {
+    let text = std::fs::read_to_string(cross_language_contract_path())
+        .expect("read cross_language_contract.yaml");
+    parse(&text, false).expect("parse cross_language_contract.yaml")
+}
+
+fn grammar_vectors_relative_path_from_contract() -> String {
+    let root = load_cross_language_contract();
+    root.value_for_key("grammar_vectors")
+        .expect("grammar_vectors")
+        .value_for_key("file")
+        .and_then(|n| n.scalar_value())
+        .expect("grammar_vectors.file")
+        .to_string()
+}
+
+fn vectors_path() -> PathBuf {
+    grammar_fixtures_dir().join(grammar_vectors_relative_path_from_contract())
+}
+
 fn load_expected_compile_pattern() -> String {
-    let text = std::fs::read_to_string(cross_language_contract_path()).expect("read cross_language_contract.yaml");
-    let root = parse(&text, false).expect("parse cross_language_contract.yaml");
+    let root = load_cross_language_contract();
     let section = root
         .value_for_key("grammar_compile_pattern")
         .expect("grammar_compile_pattern");
@@ -43,8 +59,10 @@ struct VectorCase {
 }
 
 fn load_vectors() -> (FilenameGrammar, Vec<VectorCase>) {
-    let text = std::fs::read_to_string(vectors_path()).expect("read vectors.yaml");
-    let root = parse(&text, false).expect("parse vectors.yaml");
+    let vectors_relative = grammar_vectors_relative_path_from_contract();
+    let text = std::fs::read_to_string(vectors_path())
+        .unwrap_or_else(|err| panic!("read {vectors_relative}: {err}"));
+    let root = parse(&text, false).unwrap_or_else(|err| panic!("parse {vectors_relative}: {err}"));
     let grammar_file = root
         .value_for_key("grammar_file")
         .and_then(|n| n.scalar_value())
