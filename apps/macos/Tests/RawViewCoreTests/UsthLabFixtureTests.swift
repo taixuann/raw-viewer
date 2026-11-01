@@ -122,14 +122,14 @@ struct UsthLabFixtureTests {
         for entry in rows {
             let source = try #require(sources.first { $0.relativePath == entry.relativePath })
             let measurement = try await InstrumentReader.load(source.url, project: project)
-            #expect(measurement.provenance["profile_id"] == entry.profileID, entry.relativePath)
-            #expect(measurement.provenance["mode"] == entry.variant, entry.relativePath)
-            let xKey = try #require(measurement.view.x, entry.relativePath)
-            let yKey = try #require(measurement.view.y?.first, entry.relativePath)
-            #expect(measurement.channel(named: xKey)?.quantity == entry.xQuantity, entry.relativePath)
-            #expect(measurement.channel(named: xKey)?.unit == entry.xUnit, entry.relativePath)
-            #expect(measurement.channel(named: yKey)?.quantity == entry.yQuantity, entry.relativePath)
-            #expect(measurement.channel(named: yKey)?.unit == entry.yUnit, entry.relativePath)
+            #expect(measurement.provenance["profile_id"] == entry.profileID, Comment(entry.relativePath))
+            #expect(measurement.provenance["mode"] == entry.variant, Comment(entry.relativePath))
+            let xKey = try #require(measurement.view.x, Comment(entry.relativePath))
+            let yKey = try #require(measurement.view.y?.first, Comment(entry.relativePath))
+            #expect(measurement.channel(named: xKey)?.quantity == entry.xQuantity, Comment(entry.relativePath))
+            #expect(measurement.channel(named: xKey)?.unit == entry.xUnit, Comment(entry.relativePath))
+            #expect(measurement.channel(named: yKey)?.quantity == entry.yQuantity, Comment(entry.relativePath))
+            #expect(measurement.channel(named: yKey)?.unit == entry.yUnit, Comment(entry.relativePath))
         }
     }
 
@@ -145,7 +145,7 @@ struct UsthLabFixtureTests {
             let source = try #require(sources.first { $0.relativePath == entry.relativePath })
             let measurement = try await InstrumentReader.load(source.url, project: project)
             let actual = Self.acquisitionMetadataKeys(measurement)
-            #expect(actual == entry.metadataKeys, "\(entry.relativePath): \(actual)")
+            #expect(actual == entry.metadataKeys, Comment("\(entry.relativePath): \(actual)"))
             #expect(actual.count == 11)
         }
     }

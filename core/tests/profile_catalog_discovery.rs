@@ -10,8 +10,11 @@ fn repo_root() -> PathBuf {
 }
 
 fn temp_project() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "rawview-catalog-{}",
+        "rawview-catalog-{}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -75,6 +78,7 @@ fn legacy_profile_directories_still_load_when_raw_viewer_profiles_absent() {
     assert_eq!(catalog.profiles.len(), 1);
     assert!(catalog.profiles[0]
         .relative_path
+        .replace('\\', "/")
         .starts_with("data/.rawview/instrument/"));
 }
 
