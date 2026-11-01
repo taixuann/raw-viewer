@@ -2861,6 +2861,7 @@ private func makeProject(profiles: [String: String], sources: [String: Data]) th
 private func makeRawViewerProfilesProject(profiles: [String: String], sources: [String: Data]) throws -> URL {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root.appendingPathComponent("data/raw"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".rawviewer"), withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: root.appendingPathComponent(".raw-viewer/profiles"), withIntermediateDirectories: true)
     try Data("""
     schema_version: 1

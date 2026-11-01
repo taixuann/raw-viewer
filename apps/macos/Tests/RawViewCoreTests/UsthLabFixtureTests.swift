@@ -32,7 +32,7 @@ struct UsthLabFixtureTests {
     }
 
     private static func parseExpectedEntries(text: String) throws -> [ExpectedEntry] {
-        let root = try YAMLParser.parse(text)
+        let root = try YAMLParser.parse(text, allowIndentlessSequences: false)
         guard let items = root.value(for: "entries")?.listItems else { return [] }
         return try items.map { item in
             guard let map = item.mapEntries else {
