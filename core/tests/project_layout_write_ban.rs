@@ -34,17 +34,20 @@ fn walk(root: &Path, here: &Path, out: &mut BTreeMap<PathBuf, EntrySnapshot>) {
         let path = entry.path();
         let rel = path.strip_prefix(root).expect("under root").to_path_buf();
         let meta = entry.metadata().expect("metadata");
+        if !meta.is_file() {
+            if meta.is_dir() {
+                walk(root, &path, out);
+            }
+            continue;
+        }
         out.insert(
             rel,
             EntrySnapshot {
                 len: meta.len(),
                 modified: meta.modified().expect("modified time"),
-                is_dir: meta.is_dir(),
+                is_dir: false,
             },
         );
-        if meta.is_dir() {
-            walk(root, &path, out);
-        }
     }
 }
 
