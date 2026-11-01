@@ -18,6 +18,22 @@ struct GrammarVectorTests {
         let tokens: [String: String]
     }
 
+    private static func loadExpectedCompilePattern() throws -> String {
+        let root = repoRoot()
+        let contractURL = root.appendingPathComponent("fixtures/grammar/cross_language_contract.yaml")
+        let text = try String(contentsOf: contractURL, encoding: .utf8)
+        let node = try YAMLParser.parse(text)
+        guard let pattern = node.value(for: "grammar_compile_pattern")?
+            .value(for: "expected_pattern")?
+            .scalarValue
+        else {
+            throw GrammarCatalogError.parseFailed(
+                path: contractURL.path,
+                message: "grammar_compile_pattern.expected_pattern missing")
+        }
+        return pattern
+    }
+
     private static func loadVectors() throws -> (FilenameGrammar, [VectorCase]) {
         let root = repoRoot()
         let vectorsURL = root.appendingPathComponent("fixtures/grammar/vectors.yaml")
@@ -56,7 +72,7 @@ struct GrammarVectorTests {
         let grammarURL = root.appendingPathComponent("fixtures/grammar/standard-scientific.yaml")
         let grammar = try FilenameGrammarEngine.load(fileURL: grammarURL).grammars[0]
         let (regex, _) = try FilenameGrammarEngine.compile(template: grammar.template, fields: grammar.fields)
-        let expected = #"^(\d{6}-\d{6})_([^._]+)\.([^._]+)_\[([^\]]+)\]_([^_]+(?:\.[^_]+)*)(?:_r\.\[([^\]]+)\])?(?:_f\.\[([^\]]+)\])?(?:_(\d{3}))?$"#
+        let expected = try Self.loadExpectedCompilePattern()
         #expect(regex.pattern == expected)
     }
 

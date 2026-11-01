@@ -1,0 +1,24 @@
+# Language-neutral grammar test contract consumed by Rust, Swift, and Scripts/check_cross_language_test_contract.sh.
+schema_version: 1
+
+grammar_compile_pattern:
+  grammar_file: standard-scientific.yaml
+  # NSRegularExpression canonical spelling. Rust tests normalize [^\]] vs [^]] before compare.
+  expected_pattern: '^(\d{6}-\d{6})_([^._]+)\.([^._]+)_\[([^\]]+)\]_([^_]+(?:\.[^_]+)*)(?:_r\.\[([^\]]+)\])?(?:_f\.\[([^\]]+)\])?(?:_(\d{3}))?$'
+
+grammar_vectors:
+  file: vectors.yaml
+  rust:
+    test_file: core/tests/grammar_vectors.rs
+    test_name: shared_grammar_vectors_match_rust_engine
+  swift:
+    test_file: apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift
+    test_name: sharedGrammarVectorsMatchSwiftEngine
+
+grammar_compile_pattern_tests:
+  rust:
+    test_file: core/tests/grammar_vectors.rs
+    test_name: shared_grammar_compile_pattern_matches_rust_reference
+  swift:
+    test_file: apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift
+    test_name: sharedGrammarCompilePatternMatchesRustReference

@@ -5,14 +5,33 @@ use raw_viewer_core::yaml::parse;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+fn grammar_fixtures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/grammar")
+}
+
 fn vectors_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/grammar/vectors.yaml")
+    grammar_fixtures_dir().join("vectors.yaml")
+}
+
+fn cross_language_contract_path() -> PathBuf {
+    grammar_fixtures_dir().join("cross_language_contract.yaml")
+}
+
+fn load_expected_compile_pattern() -> String {
+    let text = std::fs::read_to_string(cross_language_contract_path()).expect("read cross_language_contract.yaml");
+    let root = parse(&text, false).expect("parse cross_language_contract.yaml");
+    let section = root
+        .value_for_key("grammar_compile_pattern")
+        .expect("grammar_compile_pattern");
+    section
+        .value_for_key("expected_pattern")
+        .and_then(|n| n.scalar_value())
+        .expect("expected_pattern")
+        .to_string()
 }
 
 fn grammar_path(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/grammar")
-        .join(relative)
+    grammar_fixtures_dir().join(relative)
 }
 
 #[derive(Debug)]
@@ -77,15 +96,15 @@ fn shared_grammar_compile_pattern_matches_rust_reference() {
         load_file(&grammar_path("standard-scientific.yaml")).expect("load standard-scientific");
     let grammar = catalog.grammars.into_iter().next().expect("grammar entry");
     let (regex, _) = compile(&grammar.template, &grammar.fields).expect("compile");
-    // Pinned to Swift `sharedGrammarCompilePatternMatchesRustReference` in GrammarVectorTests.swift.
+    // Shared with Swift via fixtures/grammar/cross_language_contract.yaml.
     // NSRegularExpression spells the negated-] class as `[^\]]`; the Rust `regex` crate uses `[^]]`.
     // Those differ only in escaping; normalize before compare.
-    const EXPECTED: &str = r"^(\d{6}-\d{6})_([^._]+)\.([^._]+)_\[([^\]]+)\]_([^_]+(?:\.[^_]+)*)(?:_r\.\[([^\]]+)\])?(?:_f\.\[([^\]]+)\])?(?:_(\d{3}))?$";
+    let expected = load_expected_compile_pattern();
     let normalize = |s: &str| s.replace("[^\\]]", "[^]]");
     assert_eq!(
         normalize(regex.as_str()),
-        normalize(EXPECTED),
-        "compiled pattern must match Swift reference literal"
+        normalize(&expected),
+        "compiled pattern must match cross_language_contract.yaml expected_pattern"
     );
 }
 
