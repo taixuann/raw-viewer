@@ -225,21 +225,30 @@ struct ProfileCatalog: Sendable {
     }
 
     static func load(project: ProjectContext) -> ProfileCatalog {
-        // Priority 1: <project>/.rawviewer/instrument/
+        // Precedence: `.raw-viewer/profiles/` → `.rawviewer/instrument/` →
+        // `data/.rawview/instrument/` → `data/instruments/` (companion `rawview/` when present).
+        let rawViewerProfilesRoot = project.root
+            .appendingPathComponent(".raw-viewer/profiles", isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        if isDirectoryWithYAMLs(rawViewerProfilesRoot, within: project.root) {
+            return loadProfiles(from: rawViewerProfilesRoot, displayRoot: ".raw-viewer/profiles", project: project)
+        }
+
+        // Priority 2: <project>/.rawviewer/instrument/
         let rawviewerRoot = project.root.appendingPathComponent(".rawviewer/instrument", isDirectory: true)
             .resolvingSymlinksInPath().standardizedFileURL
         if isDirectoryWithYAMLs(rawviewerRoot, within: project.root) {
             return loadProfiles(from: rawviewerRoot, displayRoot: ".rawviewer/instrument", project: project)
         }
 
-        // Priority 2: <project>/data/.rawview/instrument/
+        // Priority 3: <project>/data/.rawview/instrument/
         let legacyRawviewRoot = project.root.appendingPathComponent("data/.rawview/instrument", isDirectory: true)
             .resolvingSymlinksInPath().standardizedFileURL
         if isDirectoryWithYAMLs(legacyRawviewRoot, within: project.root) {
             return loadProfiles(from: legacyRawviewRoot, displayRoot: "data/.rawview/instrument", project: project)
         }
 
-        // Priority 3: <project>/data/instruments/
+        // Priority 4: <project>/data/instruments/
         let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
             .resolvingSymlinksInPath().standardizedFileURL
         guard instrumentsRoot.path.hasPrefix(project.root.path + "/") else {

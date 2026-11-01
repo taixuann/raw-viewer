@@ -1,0 +1,198 @@
+schema_version: 4
+id: usth/autolab-usth
+revision: 1
+instrument:
+  id: autolab-usth
+  name: Autolab USTH
+variants:
+  cv:
+    when:
+      content_contains_any:
+        - Potential applied (V)
+        - Potential_applied_(V)
+        - Potential_applied(V)
+      filename_contains_all:
+        - autolab-usth
+        - .cv_
+    format:
+      kind: first-row-header
+      extensions: [".txt"]
+      delimiter: ";"
+      decimal: ","
+      encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      applied_voltage:
+        role: channel
+        header: "Potential applied (V)"
+        aliases: ["Potential_applied_(V)", "Potential_applied(V)"]
+        quantity: voltage
+        unit: V
+        label: Voltage
+      current:
+        role: channel
+        header: "WE(1).Current (A)"
+        aliases: ["WE(1).Current_(A)"]
+        quantity: current
+        unit: A
+        label: Current
+      electrode_potential:
+        role: channel
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
+        quantity: voltage
+        unit: V
+        label: Voltage
+        required: false
+      time:
+        role: channel
+        header: "Time (s)"
+        aliases: ["Time_(s)"]
+        quantity: time
+        unit: s
+        label: Time
+        required: false
+    plot:
+      x: applied_voltage
+      y: [current]
+  ca:
+    when:
+      content_contains_any:
+        - Time (s)
+        - Time_(s)
+      filename_contains_all:
+        - autolab-usth
+        - .ca_
+    format:
+      kind: first-row-header
+      extensions: [".txt"]
+      delimiter: ";"
+      decimal: ","
+      encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      time:
+        role: channel
+        header: "Time (s)"
+        aliases: ["Time_(s)"]
+        quantity: time
+        unit: s
+        label: Time
+      current:
+        role: channel
+        header: "WE(1).Current (A)"
+        aliases: ["WE(1).Current_(A)"]
+        quantity: current
+        unit: A
+        label: Current
+      electrode_potential:
+        role: channel
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
+        quantity: voltage
+        unit: V
+        label: Voltage
+        required: false
+      corrected_time:
+        role: channel
+        header: "Corrected time (s)"
+        aliases: ["Corrected_time_(s)"]
+        quantity: time
+        unit: s
+        label: Time
+        required: false
+    plot:
+      x: time
+      y: [current]
+  eis:
+    when:
+      content_contains_any:
+        - Frequency (Hz)
+      filename_contains_all:
+        - autolab-usth
+        - .eis_
+    format:
+      kind: first-row-header
+      extensions: [".txt"]
+      delimiter: ";"
+      decimal: ","
+      encoding: [utf-8]
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      frequency:
+        role: channel
+        header: "Frequency (Hz)"
+        quantity: frequency
+        unit: Hz
+        label: Frequency
+      z_prime:
+        role: channel
+        header: "Z' (Ω)"
+        quantity: impedance_real
+        unit: ohm
+        label: "Z′"
+      z_double_prime:
+        role: channel
+        header: "-Z'' (Ω)"
+        quantity: impedance
+        unit: ohm
+        label: "−Z″"
+      z_magnitude:
+        role: channel
+        header: "Z (Ω)"
+        quantity: impedance
+        unit: ohm
+        label: "|Z|"
+      phase:
+        role: channel
+        header: "-Phase (°)"
+        quantity: phase
+        unit: deg
+        label: "−Phase"
+        required: false
+    plot:
+      x: frequency
+      y: [z_prime]
+  cv_2col:
+    when:
+      content_contains_any:
+        - WE(1)_potential(V)
+        - WE(1)_current(A)
+      filename_contains_all:
+        - autolab-usth
+        - .cv_
+    format:
+      kind: first-row-header
+      extensions: [".txt"]
+      delimiter: ";"
+      decimal: ","
+      encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      potential:
+        role: channel
+        header: WE(1)_potential(V)
+        quantity: voltage
+        unit: V
+        label: Voltage
+      current:
+        role: channel
+        header: WE(1)_current(A)
+        quantity: current
+        unit: A
+        label: Current
+    plot:
+      x: potential
+      y: [current]

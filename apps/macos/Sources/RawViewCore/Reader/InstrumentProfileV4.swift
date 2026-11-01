@@ -228,6 +228,10 @@ enum ProfileV4Codec {
             }
             encodings.append(encoding)
         }
+        var dataPrefix = variant.rows.dataPrefix
+        if dataPrefix == nil, variant.format.kind == "tabular", variant.rows.namesPrefix != nil {
+            dataPrefix = ""
+        }
         return ProfileFormat(
             id: formatID,
             kind: variant.format.kind,
@@ -237,7 +241,7 @@ enum ProfileV4Codec {
             encodingNames: variant.format.encodingNames,
             decimalSeparator: variant.format.decimalSeparator,
             namesPrefix: variant.rows.namesPrefix,
-            dataPrefix: variant.rows.dataPrefix,
+            dataPrefix: dataPrefix,
             columns: columns
         )
     }

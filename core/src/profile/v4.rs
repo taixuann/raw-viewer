@@ -304,6 +304,13 @@ fn compile_format(
             required: col.required,
         });
     }
+    let mut data_prefix = variant.rows.data_prefix.clone();
+    if data_prefix.is_none()
+        && variant.format.kind == "tabular"
+        && variant.rows.names_prefix.is_some()
+    {
+        data_prefix = Some(String::new());
+    }
     Ok(ProfileFormat {
         id: format_id,
         kind: variant.format.kind.clone(),
@@ -317,7 +324,7 @@ fn compile_format(
         encoding_names: variant.format.encoding_names.clone(),
         decimal_separator: variant.format.decimal_separator,
         names_prefix: variant.rows.names_prefix.clone(),
-        data_prefix: variant.rows.data_prefix.clone(),
+        data_prefix,
         columns,
     })
 }
@@ -599,8 +606,14 @@ fn decode_rows(node: &YamlNode, field: &str) -> Result<RowsBlockV4, ProfileV4Err
             node.value_for_key("data_start"),
             &format!("{field}.data_start"),
         )?,
-        names_prefix: optional_scalar(node, "names_prefix"),
-        data_prefix: optional_scalar(node, "data_prefix"),
+        names_prefix: node
+            .value_for_key("names_prefix")
+            .and_then(|n| n.scalar_value())
+            .map(str::to_string),
+        data_prefix: node
+            .value_for_key("data_prefix")
+            .and_then(|n| n.scalar_value())
+            .map(str::to_string),
     })
 }
 

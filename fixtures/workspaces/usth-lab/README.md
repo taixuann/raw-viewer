@@ -2,7 +2,7 @@
 
 Public regression workspace for [issue #27](https://github.com/taixuann/raw-viewer/issues/27). Eight committed lab files keep original filenames under `data/raw/<YYYY-MM-DD>/`. Tai approved committing these bytes on 2026-10-31.
 
-Variant instrument profiles (`autolab-usth.yaml`, `keithley-2400.yaml`, `horiba-labram.yaml`, `iop-hanoi.yaml`) land in #18 under `.raw-viewer/profiles/`. Legacy YAML for #24 migration tests lives in `fixtures/legacy/usth-lab/`.
+Variant instrument profiles ship under `.raw-viewer/profiles/` for this workspace (`autolab-usth.yaml`, `keithley-2400.yaml`, `horiba-labram.yaml`, `iop-hanoi.yaml`). Legacy YAML for #24 migration tests lives in `fixtures/legacy/usth-lab/`.
 
 Keysight B1500A modes remain deferred.
 
@@ -48,7 +48,7 @@ Machine-readable source: `expected.yaml`. Row counts are data rows after headers
 
 ## Tests
 
-Rust harness: `core/tests/usth_lab_fixture.rs` loads `expected.yaml` and checks file presence, `sha256`, sizes, and remeasured row counts. `.spe` rejection is asserted today. Profile axes, metadata, discovery ignores, and header-only disposition tests are `#[ignore]` until #18 and the shared discovery port land.
+Rust harness: `core/tests/usth_lab_fixture.rs` loads `expected.yaml` and checks file presence, `sha256`, sizes, remeasured row counts, profile axes, and Keithley metadata keys. `.spe` rejection is asserted. Discovery ignore and header-only disposition tests stay `#[ignore]` until the shared discovery port and #18 disposition land.
 
 Run from the repository root:
 

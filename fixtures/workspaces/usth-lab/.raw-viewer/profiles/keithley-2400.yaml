@@ -1,0 +1,49 @@
+schema_version: 4
+id: usth/keithley-2400
+revision: 1
+instrument:
+  id: keithley-2400
+  name: Keithley 2400 SourceMeter
+  vendor: Keithley Instruments
+  model: "2400"
+variants:
+  dual-sweep:
+    when:
+      content_contains_any:
+        - LabVIEW Measurement
+        - Untitled
+        - Untitled 1
+      filename_contains_all:
+        - keithley-2400.dual-sweep
+    format:
+      kind: tabular
+      extensions: [".txt", ".lvm", ".csv"]
+      delimiter: "\t"
+      encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      names_prefix: X_Value
+      data_prefix: ""
+    metadata: []
+    columns:
+      voltage:
+        role: channel
+        header: Untitled
+        quantity: voltage
+        unit: V
+        label: Voltage
+      current:
+        role: channel
+        header: "Untitled 1"
+        quantity: current
+        unit: A
+        label: Current
+      timestamp:
+        role: channel
+        header: "Untitled 2"
+        quantity: time
+        unit: s
+        label: Time
+        required: false
+    plot:
+      x: voltage
+      y: [current]

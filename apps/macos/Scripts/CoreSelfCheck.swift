@@ -1084,10 +1084,17 @@ enum CoreSelfCheck {
             let fallbackCatalog = ProfileCatalog.load(project: try ProjectContext.open(fallbackRoot))
             precondition(fallbackCatalog.profiles.count == 1, "profile was not discovered from data/.rawview/instrument when data/instruments/rawview is empty")
 
-            // .rawviewer/instrument takes top priority over data/.rawview/instrument
-            try writeFixture(fallbackRoot, ".rawviewer/instrument/custom.yaml", keysightProfile)
+            // .raw-viewer/profiles takes top priority over data/instruments and legacy dirs
+            try writeFixture(fallbackRoot, ".raw-viewer/profiles/custom.yaml", keysightProfile)
             let topCatalog = ProfileCatalog.load(project: try ProjectContext.open(fallbackRoot))
-            precondition(topCatalog.profiles.count == 1, ".rawviewer/instrument did not take priority")
+            precondition(topCatalog.profiles.count == 1, ".raw-viewer/profiles did not take priority")
+            precondition(topCatalog.profiles.first?.relativePath.hasPrefix(".raw-viewer/profiles/") == true)
+
+            // .rawviewer/instrument takes priority over data/.rawview/instrument when profiles/ absent
+            try? FileManager.default.removeItem(at: fallbackRoot.appendingPathComponent(".raw-viewer/profiles"))
+            try writeFixture(fallbackRoot, ".rawviewer/instrument/custom.yaml", keysightProfile)
+            let rawviewerCatalog = ProfileCatalog.load(project: try ProjectContext.open(fallbackRoot))
+            precondition(rawviewerCatalog.profiles.count == 1, ".rawviewer/instrument did not take priority")
         }
         // 4. Manifest enumeration failure fails overlay membership closed.
         do {

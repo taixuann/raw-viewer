@@ -212,19 +212,103 @@ fn usth_lab_spe_is_rejected_by_rust_reader() {
     }
 }
 
+fn optional_string_list(map: &[(String, YamlNode)], key: &str) -> Vec<String> {
+    match map_get(map, key) {
+        YamlNode::List(items) => items.iter().map(|n| scalar(n).to_string()).collect(),
+        YamlNode::Scalar(s) if s == "null" || s.is_empty() => vec![],
+        other => panic!("{key}: expected list, got {other:?}"),
+    }
+}
+
+fn channel_quantity<'a>(
+    measurement: &'a raw_viewer_core::measurement::NormalizedMeasurement,
+    axis_key: &str,
+) -> (&'a str, &'a str) {
+    let channel = measurement
+        .channels
+        .iter()
+        .find(|c| c.name == axis_key)
+        .unwrap_or_else(|| panic!("missing channel {axis_key}"));
+    (
+        channel.quantity.as_deref().unwrap_or(""),
+        channel.unit.as_str(),
+    )
+}
+
+fn metadata_keys(measurement: &raw_viewer_core::measurement::NormalizedMeasurement) -> Vec<String> {
+    let mut keys: Vec<String> = measurement
+        .metadata_sections
+        .iter()
+        .filter(|section| section.title == "Acquisition")
+        .flat_map(|section| section.fields.iter().map(|f| f.key.clone()))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// Recorded in PR #18c-2: generic LVM `header_metadata` alone did not yield the 11 Keithley keys; reader filters to the v4 contract list.
+pub const KEITHLEY_LVM_PROBE_SUFFICIENT: bool = false;
+
 #[test]
-#[ignore = "pending #18 variant profiles under .raw-viewer/profiles/"]
 fn usth_lab_plottable_files_match_profile_axes() {
-    let _root = workspace_root();
-    let _doc = parse_expected();
-    panic!("implement after #18 lands profiles and grammar routing");
+    let root = workspace_root();
+    let doc = parse_expected();
+    for entry in entries(&doc) {
+        if !optional_bool(entry, "plottable") {
+            continue;
+        }
+        let relative = scalar(map_get(entry, "relative_path"));
+        let expected_profile = scalar(map_get(entry, "profile_id"));
+        let expected_variant = scalar(map_get(entry, "variant"));
+        let expected_x_q = scalar(map_get(entry, "x_quantity"));
+        let expected_x_u = scalar(map_get(entry, "x_unit"));
+        let expected_y_q = scalar(map_get(entry, "y_quantity"));
+        let expected_y_u = scalar(map_get(entry, "y_unit"));
+        let measurement = load_measurement(&root, Path::new(relative))
+            .unwrap_or_else(|err| panic!("{relative}: load failed: {err}"));
+        assert_eq!(
+            measurement.provenance.get("profile_id").map(String::as_str),
+            Some(expected_profile),
+            "{relative}: profile_id"
+        );
+        assert_eq!(
+            measurement.provenance.get("mode").map(String::as_str),
+            Some(expected_variant),
+            "{relative}: mode"
+        );
+        let x_key = measurement.view.x.as_deref().expect("view.x");
+        let y_keys = measurement.view.y.as_ref().expect("view.y");
+        let (x_q, x_u) = channel_quantity(&measurement, x_key);
+        let (y_q, y_u) = channel_quantity(&measurement, &y_keys[0]);
+        assert_eq!(x_q, expected_x_q, "{relative}: x quantity");
+        assert_eq!(x_u, expected_x_u, "{relative}: x unit");
+        assert_eq!(y_q, expected_y_q, "{relative}: y quantity");
+        assert_eq!(y_u, expected_y_u, "{relative}: y unit");
+    }
 }
 
 #[test]
-#[ignore = "pending #18 variant profiles under .raw-viewer/profiles/"]
 fn usth_lab_metadata_keys_match_profiles() {
-    let _root = workspace_root();
-    panic!("implement after #18 lands profiles and metadata extraction");
+    let root = workspace_root();
+    let doc = parse_expected();
+    for entry in entries(&doc) {
+        let relative = scalar(map_get(entry, "relative_path"));
+        let expected_keys = optional_string_list(entry, "metadata_keys");
+        if expected_keys.is_empty() || !optional_bool(entry, "plottable") {
+            continue;
+        }
+        let measurement = load_measurement(&root, Path::new(relative))
+            .unwrap_or_else(|err| panic!("{relative}: load failed: {err}"));
+        let actual = metadata_keys(&measurement);
+        assert_eq!(
+            actual, expected_keys,
+            "{relative}: metadata_keys probe output {actual:?}"
+        );
+        if relative.contains("keithley-2400") {
+            assert_eq!(actual.len(), 11, "keithley LVM probe: {actual:?}");
+        }
+    }
 }
 
 #[test]

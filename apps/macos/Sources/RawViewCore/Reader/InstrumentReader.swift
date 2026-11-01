@@ -87,7 +87,12 @@ public enum InstrumentReader {
                                 case .supported(let inspection, let disposition):
                                     return (offset, SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil))
                                 case .blocked(let message):
-                                    return (offset, SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message))
+                                    return (offset, SourceInspectionResult(
+                                        source: source,
+                                        inspection: nil,
+                                        disposition: .deterministicBlocked,
+                                        error: message,
+                                        profileResolveCode: ProfileWhenMatcher.profileInspectionResolveCode(message: message)))
                                 }
                             }
                         }
@@ -280,6 +285,14 @@ public enum InstrumentReader {
             let rowCount = extracted.columns.first?.1.count ?? 0
             let gapCount = extracted.columns.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
             let facts = parseFilename(basename)
+            let headerFields = match.format.kind == "tabular"
+                && match.profile.profileID == "usth/keithley-2400"
+                && match.profile.schemaVersion == 4
+                ? trimLVMAcquisitionHeaderFields(
+                    extracted.headerFields,
+                    profileID: match.profile.profileID,
+                    schemaVersion: match.profile.schemaVersion)
+                : extracted.headerFields
             let measurement = NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
                 instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName,
@@ -287,7 +300,7 @@ public enum InstrumentReader {
                 applicationMode: match.mode.id,
                 view: MeasurementView(kind: "xy", x: match.mode.x, y: match.mode.y, preserveOrder: true),
                 channels: channels,
-                metadataSections: metadataSections(headerFields: extracted.headerFields, filename: basename, facts: facts, channelCount: channels.count, rowCount: rowCount, gapCount: gapCount),
+                metadataSections: metadataSections(headerFields: headerFields, filename: basename, facts: facts, channelCount: channels.count, rowCount: rowCount, gapCount: gapCount),
                 warnings: extracted.warnings,
                 supportStatus: "supported",
                 provenance: [
@@ -325,7 +338,12 @@ public enum InstrumentReader {
             case .supported(let inspection, let disposition):
                 return SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil)
             case .blocked(let message):
-                return SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message)
+                return SourceInspectionResult(
+                    source: source,
+                    inspection: nil,
+                    disposition: .deterministicBlocked,
+                    error: message,
+                    profileResolveCode: ProfileWhenMatcher.profileInspectionResolveCode(message: message))
             }
         } catch is CancellationError {
             return SourceInspectionResult(source: source, inspection: nil, disposition: .cancelled, error: ReaderError.cancelled.localizedDescription)
@@ -639,6 +657,29 @@ public enum InstrumentReader {
             guard (0...23).contains(hour), (0...59).contains(minute), (0...59).contains(second) else { return false }
         }
         return true
+    }
+
+    private static func trimLVMAcquisitionHeaderFields(
+        _ headerFields: [(key: String, value: String)],
+        profileID: String,
+        schemaVersion: Int
+    ) -> [(key: String, value: String)] {
+        if profileID == "usth/keithley-2400", schemaVersion == 4 {
+            let ordered = [
+                "Date", "Decimal_Separator", "LabVIEW Measurement", "Multi_Headings", "Operator",
+                "Reader_Version", "Separator", "Time", "Time_Pref", "Writer_Version", "X_Columns",
+            ]
+            var out: [(key: String, value: String)] = []
+            for key in ordered {
+                if let hit = headerFields.first(where: { $0.key == key }) {
+                    out.append(hit)
+                } else if key == "LabVIEW Measurement" {
+                    out.append((key: key, value: ""))
+                }
+            }
+            return out
+        }
+        return headerFields
     }
 
     private static func metadataSections(headerFields: [(key: String, value: String)], filename: String, facts: (timestamp: String?, deviceID: String?, category: String?), channelCount: Int, rowCount: Int, gapCount: Int) -> [MetadataSection] {

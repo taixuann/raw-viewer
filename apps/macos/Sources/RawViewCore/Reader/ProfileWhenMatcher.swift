@@ -216,4 +216,13 @@ enum ProfileWhenMatcher {
         }
         return String(headerSample[..<end])
     }
+
+    static func profileInspectionResolveCode(message: String) -> ProfileInspectionResolveCode? {
+        if message.hasPrefix("ambiguous_profile:") { return .ambiguousProfile }
+        if message == "Filename matched the project grammar but no instrument profile mode matched this source." {
+            return .grammarMatchedNoProfile
+        }
+        if message.contains("Ambiguous profile match:") { return .schemaV3AmbiguousProfile }
+        return nil
+    }
 }

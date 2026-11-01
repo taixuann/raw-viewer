@@ -25,6 +25,13 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
         }
     };
 
+    // Precedence: `.raw-viewer/profiles/` → `.rawviewer/instrument/` →
+    // `data/.rawview/instrument/` → `data/instruments/` (companion `rawview/` when present).
+    let raw_viewer_profiles = project.root.join(".raw-viewer/profiles");
+    if is_directory_with_yamls(&raw_viewer_profiles, &project.root) {
+        return load_profiles(&raw_viewer_profiles, ".raw-viewer/profiles", &project);
+    }
+
     let rawviewer = project.root.join(".rawviewer/instrument");
     if is_directory_with_yamls(&rawviewer, &project.root) {
         return load_profiles(&rawviewer, ".rawviewer/instrument", &project);

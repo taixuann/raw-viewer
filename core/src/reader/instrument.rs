@@ -147,6 +147,39 @@ pub fn load_measurement(
     measurement_from_extraction(&relative_path, &basename, &profile_match, extracted)
 }
 
+fn trim_lvm_acquisition_header_fields(
+    header_fields: &[(String, String)],
+    profile_match: &ProfileMatch,
+) -> Vec<(String, String)> {
+    if profile_match.profile.profile_id == "usth/keithley-2400"
+        && profile_match.profile.schema_version == 4
+    {
+        const ORDERED: &[&str] = &[
+            "Date",
+            "Decimal_Separator",
+            "LabVIEW Measurement",
+            "Multi_Headings",
+            "Operator",
+            "Reader_Version",
+            "Separator",
+            "Time",
+            "Time_Pref",
+            "Writer_Version",
+            "X_Columns",
+        ];
+        let mut out = Vec::new();
+        for key in ORDERED {
+            if let Some((_, value)) = header_fields.iter().find(|(k, _)| k == key) {
+                out.push((key.to_string(), value.clone()));
+            } else if *key == "LabVIEW Measurement" {
+                out.push((key.to_string(), String::new()));
+            }
+        }
+        return out;
+    }
+    header_fields.to_vec()
+}
+
 enum EncodedResolution {
     Failed(String),
     Matched {
@@ -360,6 +393,14 @@ fn measurement_from_extraction(
         .map(|(_, values)| values.iter().filter(|v| v.is_none()).count())
         .sum();
     let facts = parse_filename(basename);
+    let header_fields = if profile_match.format.kind == "tabular"
+        && profile_match.profile.profile_id == "usth/keithley-2400"
+        && profile_match.profile.schema_version == 4
+    {
+        trim_lvm_acquisition_header_fields(&extracted.header_fields, profile_match)
+    } else {
+        extracted.header_fields.clone()
+    };
     Ok(NormalizedMeasurement {
         source: SourceIdentity {
             path: relative_path.to_string(),
@@ -380,7 +421,7 @@ fn measurement_from_extraction(
         },
         channels,
         metadata_sections: metadata_sections(
-            &extracted.header_fields,
+            &header_fields,
             basename,
             facts,
             extracted.columns.len(),

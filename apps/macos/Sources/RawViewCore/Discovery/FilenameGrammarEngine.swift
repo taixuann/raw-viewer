@@ -1148,6 +1148,7 @@ public enum FilenameGrammarEngine {
     /// including excluded/invalid files. Bundled examples are never project
     /// configuration and are not inspected.
     private static let grammarReferenceScanDirs = [
+        ".raw-viewer/profiles",
         ".rawviewer/instrument",
         "data/.rawview/instrument",
         "data/instruments/rawview",

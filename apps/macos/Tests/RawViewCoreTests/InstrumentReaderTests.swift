@@ -226,7 +226,7 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first { $0.source.relativePath == "data/raw/a.csv" }?.error)
-        #expect(error.contains("ambiguous_profile"))
+        #expect(report.results.first { $0.source.relativePath == "data/raw/a.csv" }?.profileResolveCode == .ambiguousProfile)
         #expect(error.contains("keysight-b1500a"))
         #expect(report.results.first { $0.source.relativePath == "data/raw/b.dat" }?.inspection != nil)
     }
@@ -1405,7 +1405,7 @@ struct InstrumentReaderTests {
         let project = try ProjectContext.open(root)
         let report = await InstrumentReader.inspectMany(try project.discoverSources(), project: project)
         let error = try #require(report.results.first?.error)
-        #expect(error.contains("ambiguous_profile"))
+        #expect(report.results.first?.profileResolveCode == .ambiguousProfile)
         #expect(error.contains("synth"))
         #expect(error.contains("synth-copy"))
     }
@@ -1678,7 +1678,7 @@ struct InstrumentReaderTests {
         let result = try #require(report.results.first)
         #expect(result.disposition == .deterministicBlocked)
         let message = try #require(result.error)
-        #expect(message.contains("Ambiguous"))
+        #expect(result.profileResolveCode == .schemaV3AmbiguousProfile)
         #expect(message.contains("cv-b"))
         await #expect(throws: ReaderError.self) {
             try await InstrumentReader.load(sources[0].url, project: project)
