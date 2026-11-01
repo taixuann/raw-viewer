@@ -189,7 +189,7 @@ fn load_profiles(root: &Path, display_root: &str, project: &ProjectContext) -> P
             continue;
         }
         let claimed_relative = match project.relative_path_of(&entry) {
-            Some(p) => p,
+            Some(p) => p.replace('\\', "/"),
             None => {
                 let name = entry.file_name().unwrap_or_default().to_string_lossy();
                 issues.push(format!(
