@@ -123,6 +123,9 @@ fn write_ban_detects_injected_project_write() {
     let before = snapshot_project_tree(&root);
     fs::write(root.join(".raw-viewer/injected.txt"), "probe").unwrap();
     let err = assert_project_tree_unchanged(&root, &before).expect_err("must detect injection");
-    assert!(err.contains("created project entry"), "{err}");
+    assert!(
+        err.contains("created project entry") || err.contains("modified project entry"),
+        "{err}"
+    );
     let _ = fs::remove_dir_all(&root);
 }

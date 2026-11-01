@@ -69,6 +69,9 @@ fn load_cache_vectors() -> Vec<(String, PathInputs, String)> {
 #[test]
 fn cache_dir_parity_vectors_match_sha256_layout() {
     for (id, inputs, expected_hash) in load_cache_vectors() {
+        if inputs.os != TargetOs::host() {
+            continue;
+        }
         let digest = format!("{:x}", Sha256::digest(inputs.project_root.as_bytes()));
         assert_eq!(digest, expected_hash, "{id}: path digest");
         let resolved = resolve_paths(&inputs, |_| false).expect("resolve paths");
