@@ -1,0 +1,15 @@
+## Summary
+
+Scoped task.
+
+## Owned files
+
+README.md
+core/src/profile/v4.rs
+core/tests/golden/**
+
+## Acceptance case → test mapping
+
+| Acceptance case | Test or vector |
+| --- | --- |
+| case-a | `test_a` |

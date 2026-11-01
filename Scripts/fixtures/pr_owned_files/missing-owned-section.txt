@@ -1,0 +1,9 @@
+## Summary
+
+Task work only.
+
+## Acceptance case → test mapping
+
+| Acceptance case | Test or vector |
+| --- | --- |
+| case-a | `test_a` |

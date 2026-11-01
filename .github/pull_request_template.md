@@ -2,6 +2,10 @@
 
 <!-- What changed and why. -->
 
+## Owned files
+
+<!-- One repo-relative path or glob per line (for example `core/src/profile/v4.rs` or `core/tests/golden/**`). -->
+
 ## Acceptance case → test mapping
 
 <!-- One row per acceptance case from the task contract. Use the exact case name from the contract. -->

@@ -1,0 +1,15 @@
+## Summary
+
+Scoped task.
+
+## Owned files
+
+README.md
+core/tests/golden/**
+
+## Acceptance case → test mapping
+
+| Acceptance case | Test or vector |
+| --- | --- |
+| case-a | `test_a` |
+
