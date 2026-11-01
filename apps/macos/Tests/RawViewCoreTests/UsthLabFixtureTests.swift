@@ -21,10 +21,10 @@ struct UsthLabFixtureTests {
         let variant: String
         let plottable: Bool
         let dataRowCount: Int?
-        let xQuantity: String
-        let xUnit: String
-        let yQuantity: String
-        let yUnit: String
+        let xQuantity: String?
+        let xUnit: String?
+        let yQuantity: String?
+        let yUnit: String?
         let metadataKeys: [String]
     }
 
@@ -51,20 +51,22 @@ struct UsthLabFixtureTests {
             guard let variant = optionalScalar("variant") else {
                 throw ExpectedParseError.invalid("missing variant")
             }
+            func optionalAxisScalar(_ key: String) -> String? {
+                guard let value = optionalScalar(key) else { return nil }
+                if value == "null" || value.isEmpty { return nil }
+                return value
+            }
             guard let plottableText = optionalScalar("plottable") else {
                 throw ExpectedParseError.invalid("missing plottable")
             }
-            guard let xQuantity = optionalScalar("x_quantity") else {
-                throw ExpectedParseError.invalid("missing x_quantity")
-            }
-            guard let xUnit = optionalScalar("x_unit") else {
-                throw ExpectedParseError.invalid("missing x_unit")
-            }
-            guard let yQuantity = optionalScalar("y_quantity") else {
-                throw ExpectedParseError.invalid("missing y_quantity")
-            }
-            guard let yUnit = optionalScalar("y_unit") else {
-                throw ExpectedParseError.invalid("missing y_unit")
+            let xQuantity = optionalAxisScalar("x_quantity")
+            let xUnit = optionalAxisScalar("x_unit")
+            let yQuantity = optionalAxisScalar("y_quantity")
+            let yUnit = optionalAxisScalar("y_unit")
+            if plottableText == "true" {
+                guard xQuantity != nil, xUnit != nil, yQuantity != nil, yUnit != nil else {
+                    throw ExpectedParseError.invalid("plottable entry missing axis fields")
+                }
             }
             let plottable: Bool
             switch plottableText {
@@ -140,10 +142,14 @@ struct UsthLabFixtureTests {
             let yKey = try #require(measurement.view.y?.first, "\(tag) missing view.y")
             let xChannel = try #require(measurement.channel(named: xKey), "\(tag) missing x channel")
             let yChannel = try #require(measurement.channel(named: yKey), "\(tag) missing y channel")
-            #expect(xChannel.quantity == entry.xQuantity, "\(tag) x quantity")
-            #expect(xChannel.unit == entry.xUnit, "\(tag) x unit")
-            #expect(yChannel.quantity == entry.yQuantity, "\(tag) y quantity")
-            #expect(yChannel.unit == entry.yUnit, "\(tag) y unit")
+            let expectedXQ = try #require(entry.xQuantity, "\(tag) missing expected x_quantity")
+            let expectedXU = try #require(entry.xUnit, "\(tag) missing expected x_unit")
+            let expectedYQ = try #require(entry.yQuantity, "\(tag) missing expected y_quantity")
+            let expectedYU = try #require(entry.yUnit, "\(tag) missing expected y_unit")
+            #expect(xChannel.quantity == expectedXQ, "\(tag) x quantity")
+            #expect(xChannel.unit == expectedXU, "\(tag) x unit")
+            #expect(yChannel.quantity == expectedYQ, "\(tag) y quantity")
+            #expect(yChannel.unit == expectedYU, "\(tag) y unit")
         }
     }
 
