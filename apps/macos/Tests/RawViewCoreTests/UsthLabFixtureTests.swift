@@ -3,31 +3,150 @@ import Testing
 @testable import RawViewCore
 
 struct UsthLabFixtureTests {
-    private static var workspaceRoot: URL {
+    private static var repoRoot: URL {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 {
             url.deleteLastPathComponent()
         }
-        return url.appendingPathComponent("fixtures/workspaces/usth-lab")
+        return url
+    }
+
+    private static var workspaceRoot: URL {
+        repoRoot.appendingPathComponent("fixtures/workspaces/usth-lab")
+    }
+
+    private struct ExpectedEntry: Sendable {
+        let relativePath: String
+        let profileID: String
+        let variant: String
+        let plottable: Bool
+        let xQuantity: String
+        let xUnit: String
+        let yQuantity: String
+        let yUnit: String
+        let metadataKeys: [String]
+    }
+
+    private static func parseExpectedEntries(text: String) -> [ExpectedEntry] {
+        var entries: [ExpectedEntry] = []
+        var relativePath: String?
+        var profileID: String?
+        var variant: String?
+        var plottable = false
+        var xQuantity: String?
+        var xUnit: String?
+        var yQuantity: String?
+        var yUnit: String?
+        var metadataKeys: [String] = []
+        var inMetadataList = false
+
+        func flush() {
+            guard let relativePath, let profileID, let variant,
+                  let xQuantity, let xUnit, let yQuantity, let yUnit else { return }
+            entries.append(
+                ExpectedEntry(
+                    relativePath: relativePath,
+                    profileID: profileID,
+                    variant: variant,
+                    plottable: plottable,
+                    xQuantity: xQuantity,
+                    xUnit: xUnit,
+                    yQuantity: yQuantity,
+                    yUnit: yUnit,
+                    metadataKeys: metadataKeys))
+            relativePath = nil
+            profileID = nil
+            variant = nil
+            plottable = false
+            xQuantity = nil
+            xUnit = nil
+            yQuantity = nil
+            yUnit = nil
+            metadataKeys = []
+            inMetadataList = false
+        }
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("- id:") {
+                flush()
+                continue
+            }
+            if inMetadataList {
+                if trimmed.hasPrefix("- ") {
+                    metadataKeys.append(String(trimmed.dropFirst(2)))
+                    continue
+                }
+                inMetadataList = false
+            }
+            guard let colon = trimmed.firstIndex(of: ":") else { continue }
+            let key = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces)
+            let value = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            switch key {
+            case "relative_path": relativePath = value
+            case "profile_id": profileID = value
+            case "variant": variant = value
+            case "plottable": plottable = value == "true"
+            case "x_quantity": xQuantity = value
+            case "x_unit": xUnit = value
+            case "y_quantity": yQuantity = value
+            case "y_unit": yUnit = value
+            case "metadata_keys":
+                if value == "[]" {
+                    metadataKeys = []
+                } else {
+                    inMetadataList = true
+                }
+            default:
+                break
+            }
+        }
+        flush()
+        return entries
+    }
+
+    private static func acquisitionMetadataKeys(_ measurement: NormalizedMeasurement) -> [String] {
+        measurement.metadataSections
+            .filter { $0.title == "Acquisition" }
+            .flatMap { $0.fields.map(\.key) }
+            .sorted()
     }
 
     @Test func plottableRowsMatchExpectedProfileAndAxes() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
-        let expected = try String(
+        let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
-        let rows = expected
-            .split(separator: "\n")
-            .filter { $0.contains("relative_path:") && $0.contains("data/raw") }
-        #expect(!rows.isEmpty)
-        let keithleyLine = rows.first { $0.contains("keithley-2400.dual-sweep") && $0.contains("reproducible") }!
-        let relative = keithleyLine.split(separator: ":").dropFirst().joined(separator: ":").trimmingCharacters(in: .whitespaces)
-        let source = try project.discoverSources().first { $0.relativePath == relative }!
-        let measurement = try await InstrumentReader.load(source.url, project: project)
-        #expect(measurement.provenance["profile_id"] == "usth/keithley-2400")
-        #expect(measurement.provenance["mode"] == "dual-sweep")
-        let xKey = try #require(measurement.view.x)
-        let yKey = try #require(measurement.view.y?.first)
-        #expect(measurement.channel(named: xKey)?.quantity == "voltage")
-        #expect(measurement.channel(named: yKey)?.quantity == "current")
+        let rows = Self.parseExpectedEntries(text: expectedText).filter(\.plottable)
+        #expect(rows.count == 6)
+        let sources = try project.discoverSources()
+        for entry in rows {
+            let source = try #require(sources.first { $0.relativePath == entry.relativePath })
+            let measurement = try await InstrumentReader.load(source.url, project: project)
+            #expect(measurement.provenance["profile_id"] == entry.profileID, entry.relativePath)
+            #expect(measurement.provenance["mode"] == entry.variant, entry.relativePath)
+            let xKey = try #require(measurement.view.x, entry.relativePath)
+            let yKey = try #require(measurement.view.y?.first, entry.relativePath)
+            #expect(measurement.channel(named: xKey)?.quantity == entry.xQuantity, entry.relativePath)
+            #expect(measurement.channel(named: xKey)?.unit == entry.xUnit, entry.relativePath)
+            #expect(measurement.channel(named: yKey)?.quantity == entry.yQuantity, entry.relativePath)
+            #expect(measurement.channel(named: yKey)?.unit == entry.yUnit, entry.relativePath)
+        }
+    }
+
+    @Test func plottableMetadataKeysMatchExpectedYAML() async throws {
+        let project = try ProjectContext.open(Self.workspaceRoot)
+        let expectedText = try String(
+            contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
+        let rows = Self.parseExpectedEntries(text: expectedText)
+            .filter { $0.plottable && !$0.metadataKeys.isEmpty }
+        #expect(rows.count == 1)
+        let sources = try project.discoverSources()
+        for entry in rows {
+            let source = try #require(sources.first { $0.relativePath == entry.relativePath })
+            let measurement = try await InstrumentReader.load(source.url, project: project)
+            let actual = Self.acquisitionMetadataKeys(measurement)
+            #expect(actual == entry.metadataKeys, "\(entry.relativePath): \(actual)")
+            #expect(actual.count == 11)
+        }
     }
 }
