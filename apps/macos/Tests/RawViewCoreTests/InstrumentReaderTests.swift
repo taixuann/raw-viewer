@@ -2384,7 +2384,11 @@ struct InstrumentReaderTests {
             .flatMap { $0.fields.map(\.key) }
         #expect(keys == ["Alpha", "Beta"])
         let alpha = measurement.metadataSections.flatMap(\.fields).first { $0.key == "Alpha" }
-        #expect(alpha?.value == .string("first"))
+        if case .string(let text) = alpha?.value {
+            #expect(text == "first")
+        } else {
+            Issue.record("Alpha metadata missing or not a string")
+        }
     }
 
     @Test func v4EmptyMetadataLeavesAcquisitionUnfiltered() async throws {
