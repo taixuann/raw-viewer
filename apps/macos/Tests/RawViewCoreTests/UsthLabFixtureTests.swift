@@ -63,17 +63,17 @@ struct UsthLabFixtureTests {
             let xUnit = optionalAxisScalar("x_unit")
             let yQuantity = optionalAxisScalar("y_quantity")
             let yUnit = optionalAxisScalar("y_unit")
-            if plottableText == "true" {
-                guard xQuantity != nil, xUnit != nil, yQuantity != nil, yUnit != nil else {
-                    throw ExpectedParseError.invalid("plottable entry missing axis fields")
-                }
-            }
             let plottable: Bool
             switch plottableText {
             case "true": plottable = true
             case "false": plottable = false
             default:
                 throw ExpectedParseError.invalid("plottable not bool")
+            }
+            if plottable {
+                guard xQuantity != nil, xUnit != nil, yQuantity != nil, yUnit != nil else {
+                    throw ExpectedParseError.invalid("plottable entry missing axis fields")
+                }
             }
             let dataRowCount = optionalScalar("data_row_count").flatMap(Int.init)
             let metadataNode = map.first(where: { $0.key == "metadata_keys" })?.value
