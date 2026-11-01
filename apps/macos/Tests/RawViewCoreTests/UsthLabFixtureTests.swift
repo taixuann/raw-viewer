@@ -41,18 +41,18 @@ struct UsthLabFixtureTests {
         var inMetadataList = false
 
         func flush() {
-            guard let relativePath, let profileID, let variant,
-                  let xQuantity, let xUnit, let yQuantity, let yUnit else { return }
+            guard let rp = relativePath, let pid = profileID, let varnt = variant,
+                  let xq = xQuantity, let xu = xUnit, let yq = yQuantity, let yu = yUnit else { return }
             entries.append(
                 ExpectedEntry(
-                    relativePath: relativePath,
-                    profileID: profileID,
-                    variant: variant,
+                    relativePath: rp,
+                    profileID: pid,
+                    variant: varnt,
                     plottable: plottable,
-                    xQuantity: xQuantity,
-                    xUnit: xUnit,
-                    yQuantity: yQuantity,
-                    yUnit: yUnit,
+                    xQuantity: xq,
+                    xUnit: xu,
+                    yQuantity: yq,
+                    yUnit: yu,
                     metadataKeys: metadataKeys))
             relativePath = nil
             profileID = nil
@@ -122,14 +122,17 @@ struct UsthLabFixtureTests {
         for entry in rows {
             let source = try #require(sources.first { $0.relativePath == entry.relativePath })
             let measurement = try await InstrumentReader.load(source.url, project: project)
-            #expect(measurement.provenance["profile_id"] == entry.profileID, Comment(entry.relativePath))
-            #expect(measurement.provenance["mode"] == entry.variant, Comment(entry.relativePath))
-            let xKey = try #require(measurement.view.x, Comment(entry.relativePath))
-            let yKey = try #require(measurement.view.y?.first, Comment(entry.relativePath))
-            #expect(measurement.channel(named: xKey)?.quantity == entry.xQuantity, Comment(entry.relativePath))
-            #expect(measurement.channel(named: xKey)?.unit == entry.xUnit, Comment(entry.relativePath))
-            #expect(measurement.channel(named: yKey)?.quantity == entry.yQuantity, Comment(entry.relativePath))
-            #expect(measurement.channel(named: yKey)?.unit == entry.yUnit, Comment(entry.relativePath))
+            let tag = entry.relativePath
+            #expect(measurement.provenance["profile_id"] == entry.profileID, "\(tag) profile_id")
+            #expect(measurement.provenance["mode"] == entry.variant, "\(tag) mode")
+            let xKey = try #require(measurement.view.x, "\(tag) missing view.x")
+            let yKey = try #require(measurement.view.y?.first, "\(tag) missing view.y")
+            let xChannel = try #require(measurement.channel(named: xKey), "\(tag) missing x channel")
+            let yChannel = try #require(measurement.channel(named: yKey), "\(tag) missing y channel")
+            #expect(xChannel.quantity == entry.xQuantity, "\(tag) x quantity")
+            #expect(xChannel.unit == entry.xUnit, "\(tag) x unit")
+            #expect(yChannel.quantity == entry.yQuantity, "\(tag) y quantity")
+            #expect(yChannel.unit == entry.yUnit, "\(tag) y unit")
         }
     }
 
@@ -145,7 +148,7 @@ struct UsthLabFixtureTests {
             let source = try #require(sources.first { $0.relativePath == entry.relativePath })
             let measurement = try await InstrumentReader.load(source.url, project: project)
             let actual = Self.acquisitionMetadataKeys(measurement)
-            #expect(actual == entry.metadataKeys, Comment("\(entry.relativePath): \(actual)"))
+            #expect(actual == entry.metadataKeys, "\(entry.relativePath): \(actual)")
             #expect(actual.count == 11)
         }
     }
