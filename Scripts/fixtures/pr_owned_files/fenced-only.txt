@@ -1,0 +1,14 @@
+## Summary
+
+Example owned list is fenced and must not count.
+
+```
+## Owned files
+core/src/profile/v4.rs
+```
+
+## Acceptance case → test mapping
+
+| Acceptance case | Test or vector |
+| --- | --- |
+| case-a | `test_a` |

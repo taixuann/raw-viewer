@@ -28,6 +28,25 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: ./Scripts/check_pr_acceptance_mapping.sh
 
+  pr-owned-files:
+    name: pr owned files
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Owned files check self-test
+        run: ./Scripts/check_pr_owned_files_self_test.sh
+      - name: PR changed files stay within owned list
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git fetch origin "${{ github.event.pull_request.base.ref }}"
+          git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...HEAD" > /tmp/changed.txt
+          ./Scripts/check_pr_owned_files.sh /dev/null /tmp/changed.txt
+
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

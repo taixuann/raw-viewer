@@ -11,8 +11,12 @@ Cover every acceptance case named in a task contract with tests.
 Give each acceptance case its own named test or shared vector row.
 When a case has multiple values, columns, or elements, assert every value in the test, not only the first.
 Map each contract acceptance case to its test or vector in the pull request body under `## Acceptance case → test mapping` (ASCII `->` is also accepted in the heading).
+List every repo-relative path or glob the task owns in the pull request body under `## Owned files`, one entry per line.
+Do not edit files outside that owned list without explicit human approval.
 
 The `pr-acceptance-mapping` CI job is **advisory**: it is not a required GitHub ruleset check for merge, and Tai decides separately whether to treat it as mandatory. The job only verifies that the mapping **table exists** with at least one non-placeholder row (placeholder rows containing `(example)` fail). Reviewers and verifiers still confirm the mapping is **correct and complete** against the task contract and that tests cover every case.
+
+The `pr-owned-files` CI job is **advisory**: it is not a required GitHub ruleset check for merge, and Tai decides separately whether to treat it as mandatory. The job only verifies that the PR body declares `## Owned files` and that every changed path in the PR matches a declared entry. It does not detect scope creep inside an owned file (for example an unapproved schema field added only in YAML or Rust under an owned path). Reviewers still own contract fidelity and semantic scope.
 
 ## Knowledge Graph and Component Map (Graphify)
 
@@ -86,6 +90,7 @@ The gardener owns this table. Update it when rules or checks change.
 | L65 — Profile fallback (load order; no writes under `.rawviewer/instrument/`). | `apps/macos/Scripts/CoreSelfCheck.swift:1076-1084` (priority/fallback); no automated check for the read-only write ban | partial |
 | L66 — Verification gate (macOS check scripts + Rust fmt/clippy/test). | `.github/workflows/ci.yml:46-51`, `73-76` | partial |
 | L10–L13 — Task contract acceptance coverage and PR mapping. | `Scripts/check_pr_acceptance_mapping.sh` and `Scripts/check_pr_acceptance_mapping_self_test.sh`; `.github/workflows/ci.yml` (`pr-acceptance-mapping` job, advisory); named tests/vectors, mapping correctness/completeness, and full multi-value assertions are review-/verifier-enforced | partial |
+| L14–L16 — Task owned-file list in PR body; no edits outside owned paths without human approval. | `Scripts/check_pr_owned_files.sh` and `Scripts/check_pr_owned_files_self_test.sh`; `.github/workflows/ci.yml` (`pr-owned-files` job, advisory); semantic creep inside owned files is review-/verifier-enforced | partial |
 | CI must be green on required jobs before merge. | `.github/workflows/ci.yml` (rust matrix, swift job) | enforced |
 
 Required GitHub status checks on `master` are not configured (Tai's decision).
