@@ -59,6 +59,7 @@ fn raw_viewer_profiles_directory_loads_and_takes_precedence() {
     assert!(
         catalog.profiles[0]
             .relative_path
+            .replace('\\', "/")
             .starts_with(".raw-viewer/profiles/"),
         "expected .raw-viewer/profiles precedence, got {}",
         catalog.profiles[0].relative_path
