@@ -285,13 +285,7 @@ public enum InstrumentReader {
             let rowCount = extracted.columns.first?.1.count ?? 0
             let gapCount = extracted.columns.reduce(0) { $0 + $1.1.filter({ $0 == nil }).count }
             let facts = parseFilename(basename)
-            let headerFields = match.format.kind == "tabular"
-                && match.profile.schemaVersion == 4
-                && !match.format.acquisitionHeaderKeys.isEmpty
-                ? applyProfileAcquisitionHeaderFields(
-                    extracted.headerFields,
-                    orderedKeys: match.format.acquisitionHeaderKeys)
-                : extracted.headerFields
+            let headerFields = extracted.headerFields
             let measurement = NormalizedMeasurement(
                 source: SourceIdentity(path: relativePath, sha256: extracted.sha256),
                 instrument: InstrumentIdentity(id: match.profile.instrumentID, name: match.profile.instrumentName,
@@ -656,22 +650,6 @@ public enum InstrumentReader {
             guard (0...23).contains(hour), (0...59).contains(minute), (0...59).contains(second) else { return false }
         }
         return true
-    }
-
-    private static func applyProfileAcquisitionHeaderFields(
-        _ headerFields: [(key: String, value: String)],
-        orderedKeys: [String]
-    ) -> [(key: String, value: String)] {
-        guard !orderedKeys.isEmpty else { return headerFields }
-        var out: [(key: String, value: String)] = []
-        for key in orderedKeys {
-            if let hit = headerFields.first(where: { $0.key == key }) {
-                out.append(hit)
-            } else if key == "LabVIEW Measurement" {
-                out.append((key: key, value: ""))
-            }
-        }
-        return out
     }
 
     private static func metadataSections(headerFields: [(key: String, value: String)], filename: String, facts: (timestamp: String?, deviceID: String?, category: String?), channelCount: Int, rowCount: Int, gapCount: Int) -> [MetadataSection] {
@@ -1127,8 +1105,60 @@ enum TabularExtractor {
             }
             throw ReaderError.invalidSource("\(relativePath): no \"\(dataPrefix)\" data rows were found after the header.")
         }
-        let headerFields = try headerMetadata(lines: headerLineTexts, delimiter: format.delimiter, relativePath: relativePath)
+        let headerFields: [(key: String, value: String)]
+        if !format.metadata.isEmpty {
+            headerFields = try applyV4ProfileMetadata(
+                preHeaderLines: headerLineTexts,
+                delimiter: format.delimiter,
+                entries: format.metadata,
+                relativePath: relativePath)
+        } else {
+            headerFields = try headerMetadata(lines: headerLineTexts, delimiter: format.delimiter, relativePath: relativePath)
+        }
         return TabularExtraction(columns: columns.enumerated().map { ($0.element.0, ledger.values[$0.offset]) }, reasons: ledger.reasons, warnings: ledger.summarize(relativePath: relativePath), headerFields: headerFields, sha256: puller.digestHex())
+    }
+
+    static func applyV4ProfileMetadata(
+        preHeaderLines: [String],
+        delimiter: Character,
+        entries: [ProfileMetadataEntry],
+        relativePath: String
+    ) throws -> [(key: String, value: String)] {
+        var out: [(key: String, value: String)] = []
+        for entry in entries {
+            switch entry {
+            case .rowKeyValue(let row, let key, _, _):
+                guard row >= 1, row <= preHeaderLines.count else {
+                    throw ReaderError.invalidSource("\(relativePath): metadata \"\(key)\" source row \(row) is before the header or past the end of the pre-header section.")
+                }
+                let cells = try split(preHeaderLines[row - 1], delimiter: delimiter, context: "\(relativePath) metadata row \(row)")
+                if cells.count >= 2 {
+                    let value = cells[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !value.isEmpty {
+                        out.append((key: key, value: truncateMetadataValue(value)))
+                    }
+                }
+            case .cellKey(let column, let row, let key):
+                guard row >= 1, row <= preHeaderLines.count else {
+                    throw ReaderError.invalidSource("\(relativePath): metadata \"\(key)\" source row \(row) is before the header or past the end of the pre-header section.")
+                }
+                let cells = try split(preHeaderLines[row - 1], delimiter: delimiter, context: "\(relativePath) metadata row \(row)")
+                let index = column - 1
+                guard index >= 0, index < cells.count else { continue }
+                let value = cells[index].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty {
+                    out.append((key: key, value: truncateMetadataValue(value)))
+                }
+            }
+        }
+        return out
+    }
+
+    private static func truncateMetadataValue(_ trimmed: String) -> String {
+        if trimmed.count > 512 {
+            return String(trimmed.prefix(509)) + "..."
+        }
+        return trimmed
     }
 
     /// Ordered header fields from lines before the names row. Lines are split on

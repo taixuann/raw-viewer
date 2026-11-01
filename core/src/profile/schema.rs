@@ -718,7 +718,7 @@ fn validate(
             decimal_separator,
             names_prefix,
             data_prefix,
-            acquisition_header_keys: Vec::new(),
+            metadata: Vec::new(),
             columns,
         });
     }

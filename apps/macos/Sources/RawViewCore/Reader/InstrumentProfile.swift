@@ -26,8 +26,8 @@ struct ProfileFormat: Sendable, Equatable {
     /// Row-block markers for `tabular` layouts; nil otherwise.
     let namesPrefix: String?
     let dataPrefix: String?
-    /// Schema v4 tabular: ordered Acquisition keys from variant `metadata` scalars.
-    let acquisitionHeaderKeys: [String]
+    /// Schema v4 tabular: declared metadata locators from variant `metadata`.
+    let metadata: [ProfileMetadataEntry]
     let columns: [ProfileColumn]
 
     func column(named key: String) -> ProfileColumn? { columns.first { $0.key == key } }
@@ -954,7 +954,7 @@ enum ProfileSchema {
                                          delimiter: Character(delimiterText), encodings: encodings,
                                          encodingNames: encodingNames, decimalSeparator: decimalSeparator,
                                          namesPrefix: namesPrefix, dataPrefix: dataPrefix,
-                                         acquisitionHeaderKeys: [],
+                                         metadata: [],
                                          columns: columns))
         }
 

@@ -20,6 +20,7 @@ struct UsthLabFixtureTests {
         let profileID: String
         let variant: String
         let plottable: Bool
+        let dataRowCount: Int?
         let xQuantity: String
         let xUnit: String
         let yQuantity: String
@@ -55,6 +56,7 @@ struct UsthLabFixtureTests {
             default:
                 throw ExpectedParseError.invalid("plottable not bool")
             }
+            let dataRowCount = optionalScalar("data_row_count").flatMap(Int.init)
             let metadataNode = map.first(where: { $0.key == "metadata_keys" })?.value
             let metadataKeys: [String]
             if let list = metadataNode?.listItems {
@@ -69,6 +71,7 @@ struct UsthLabFixtureTests {
                 profileID: profileID,
                 variant: variant,
                 plottable: plottable,
+                dataRowCount: dataRowCount,
                 xQuantity: xQuantity,
                 xUnit: xUnit,
                 yQuantity: yQuantity,
@@ -82,6 +85,17 @@ struct UsthLabFixtureTests {
             .filter { $0.title == "Acquisition" }
             .flatMap { $0.fields.map(\.key) }
             .sorted()
+    }
+
+    private static func acquisitionString(_ measurement: NormalizedMeasurement, key: String) -> String? {
+        measurement.metadataSections
+            .filter { $0.title == "Acquisition" }
+            .flatMap(\.fields)
+            .first { $0.key == key }
+            .flatMap { field -> String? in
+                if case .string(let text) = field.value { return text }
+                return nil
+            }
     }
 
     @Test func plottableRowsMatchExpectedProfileAndAxes() async throws {
@@ -108,6 +122,45 @@ struct UsthLabFixtureTests {
         }
     }
 
+    @Test func tableRowCountsMatchExpectedYAMLIncludingNonPlottable() async throws {
+        let project = try ProjectContext.open(Self.workspaceRoot)
+        let expectedText = try String(
+            contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
+        let rows = try Self.parseExpectedEntries(text: expectedText)
+        let sources = try project.discoverSources()
+        for entry in rows {
+            guard let expectedRows = entry.dataRowCount else { continue }
+            if !entry.plottable {
+                #expect(expectedRows == 0, "\(entry.relativePath): non-plottable data_row_count")
+                continue
+            }
+            let source = try #require(sources.first { $0.relativePath == entry.relativePath })
+            let measurement = try await InstrumentReader.load(source.url, project: project)
+            let pointCount = measurement.channels.first?.values.count ?? 0
+            #expect(pointCount == expectedRows, "\(entry.relativePath): data_row_count")
+        }
+    }
+
+    @Test func keithleyResolvesThreeProfileColumns() async throws {
+        let project = try ProjectContext.open(Self.workspaceRoot)
+        let relative = "data/raw/2026-10-07/071026-143703_keithley-2400.dual-sweep_[cu-ec-pda.q14-ito.2_r2-c6]_iv.dual-sweep_r.[reproducible]_010.txt"
+        let source = try #require(try project.discoverSources().first { $0.relativePath == relative })
+        let measurement = try await InstrumentReader.load(source.url, project: project)
+        #expect(measurement.channels.count == 3)
+        let voltage = try #require(measurement.channel(named: "voltage"))
+        #expect(voltage.quantity == "voltage")
+        #expect(voltage.unit == "V")
+        let current = try #require(measurement.channel(named: "current"))
+        #expect(current.quantity == "current")
+        #expect(current.unit == "A")
+        let timestamp = try #require(measurement.channel(named: "timestamp"))
+        #expect(timestamp.quantity == "time")
+        #expect(timestamp.unit == "s")
+        #expect(voltage.values.count == 121)
+        #expect(current.values.count == 121)
+        #expect(timestamp.values.count == 121)
+    }
+
     @Test func plottableMetadataKeysMatchExpectedYAML() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let expectedText = try String(
@@ -120,8 +173,10 @@ struct UsthLabFixtureTests {
             let source = try #require(sources.first { $0.relativePath == entry.relativePath })
             let measurement = try await InstrumentReader.load(source.url, project: project)
             let actual = Self.acquisitionMetadataKeys(measurement)
-            #expect(actual == entry.metadataKeys, "\(entry.relativePath): \(actual)")
-            #expect(actual.count == 11)
+            #expect(actual == entry.metadataKeys.sorted(), "\(entry.relativePath): \(actual)")
+            #expect(actual.count == 2)
+            #expect(Self.acquisitionString(measurement, key: "Date") == "2026/10/07")
+            #expect(Self.acquisitionString(measurement, key: "Time") == "14:37:03.3081121444702148437")
         }
     }
 }

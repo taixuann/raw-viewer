@@ -24,17 +24,12 @@ variants:
       names_prefix: X_Value
       data_prefix: ""
     metadata:
-      - Date
-      - Decimal_Separator
-      - LabVIEW Measurement
-      - Multi_Headings
-      - Operator
-      - Reader_Version
-      - Separator
-      - Time
-      - Time_Pref
-      - Writer_Version
-      - X_Columns
+      - row: 10
+        key: Date
+        type: string
+      - row: 11
+        key: Time
+        type: string
     columns:
       voltage:
         role: channel
@@ -49,12 +44,13 @@ variants:
         unit: A
         label: Current
       timestamp:
-        role: channel
+        role: progression
+        type: time
+        behavior: continuous
         header: "Untitled 2"
         quantity: time
         unit: s
         label: Time
-        required: false
     plot:
       x: voltage
       y: [current]

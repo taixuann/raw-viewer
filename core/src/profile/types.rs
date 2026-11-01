@@ -15,6 +15,21 @@ pub struct ProfileColumn {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileMetadataEntry {
+    RowKeyValue {
+        row: i32,
+        key: String,
+        value_type: String,
+        format: Option<String>,
+    },
+    CellKey {
+        column: i32,
+        row: i32,
+        key: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileFormat {
     pub id: String,
     pub kind: String,
@@ -24,8 +39,8 @@ pub struct ProfileFormat {
     pub decimal_separator: char,
     pub names_prefix: Option<String>,
     pub data_prefix: Option<String>,
-    /// Schema v4 tabular: ordered Acquisition keys from variant `metadata` scalars.
-    pub acquisition_header_keys: Vec<String>,
+    /// Schema v4 tabular: declared metadata locators from variant `metadata`.
+    pub metadata: Vec<ProfileMetadataEntry>,
     pub columns: Vec<ProfileColumn>,
 }
 

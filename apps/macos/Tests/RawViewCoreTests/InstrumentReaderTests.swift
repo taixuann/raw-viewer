@@ -2330,7 +2330,7 @@ struct InstrumentReaderTests {
         await #expect(throws: ReaderError.self) { try await InstrumentReader.load(url2, project: project) }
     }
 
-    @Test func v4AcquisitionHeaderMetadataFromProfileScalars() async throws {
+    @Test func v4DeclaredMetadataFromProfileRowLocators() async throws {
         let profile = """
         schema_version: 4
         id: test/acquisition-filter
@@ -2350,8 +2350,12 @@ struct InstrumentReaderTests {
               names_prefix: DataName
               data_prefix: DataValue
             metadata:
-              - Alpha
-              - Beta
+              - row: 2
+                key: Alpha
+                type: string
+              - row: 4
+                key: Beta
+                type: string
             columns:
               voltage:
                 role: channel
@@ -2379,6 +2383,8 @@ struct InstrumentReaderTests {
             .filter { $0.title == "Acquisition" }
             .flatMap { $0.fields.map(\.key) }
         #expect(keys == ["Alpha", "Beta"])
+        let alpha = measurement.metadataSections.flatMap(\.fields).first { $0.key == "Alpha" }
+        #expect(alpha?.value == .string("first"))
     }
 
     @Test func v4EmptyMetadataLeavesAcquisitionUnfiltered() async throws {

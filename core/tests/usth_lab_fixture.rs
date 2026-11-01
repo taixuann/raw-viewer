@@ -1,8 +1,8 @@
 //! Real-data usth-lab workspace fixture checks (issue #27).
 //!
-//! Active tests verify committed bytes, measured row counts, and reader guards
-//! that exist today. Profile routing, axis metadata, discovery ignore rules, and
-//! header-only dispositions stay `#[ignore]` until #18 lands variant profiles.
+//! Active tests verify committed bytes, row counts, profile axes, Keithley metadata
+//! (date/time only), and three resolved Keithley columns. Discovery ignore rules and
+//! header-only dispositions stay `#[ignore]` until the shared discovery port lands.
 
 use raw_viewer_core::reader::{load_measurement, ReaderError};
 use raw_viewer_core::yaml::{parse, YamlNode};
@@ -247,7 +247,7 @@ fn metadata_keys(measurement: &raw_viewer_core::measurement::NormalizedMeasureme
     keys
 }
 
-/// Recorded in PR #18c-2: generic LVM `header_metadata` alone did not yield the 11 Keithley keys; v4 variant `metadata` scalars filter Acquisition headers.
+/// Recorded in PR #18c-2: generic LVM `header_metadata` pulls second-block noise; v4 row metadata keeps first-block date/time only.
 pub const KEITHLEY_LVM_PROBE_SUFFICIENT: bool = false;
 
 #[test]
@@ -288,6 +288,59 @@ fn usth_lab_plottable_files_match_profile_axes() {
     }
 }
 
+fn metadata_field_value(
+    measurement: &raw_viewer_core::measurement::NormalizedMeasurement,
+    key: &str,
+) -> Option<String> {
+    measurement
+        .metadata_sections
+        .iter()
+        .filter(|section| section.title == "Acquisition")
+        .flat_map(|section| section.fields.iter())
+        .find(|field| field.key == key)
+        .and_then(|field| match &field.value {
+            raw_viewer_core::measurement::JSONValue::String(text) => Some(text.clone()),
+            _ => None,
+        })
+}
+
+fn channel_by_key<'a>(
+    measurement: &'a raw_viewer_core::measurement::NormalizedMeasurement,
+    key: &str,
+) -> &'a raw_viewer_core::measurement::MeasurementChannel {
+    measurement
+        .channels
+        .iter()
+        .find(|c| c.name == key)
+        .unwrap_or_else(|| panic!("missing channel {key}"))
+}
+
+#[test]
+fn usth_lab_keithley_resolves_three_profile_columns() {
+    let root = workspace_root();
+    let doc = parse_expected();
+    let entry = entries(&doc)
+        .into_iter()
+        .find(|e| scalar(map_get(e, "id")) == "keithley-dual-sweep")
+        .expect("keithley entry");
+    let relative = scalar(map_get(entry, "relative_path"));
+    let measurement = load_measurement(&root, Path::new(relative))
+        .unwrap_or_else(|err| panic!("{relative}: load failed: {err}"));
+    assert_eq!(measurement.channels.len(), 3, "{relative}: channel count");
+    let voltage = channel_by_key(&measurement, "voltage");
+    assert_eq!(voltage.quantity.as_deref(), Some("voltage"));
+    assert_eq!(voltage.unit, "V");
+    let current = channel_by_key(&measurement, "current");
+    assert_eq!(current.quantity.as_deref(), Some("current"));
+    assert_eq!(current.unit, "A");
+    let timestamp = channel_by_key(&measurement, "timestamp");
+    assert_eq!(timestamp.quantity.as_deref(), Some("time"));
+    assert_eq!(timestamp.unit, "s");
+    assert_eq!(voltage.values.len(), 121);
+    assert_eq!(current.values.len(), 121);
+    assert_eq!(timestamp.values.len(), 121);
+}
+
 #[test]
 fn usth_lab_metadata_keys_match_profiles() {
     let root = workspace_root();
@@ -306,7 +359,15 @@ fn usth_lab_metadata_keys_match_profiles() {
             "{relative}: metadata_keys probe output {actual:?}"
         );
         if relative.contains("keithley-2400") {
-            assert_eq!(actual.len(), 11, "keithley LVM probe: {actual:?}");
+            assert_eq!(actual.len(), 2, "keithley LVM metadata: {actual:?}");
+            assert_eq!(
+                metadata_field_value(&measurement, "Date").as_deref(),
+                Some("2026/10/07")
+            );
+            assert_eq!(
+                metadata_field_value(&measurement, "Time").as_deref(),
+                Some("14:37:03.3081121444702148437")
+            );
         }
     }
 }

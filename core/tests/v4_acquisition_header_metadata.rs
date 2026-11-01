@@ -1,4 +1,4 @@
-//! V4 variant `metadata` scalar lists drive tabular Acquisition header filtering.
+//! V4 variant `metadata` row/cell locators drive tabular Acquisition headers.
 
 use raw_viewer_core::reader::load_measurement;
 use std::fs;
@@ -40,8 +40,12 @@ variants:
       names_prefix: DataName
       data_prefix: DataValue
     metadata:
-      - Alpha
-      - Beta
+      - row: 2
+        key: Alpha
+        type: string
+      - row: 4
+        key: Beta
+        type: string
     columns:
       voltage:
         role: channel

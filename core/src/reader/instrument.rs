@@ -147,24 +147,6 @@ pub fn load_measurement(
     measurement_from_extraction(&relative_path, &basename, &profile_match, extracted)
 }
 
-fn apply_profile_acquisition_header_fields(
-    header_fields: &[(String, String)],
-    ordered_keys: &[String],
-) -> Vec<(String, String)> {
-    if ordered_keys.is_empty() {
-        return header_fields.to_vec();
-    }
-    let mut out = Vec::new();
-    for key in ordered_keys {
-        if let Some((_, value)) = header_fields.iter().find(|(k, _)| k == key) {
-            out.push((key.clone(), value.clone()));
-        } else if key == "LabVIEW Measurement" {
-            out.push((key.clone(), String::new()));
-        }
-    }
-    out
-}
-
 enum EncodedResolution {
     Failed(String),
     Matched {
@@ -378,17 +360,7 @@ fn measurement_from_extraction(
         .map(|(_, values)| values.iter().filter(|v| v.is_none()).count())
         .sum();
     let facts = parse_filename(basename);
-    let header_fields = if profile_match.format.kind == "tabular"
-        && profile_match.profile.schema_version == 4
-        && !profile_match.format.acquisition_header_keys.is_empty()
-    {
-        apply_profile_acquisition_header_fields(
-            &extracted.header_fields,
-            &profile_match.format.acquisition_header_keys,
-        )
-    } else {
-        extracted.header_fields.clone()
-    };
+    let header_fields = extracted.header_fields.clone();
     Ok(NormalizedMeasurement {
         source: SourceIdentity {
             path: relative_path.to_string(),

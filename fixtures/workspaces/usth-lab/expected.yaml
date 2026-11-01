@@ -25,16 +25,7 @@ entries:
     y_unit: A
     metadata_keys:
       - Date
-      - Decimal_Separator
-      - LabVIEW Measurement
-      - Multi_Headings
-      - Operator
-      - Reader_Version
-      - Separator
       - Time
-      - Time_Pref
-      - Writer_Version
-      - X_Columns
   - id: autolab-cv
     relative_path: data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt
     profile_id: usth/autolab-usth
@@ -182,13 +173,4 @@ entries:
     y_unit: A
     metadata_keys:
       - Date
-      - Decimal_Separator
-      - LabVIEW Measurement
-      - Multi_Headings
-      - Operator
-      - Reader_Version
-      - Separator
       - Time
-      - Time_Pref
-      - Writer_Version
-      - X_Columns

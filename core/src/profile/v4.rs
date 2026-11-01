@@ -1,7 +1,7 @@
 //! Schema-v4 flat instrument profiles (decode, validate, compile to v1/v2 reader shape).
 
 use crate::profile::types::{
-    humanized, InstrumentProfile, ProfileColumn, ProfileFormat, ProfileMode,
+    humanized, InstrumentProfile, ProfileColumn, ProfileFormat, ProfileMetadataEntry, ProfileMode,
 };
 use crate::yaml::YamlNode;
 use std::collections::{BTreeMap, HashSet};
@@ -61,22 +61,7 @@ pub struct RowSpanV4 {
     pub end: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MetadataEntryV4 {
-    RowKeyValue {
-        row: i32,
-        key: String,
-        value_type: String,
-        format: Option<String>,
-    },
-    CellKey {
-        column: i32,
-        row: i32,
-        key: String,
-    },
-    /// Ordered Acquisition header key for tabular pre-header metadata.
-    AcquisitionHeaderKey(String),
-}
+pub type MetadataEntryV4 = ProfileMetadataEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnRoleV4 {
@@ -313,14 +298,7 @@ fn compile_format(
     {
         data_prefix = Some(String::new());
     }
-    let acquisition_header_keys = variant
-        .metadata
-        .iter()
-        .filter_map(|entry| match entry {
-            MetadataEntryV4::AcquisitionHeaderKey(key) => Some(key.clone()),
-            _ => None,
-        })
-        .collect();
+    let metadata = variant.metadata.clone();
     Ok(ProfileFormat {
         id: format_id,
         kind: variant.format.kind.clone(),
@@ -335,7 +313,7 @@ fn compile_format(
         decimal_separator: variant.format.decimal_separator,
         names_prefix: variant.rows.names_prefix.clone(),
         data_prefix,
-        acquisition_header_keys,
+        metadata,
         columns,
     })
 }
@@ -687,18 +665,9 @@ fn decode_metadata(
     let mut out = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let meta_field = format!("{field}.metadata[{index}]");
-        if let Some(scalar) = item.scalar_value() {
-            if scalar.is_empty() {
-                return Err(invalid(format!(
-                    "{meta_field} must be a non-empty acquisition header key."
-                )));
-            }
-            out.push(MetadataEntryV4::AcquisitionHeaderKey(scalar.to_string()));
-            continue;
-        }
         let entries = item.map_entries().ok_or_else(|| {
             invalid(format!(
-                "{meta_field} must be a mapping or header key string."
+                "{meta_field} must be a mapping with row/key/type or column/row/key."
             ))
         })?;
         if entries.iter().any(|(k, _)| k == "column") {
@@ -709,13 +678,13 @@ fn decode_metadata(
             )?;
             let row = positive_int(item.value_for_key("row"), &format!("{meta_field}.row"))?;
             let key = scalar_required(item, "key", &format!("{meta_field}.key"))?;
-            out.push(MetadataEntryV4::CellKey { column, row, key });
+            out.push(ProfileMetadataEntry::CellKey { column, row, key });
         } else {
             reject_unknown(item, &["row", "key", "type", "format"], &meta_field)?;
             let row = positive_int(item.value_for_key("row"), &format!("{meta_field}.row"))?;
             let key = scalar_required(item, "key", &format!("{meta_field}.key"))?;
             let value_type = scalar_required(item, "type", &format!("{meta_field}.type"))?;
-            out.push(MetadataEntryV4::RowKeyValue {
+            out.push(ProfileMetadataEntry::RowKeyValue {
                 row,
                 key,
                 value_type,
@@ -1001,47 +970,6 @@ variants:
 "#;
         let doc = parse(yaml).expect("parse");
         assert_eq!(doc.variants.keys().cloned().collect::<Vec<_>>(), vec!["cv"]);
-    }
-
-    #[test]
-    fn acquisition_header_key_scalars_decode() {
-        let yaml = r#"schema_version: 4
-id: usth/demo
-instrument:
-  id: demo
-  name: Demo
-variants:
-  m:
-    format:
-      kind: tabular
-      extensions: [".txt"]
-      delimiter: ","
-    rows:
-      header: 1
-    metadata:
-      - Alpha
-      - Beta
-    columns:
-      x:
-        role: channel
-        header: X
-        quantity: voltage
-        unit: V
-        label: X
-    plot:
-      x: x
-      y: [x]
-    when:
-      content_contains_any: ["x"]
-"#;
-        let doc = parse(yaml).expect("parse");
-        assert_eq!(
-            doc.variants["m"].metadata,
-            vec![
-                MetadataEntryV4::AcquisitionHeaderKey("Alpha".into()),
-                MetadataEntryV4::AcquisitionHeaderKey("Beta".into()),
-            ]
-        );
     }
 
     #[test]

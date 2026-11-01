@@ -61,10 +61,14 @@ struct RowSpanV4: Sendable, Equatable {
     var end: Int
 }
 
+enum ProfileMetadataEntry: Sendable, Equatable {
+    case rowKeyValue(row: Int, key: String, valueType: String, format: String?)
+    case cellKey(column: Int, row: Int, key: String)
+}
+
 enum MetadataEntryV4: Sendable, Equatable {
     case rowKeyValue(row: Int, key: String, valueType: String, format: String?)
     case cellKey(column: Int, row: Int, key: String)
-    case acquisitionHeaderKey(String)
 }
 
 enum ColumnRoleV4: Sendable, Equatable {
@@ -233,9 +237,13 @@ enum ProfileV4Codec {
         if dataPrefix == nil, variant.format.kind == "tabular", variant.rows.namesPrefix != nil {
             dataPrefix = ""
         }
-        let acquisitionHeaderKeys = variant.metadata.compactMap { entry -> String? in
-            if case .acquisitionHeaderKey(let key) = entry { return key }
-            return nil
+        let metadata = variant.metadata.map { entry -> ProfileMetadataEntry in
+            switch entry {
+            case .rowKeyValue(let row, let key, let valueType, let format):
+                return .rowKeyValue(row: row, key: key, valueType: valueType, format: format)
+            case .cellKey(let column, let row, let key):
+                return .cellKey(column: column, row: row, key: key)
+            }
         }
         return ProfileFormat(
             id: formatID,
@@ -247,7 +255,7 @@ enum ProfileV4Codec {
             decimalSeparator: variant.format.decimalSeparator,
             namesPrefix: variant.rows.namesPrefix,
             dataPrefix: dataPrefix,
-            acquisitionHeaderKeys: acquisitionHeaderKeys,
+            metadata: metadata,
             columns: columns
         )
     }
@@ -481,14 +489,10 @@ enum ProfileV4Codec {
         for (index, item) in items.enumerated() {
             let metaField = "\(field).metadata[\(index)]"
             if let scalar = item.scalarValue {
-                guard !scalar.isEmpty else {
-                    throw ProfileV4Error.invalid(reason: "\(metaField) must be a non-empty acquisition header key.")
-                }
-                out.append(.acquisitionHeaderKey(scalar))
-                continue
+                throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping with row/key/type or column/row/key.")
             }
             guard item.mapEntries != nil else {
-                throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping or header key string.")
+                throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping with row/key/type or column/row/key.")
             }
             if item.value(for: "column") != nil {
                 try rejectUnknown(item, allowed: ["column", "row", "key"], scope: metaField)

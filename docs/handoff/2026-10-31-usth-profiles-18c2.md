@@ -13,7 +13,11 @@ The usth-lab workspace ships four schema-v4 profiles under `.raw-viewer/profiles
 
 ## Keithley LVM metadata probe (L224)
 
-Generic tabular `header_metadata` on the dual-sweep fixture yields extra second-block keys (for example `Channels`, `Samples`, `X_Dimension`) and omits the single-cell `LabVIEW Measurement` row. **Probe result: not sufficient.** v4 `usth/keithley-2400` declares ordered Acquisition keys under variant `metadata:`; Rust and Swift apply those scalars generically for schema-v4 tabular formats without changing v2 golden JSON.
+Generic tabular `header_metadata` on the dual-sweep fixture pulls second-block noise (for example `Channels`, `Samples`, duplicate `Date`/`Time` columns) and extra keys RawView does not want on the Acquisition panel. **Probe result: not sufficient.** Tai's decision for this cycle: keep **Date** and **Time** only from the first acquisition header block via v4 row metadata (`row`/`key`/`type`); no plain-string metadata keys and no `LabVIEW Measurement` placeholder.
+
+## Keithley columns
+
+`usth/keithley-2400` maps `Untitled` → voltage (V), `Untitled 1` → current (A), and `Untitled 2` → time progression (s). Plot axes remain voltage vs current.
 
 ## Grammar
 
