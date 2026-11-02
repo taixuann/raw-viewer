@@ -1,5 +1,4 @@
-use crate::config::{load_project_config, ConfigError};
-use crate::paths::PROJECT_CONFIG_DIRECTORY_NAME;
+use crate::config::{load_project_config_with_fallback, ConfigError};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -38,8 +37,7 @@ impl ProjectContext {
     pub const DEFAULT_DATA_ROOT: &'static str = "data/raw";
 
     pub fn open(root: &Path) -> Result<Self, ProjectError> {
-        let config_dir = root.join(PROJECT_CONFIG_DIRECTORY_NAME);
-        let config = load_project_config(&config_dir).map_err(ProjectError::Config)?;
+        let config = load_project_config_with_fallback(root).map_err(ProjectError::Config)?;
         Self::open_with_config(root, config)
     }
 

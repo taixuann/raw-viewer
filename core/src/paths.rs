@@ -22,6 +22,13 @@ pub const PROJECT_CONFIG_DIRECTORY_NAME: &str = ".raw-viewer";
 /// Project settings file inside [`PROJECT_CONFIG_DIRECTORY_NAME`].
 pub const PROJECT_CONFIG_FILE: &str = "config.yaml";
 
+/// Legacy project settings file inside `.rawviewer`.
+pub const LEGACY_SETTING_DIRECTORY_NAME: &str = ".rawviewer";
+pub const LEGACY_SETTING_FILE: &str = "setting.yaml";
+
+/// Viewer metadata namespaces that cannot be used as a data root.
+pub const VIEWER_METADATA_NAMESPACES: [&str; 3] = [".rawviewer", "data/.rawview", "data/snapshot"];
+
 /// Instrument profiles directory under the project metadata directory.
 pub const PROFILES_DIR: &str = "profiles";
 
