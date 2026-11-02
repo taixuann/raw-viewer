@@ -1,5 +1,4 @@
-# Placeholder project settings for the usth-lab workspace fixture (#27).
-# Locked layout: YAML only under `.raw-viewer/` (no config.toml). Profiles arrive in #18 under `profiles/`.
+schema_version: 1
 data_root: data/raw
 default_view: tree
 default_preset: nature-single

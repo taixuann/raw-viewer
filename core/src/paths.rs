@@ -8,15 +8,28 @@
 //!
 //! Reads do not create directories.
 
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Directory name used for global config and cache locations.
 pub const APP_DIRECTORY_NAME: &str = "raw-viewer";
 
 /// Directory name used for project config, directly under the project root.
 pub const PROJECT_CONFIG_DIRECTORY_NAME: &str = ".raw-viewer";
+
+/// Project settings file inside [`PROJECT_CONFIG_DIRECTORY_NAME`].
+pub const PROJECT_CONFIG_FILE: &str = "config.yaml";
+
+/// Instrument profiles directory under the project metadata directory.
+pub const PROFILES_DIR: &str = "profiles";
+
+/// Session transcript directory under the project metadata directory.
+pub const SESSION_DIR: &str = "session";
+
+/// Plot preset directory under the project metadata directory.
+pub const PRESET_DIR: &str = "preset";
 
 /// Operating system whose path rules should be applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +87,7 @@ pub struct PathInputs {
 pub struct ResolvedPaths {
     /// Global config directory. `config.toml` lives here.
     pub global_config_dir: String,
-    /// Project config directory. `config.toml` lives here.
+    /// Project metadata directory. `config.yaml` lives here.
     pub project_config_dir: String,
     /// Cache directory. This is never a path under `.raw-viewer`.
     pub cache_dir: String,
@@ -182,6 +195,32 @@ pub fn resolve_paths(
 pub fn resolve_paths_from_env(project_root: &Path) -> Result<ResolvedPaths, ResolveError> {
     let inputs = path_inputs_from_host(project_root)?;
     resolve_paths(&inputs, host_dir_exists)
+}
+
+/// Owner-private cache directory for one project's index (`…/projects/<sha256>/`).
+///
+/// The digest is SHA-256 hex of the canonical project root path as UTF-8. The
+/// platform cache base matches [`resolve_paths_from_env`]. This function does not
+/// create directories or write files.
+pub fn cache_dir(project_root: &Path) -> Result<PathBuf, ResolveError> {
+    let canonical = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let path_text = path_to_utf8(&canonical, "project root")?;
+    let hash = sha256_hex(path_text.as_bytes());
+    let resolved = resolve_paths_from_env(project_root)?;
+    Ok(PathBuf::from(resolved.cache_dir)
+        .join("projects")
+        .join(hash))
+}
+
+/// Path to the writable index database for a project (inside [`cache_dir`]).
+pub fn project_index_db_path(project_root: &Path) -> Result<PathBuf, ResolveError> {
+    Ok(cache_dir(project_root)?.join("index.db"))
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
 }
 
 fn path_inputs_from_host(project_root: &Path) -> Result<PathInputs, ResolveError> {

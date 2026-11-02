@@ -1,10 +1,10 @@
 # Config and paths
 
-RawView's Rust core chooses three directories. It does not create them when it reads them.
+RawView's Rust core chooses global config, project metadata, and cache directories. It does not create them when it reads them.
 
 ## Global config
 
-The global config directory holds `config.toml`.
+The global config directory still holds legacy `config.toml` (global scope only; out of scope for #24a layout work).
 
 1. If `$XDG_CONFIG_HOME/raw-viewer` exists, use it.
 2. Otherwise, if `~/.config/raw-viewer` exists, use it.
@@ -13,74 +13,31 @@ The global config directory holds `config.toml`.
    - macOS: `~/Library/Application Support/raw-viewer`
    - Windows: `%APPDATA%\raw-viewer`
 
-`$XDG_CONFIG_HOME` is checked on every operating system. A relative or empty value is ignored. The platform default is used even when that directory does not exist yet.
+## Project layout (Rust core, #24a)
 
-On Linux, step 3 is `$HOME/.config/raw-viewer` even when `$XDG_CONFIG_HOME` is set. The variable is an override only when `raw-viewer` already exists inside it.
+Project settings live in `<project>/.raw-viewer/config.yaml` with **`schema_version: 1`** (required when the file exists; any other value is a typed error). Keys: `data_root`, `default_view`, `default_preset`, `explorer_views`, `source_labels`. A missing file loads defaults (`data/raw`, `tree`, `nature-single`). `developer_mode` in a project file is ignored.
 
-Windows `%APPDATA%` and `%LOCALAPPDATA%` come from the `directories` crate (`BaseDirs`), which reads the system known folders.
+Other read-only project metadata paths (constants in `core/src/paths.rs`):
 
-## Project config
+| Path | Role |
+| --- | --- |
+| `.raw-viewer/profiles/` | Preferred instrument profiles |
+| `.raw-viewer/session/` | Session transcripts (Swift-owned writes; Rust read-only) |
+| `.raw-viewer/preset/` | Plot presets |
+| `.raw-viewer/grammar.yaml` | Primary filename grammar catalog |
 
-Project settings live in `<project>/.raw-viewer/config.toml`.
+Grammar read order (first existing file wins): `.raw-viewer/grammar.yaml`, then `.rawviewer/grammar.yaml`, then `.rawviewer/view/grammar.yaml`.
 
-The project root must be an absolute path. A relative root is an error. The config directory does not have to exist.
+Legacy `.rawviewer/setting.yaml` (v1–v3) remains Swift-side migration input; the Rust core does not gate on it.
 
-The Swift app still stores its settings in `<project>/.rawviewer/`. The Rust core does not read or migrate that directory.
+## Cache and index
 
-## Cache
+Writable `index.db` files never live inside the project tree. The Rust cache directory is:
 
-The cache directory is the platform cache directory plus `raw-viewer`:
+`<platform-cache>/raw-viewer/projects/<sha256(canonical-project-root-utf8)>/index.db`
 
-- Linux: `$XDG_CACHE_HOME/raw-viewer`, or `~/.cache/raw-viewer` when that variable is unset or relative
-- macOS: `~/Library/Caches/raw-viewer`
-- Windows: `%LOCALAPPDATA%\raw-viewer`
+Platform cache bases match [`directories::BaseDirs::cache_dir`] plus `raw-viewer` (Linux honors absolute `$XDG_CACHE_HOME`).
 
-The cache is not placed inside the project and is not inside `.raw-viewer`.
+The Rust core performs **no writes** under the project root (enforced by `core/tests/project_layout_write_ban.rs`).
 
-```mermaid
-flowchart TD
-    start[Start] --> xdg{"$XDG_CONFIG_HOME/raw-viewer exists?"}
-    xdg -->|yes| useXdg["Global config: $XDG_CONFIG_HOME/raw-viewer"]
-    xdg -->|no| dot{"~/.config/raw-viewer exists?"}
-    dot -->|yes| useDot["Global config: ~/.config/raw-viewer"]
-    dot -->|no| platform[Platform default]
-    platform --> linux["Linux: ~/.config/raw-viewer"]
-    platform --> mac["macOS: ~/Library/Application Support/raw-viewer"]
-    platform --> win["Windows: %APPDATA%\\raw-viewer"]
-    useXdg --> project["Project config: project/.raw-viewer"]
-    useDot --> project
-    linux --> project
-    mac --> project
-    win --> project
-    project --> cache["Cache: platform cache dir/raw-viewer"]
-```
-
-## config.toml
-
-Each config directory has its own `config.toml`. A missing file loads defaults. Loading does not create the directory and does not write the file.
-
-The file is a flat table: top-level keys only. A `[section]` is an unknown field named after that section. Nested tables are not settings.
-
-Global keys:
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `recent_projects` | `[]` | Project paths opened recently |
-
-Project keys:
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `data_root` | `data/raw` | Raw measurements, relative to the project. Allowed: `.`, or `/`-separated segments that are not empty, `.`, or `..`. Absolute paths, a leading `~`, backslashes, and control characters are rejected. |
-| `default_view` | `tree` | Explorer view |
-| `default_preset` | `nature-single` | Plot preset |
-
-Omitted keys keep those defaults. A value of the wrong type, or a key that is not in the table, is an error. The error names the file path and the field. A file that is not valid TOML names the file; the parser message is included.
-
-Example project file:
-
-```toml
-data_root = "measurements"
-default_view = "tree"
-default_preset = "nature-single"
-```
+[`directories::BaseDirs::cache_dir`]: https://docs.rs/directories/latest/directories/struct.BaseDirs.html#method.cache_dir

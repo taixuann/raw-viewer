@@ -1,0 +1,48 @@
+# Config loader parity vectors (contract 24a-1). Rust consumes these today; Swift pending 24a-2.
+schema_version: 1
+
+vectors:
+  - id: defaults-from-missing-file
+    expect:
+      data_root: data/raw
+      default_view: tree
+      default_preset: nature-single
+
+  - id: valid-minimal
+    config_file: cases/valid-minimal.yaml
+    expect:
+      schema_version: 1
+      data_root: measurements
+      default_view: tree
+      default_preset: science-single
+
+  - id: missing-schema-version
+    config_file: cases/missing-schema-version.yaml
+    expect_error:
+      field: schema_version
+      detail_contains: required
+
+  - id: schema-version-two
+    config_file: cases/schema-version-two.yaml
+    expect_error:
+      field: schema_version
+      detail_contains: must be 1
+
+  - id: windows-drive-data-root
+    config_file: cases/windows-drive-data-root.yaml
+    expect_error:
+      field: data_root
+      detail_contains: absolute
+
+cache_vectors:
+  - id: linux-lab-project
+    os: linux
+    project_root: /lab/project
+    home: /home/alice
+    expected_hash: a844e8191a320be2afa9a812a2f8480208bad1c11aaf10a05357955b5954bf1d
+
+  - id: macos-lab-project
+    os: macos
+    project_root: /lab/project
+    home: /Users/alice
+    expected_hash: a844e8191a320be2afa9a812a2f8480208bad1c11aaf10a05357955b5954bf1d

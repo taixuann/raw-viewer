@@ -128,9 +128,9 @@ fn content_and_filename_requires_both() {
 
 fn write_minimal_project(root: &Path) {
     std::fs::create_dir_all(root.join("data/raw")).unwrap();
-    std::fs::create_dir_all(root.join(".rawviewer")).unwrap();
+    std::fs::create_dir_all(root.join(".raw-viewer")).unwrap();
     std::fs::write(
-        root.join(".rawviewer/setting.yaml"),
+        root.join(".raw-viewer/config.yaml"),
         "schema_version: 1\ndata_root: data/raw\ndefault_view: tree\ndefault_preset: nature-single\n",
     )
     .unwrap();
@@ -140,6 +140,7 @@ fn write_minimal_project(root: &Path) {
 fn no_grammar_zero_hits_falls_back_generic() {
     let tmp = temp_project();
     write_minimal_project(&tmp);
+    std::fs::create_dir_all(tmp.join(".rawviewer")).unwrap();
     std::fs::write(tmp.join(".rawviewer/grammar.yaml"), SYNTH_GRAMMAR_YAML).unwrap();
     std::fs::create_dir_all(tmp.join("data/instruments")).unwrap();
     std::fs::write(tmp.join("data/instruments/synth.yaml"), synth_v2_yaml()).unwrap();

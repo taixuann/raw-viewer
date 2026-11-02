@@ -13,4 +13,3 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
 regex = "1.11.1"
-toml = "1.1.8"

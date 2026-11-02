@@ -239,9 +239,9 @@ fn temp_project() -> PathBuf {
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("data/raw")).unwrap();
-    fs::create_dir_all(dir.join(".rawviewer")).unwrap();
+    fs::create_dir_all(dir.join(".raw-viewer")).unwrap();
     fs::write(
-        dir.join(".rawviewer/setting.yaml"),
+        dir.join(".raw-viewer/config.yaml"),
         "schema_version: 1\ndata_root: data/raw\ndefault_view: tree\ndefault_preset: nature-single\n",
     )
     .unwrap();
@@ -318,6 +318,7 @@ fn reader_filename_selector_ambiguity_exposes_typed_code() {
 #[test]
 fn reader_grammar_matched_no_profile_exposes_typed_code() {
     let root = temp_project();
+    fs::create_dir_all(root.join(".rawviewer")).unwrap();
     fs::write(root.join(".rawviewer/grammar.yaml"), SYNTH_GRAMMAR_YAML).unwrap();
     fs::create_dir_all(root.join("data/instruments")).unwrap();
     fs::write(root.join("data/instruments/x.yaml"), GRAMMAR_MISS_V4).unwrap();
@@ -334,6 +335,7 @@ fn reader_grammar_matched_no_profile_exposes_typed_code() {
 #[test]
 fn reader_v3_ambiguous_profile_exposes_typed_code() {
     let root = temp_project();
+    fs::create_dir_all(root.join(".rawviewer")).unwrap();
     fs::write(root.join(".rawviewer/grammar.yaml"), SYNTH_GRAMMAR_YAML).unwrap();
     fs::create_dir_all(root.join(".rawviewer/instrument")).unwrap();
     fs::write(root.join(".rawviewer/instrument/acme.yaml"), V3_AMBIGUOUS).unwrap();

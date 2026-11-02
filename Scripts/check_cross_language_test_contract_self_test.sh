@@ -43,9 +43,15 @@ mkdir -p "$tmpdir/apps/macos/Tests/RawViewCoreTests"
 cp "$broken_swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
 mkdir -p "$tmpdir/core/tests"
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+cp "$root/core/tests/project_layout_config.rs" "$tmpdir/core/tests/project_layout_config.rs"
+cp "$root/core/tests/project_layout_cache.rs" "$tmpdir/core/tests/project_layout_cache.rs"
+mkdir -p "$tmpdir/fixtures/config/cases"
+cp -a "$root/fixtures/config/." "$tmpdir/fixtures/config/"
 run_expect swift-contract-reference-removed 1 "$tmpdir/check.sh" || fail=1
 cp "$root/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+cp "$root/core/tests/project_layout_config.rs" "$tmpdir/core/tests/project_layout_config.rs"
+cp "$root/core/tests/project_layout_cache.rs" "$tmpdir/core/tests/project_layout_cache.rs"
 
 # Drift: hardcoded vectors.yaml path in Rust (check must fail).
 hardcoded_rust="$tmpdir/core/tests/grammar_vectors_hardcoded.rs"
@@ -55,10 +61,14 @@ sed -i 's/value_for_key("grammar_vectors")/value_for_key("grammar_vectors_remove
 cp "$hardcoded_rust" "$tmpdir/core/tests/grammar_vectors.rs"
 run_expect rust-hardcoded-vectors-path 1 "$tmpdir/check.sh" || fail=1
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+cp "$root/core/tests/project_layout_config.rs" "$tmpdir/core/tests/project_layout_config.rs"
+cp "$root/core/tests/project_layout_cache.rs" "$tmpdir/core/tests/project_layout_cache.rs"
 
 # Contract points at renamed vectors copy; wiring check must still pass.
 cp "$root/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
+cp "$root/core/tests/project_layout_config.rs" "$tmpdir/core/tests/project_layout_config.rs"
+cp "$root/core/tests/project_layout_cache.rs" "$tmpdir/core/tests/project_layout_cache.rs"
 cp "$tmpdir/fixtures/grammar/vectors.yaml" "$tmpdir/fixtures/grammar/vectors_ci.yaml"
 sed -i 's/file: vectors.yaml/file: vectors_ci.yaml/' "$tmpdir/fixtures/grammar/cross_language_contract.yaml"
 run_expect contract-renamed-vectors-file 0 "$tmpdir/check.sh" || fail=1

@@ -132,6 +132,41 @@ require_consumer "grammar_vectors" "swift" "no"
 require_consumer "grammar_compile_pattern_tests" "rust" "yes"
 require_consumer "grammar_compile_pattern_tests" "swift" "yes"
 
+require_vector_section() {
+  local section="$1"
+  local swift_status
+  swift_status="$(nested_scalar "$contract" "$section" "status" 2>/dev/null || true)"
+  if [[ -z "$swift_status" ]]; then
+    swift_status="$(awk -v section="$section" '
+      $0 ~ "^" section ":$" { in_section = 1; next }
+      in_section && /^[^[:space:]#]/ && $0 !~ /^  / { in_section = 0 }
+      in_section && $0 ~ "^  swift:$" { in_swift = 1; next }
+      in_swift && /^  [^ ]/ && $0 !~ /^    / { in_swift = 0 }
+      in_swift && $0 ~ "^    status: " {
+        line = $0
+        sub(/^    status: /, "", line)
+        print line
+        exit
+      }
+    ' "$contract")"
+  fi
+  require_consumer "$section" "rust" "yes"
+  if [[ "$swift_status" == "rust-only-pending" ]]; then
+    echo "note: $section swift consumer pending (24a-2)"
+  else
+    require_consumer "$section" "swift" "yes"
+  fi
+  local rel_file
+  rel_file="$(nested_scalar "$contract" "$section" "file")"
+  [[ -n "$rel_file" ]] || die "$section.file is empty"
+  local vectors_path="$root/fixtures/grammar/$rel_file"
+  vectors_path="$(cd "$(dirname "$vectors_path")" && pwd)/$(basename "$vectors_path")"
+  [[ -f "$vectors_path" ]] || die "missing vector file for $section: $vectors_path"
+}
+
+require_vector_section "config_vectors"
+require_vector_section "cache_vectors"
+
 rust_vectors="$root/$(nested_pair "$contract" "grammar_vectors" "rust" "test_file")"
 swift_vectors="$root/$(nested_pair "$contract" "grammar_vectors" "swift" "test_file")"
 grep -q 'for case in cases' "$rust_vectors" || die "rust vector consumer must iterate all loaded cases"

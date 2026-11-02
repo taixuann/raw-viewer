@@ -1,61 +1,44 @@
-//! Typed global and project settings stored in `config.toml`.
+//! Typed project settings stored in `.raw-viewer/config.yaml`.
 //!
-//! A missing file loads defaults. A file that parses but has a wrong type or an
-//! unknown key is an error that names the file and the field. Loading does not
-//! create directories or write files.
-//!
-//! Each file is a flat table. Top-level keys only. A `[section]` is an unknown
-//! field.
+//! A missing file loads defaults. A present file must declare `schema_version: 1`.
+//! Loading does not create directories or write files.
 
+use crate::yaml::{parse, YamlNode};
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// File name inside a global or project config directory.
-pub const CONFIG_FILE_NAME: &str = "config.toml";
-
-/// Settings from the global config directory.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct GlobalConfig {
-    /// Project paths the user opened recently, most recent last.
-    pub recent_projects: Vec<String>,
-}
+use crate::paths::{PROJECT_CONFIG_DIRECTORY_NAME, PROJECT_CONFIG_FILE};
 
 /// Settings from a project's `.raw-viewer` directory.
-///
-/// Defaults match the Swift project settings: data lives in `data/raw`, the
-/// view is `tree`, and the preset is `nature-single`. This file does not
-/// replace `.rawviewer/setting.yaml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
-    /// Project-relative directory that holds raw measurements.
-    ///
-    /// Allowed values are `.`, or one or more segments separated by `/`.
-    /// A segment must not be empty, `.`, or `..`. Absolute paths, values that
-    /// start with `~`, backslashes, and control characters are rejected.
+    /// Present when loaded from a file (`1` only). Absent when defaults apply.
+    pub schema_version: Option<u32>,
     pub data_root: String,
-    /// Explorer view opened for the project.
     pub default_view: String,
-    /// Plot preset opened for the project.
     pub default_preset: String,
+    pub explorer_views: Vec<String>,
+    pub source_labels: Vec<String>,
 }
 
 impl ProjectConfig {
-    /// Default data directory, relative to the project root.
     pub const DEFAULT_DATA_ROOT: &'static str = "data/raw";
-    /// Default explorer view.
     pub const DEFAULT_VIEW: &'static str = "tree";
-    /// Default plot preset.
     pub const DEFAULT_PRESET: &'static str = "nature-single";
+    pub const REQUIRED_SCHEMA_VERSION: u32 = 1;
 }
 
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
+            schema_version: None,
             data_root: Self::DEFAULT_DATA_ROOT.to_string(),
             default_view: Self::DEFAULT_VIEW.to_string(),
             default_preset: Self::DEFAULT_PRESET.to_string(),
+            explorer_views: Vec::new(),
+            source_labels: Vec::new(),
         }
     }
 }
@@ -63,33 +46,24 @@ impl Default for ProjectConfig {
 /// Failure to load a config file.
 #[derive(Debug)]
 pub enum ConfigError {
-    /// The file exists but could not be read.
     Read {
-        /// Config file path.
         path: PathBuf,
-        /// Filesystem error.
         source: io::Error,
     },
-    /// The file is not valid settings.
     Malformed {
-        /// Config file path.
         path: PathBuf,
-        /// Field that failed, when the document identifies one.
         field: Option<String>,
-        /// What is wrong with the field or the document.
         detail: String,
     },
 }
 
 impl ConfigError {
-    /// Path of the config file named by this error.
     pub fn path(&self) -> &Path {
         match self {
             Self::Read { path, .. } | Self::Malformed { path, .. } => path,
         }
     }
 
-    /// Field name when the error is about one key.
     pub fn field(&self) -> Option<&str> {
         match self {
             Self::Malformed { field, .. } => field.as_deref(),
@@ -139,74 +113,28 @@ impl std::error::Error for ConfigError {
     }
 }
 
-/// Path of `config.toml` inside `config_dir`.
+/// Path of `config.yaml` inside a project's metadata directory.
+pub fn project_config_file(project_root: &Path) -> PathBuf {
+    project_root
+        .join(PROJECT_CONFIG_DIRECTORY_NAME)
+        .join(PROJECT_CONFIG_FILE)
+}
+
+/// Path of `config.yaml` inside `config_dir` (the `.raw-viewer` directory).
 pub fn config_file(config_dir: &Path) -> PathBuf {
-    config_dir.join(CONFIG_FILE_NAME)
+    config_dir.join(PROJECT_CONFIG_FILE)
 }
 
-/// Load global settings from `config_dir/config.toml`.
+/// Load project settings from `<project>/.raw-viewer/config.yaml`.
 ///
-/// A missing file returns [`GlobalConfig::default`]. This function does not
-/// create `config_dir` and does not write a file.
-///
-/// The document must be a flat table. A `[section]` is reported as an unknown
-/// field named after that section.
-pub fn load_global_config(config_dir: &Path) -> Result<GlobalConfig, ConfigError> {
-    let path = config_file(config_dir);
-    let Some(table) = read_table(&path)? else {
-        return Ok(GlobalConfig::default());
-    };
-    let mut config = GlobalConfig::default();
-    for (key, value) in &table {
-        match key.as_str() {
-            "recent_projects" => config.recent_projects = expect_string_array(&path, key, value)?,
-            _ => {
-                return Err(ConfigError::malformed(
-                    &path,
-                    Some(key.clone()),
-                    "unknown field".to_string(),
-                ));
-            }
-        }
-    }
-    Ok(config)
-}
-
-/// Load project settings from `config_dir/config.toml`.
-///
-/// A missing file returns [`ProjectConfig::default`]. This function does not
-/// create `config_dir` and does not write a file.
-///
-/// The document must be a flat table. A `[section]` is reported as an unknown
-/// field named after that section. `data_root`, when present, must be a
-/// project-relative path. See [`ProjectConfig::data_root`].
+/// The `config_dir` argument is the `.raw-viewer` directory itself.
 pub fn load_project_config(config_dir: &Path) -> Result<ProjectConfig, ConfigError> {
     let path = config_file(config_dir);
-    let Some(table) = read_table(&path)? else {
-        return Ok(ProjectConfig::default());
-    };
-    let mut config = ProjectConfig::default();
-    for (key, value) in &table {
-        match key.as_str() {
-            "data_root" => config.data_root = expect_data_root(&path, value)?,
-            "default_view" => config.default_view = expect_string(&path, key, value)?,
-            "default_preset" => config.default_preset = expect_string(&path, key, value)?,
-            _ => {
-                return Err(ConfigError::malformed(
-                    &path,
-                    Some(key.clone()),
-                    "unknown field".to_string(),
-                ));
-            }
-        }
-    }
-    Ok(config)
-}
-
-fn read_table(path: &Path) -> Result<Option<toml::Table>, ConfigError> {
-    let text = match fs::read_to_string(path) {
+    let text = match fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Ok(ProjectConfig::default());
+        }
         Err(source) => {
             return Err(ConfigError::Read {
                 path: path.to_path_buf(),
@@ -215,33 +143,105 @@ fn read_table(path: &Path) -> Result<Option<toml::Table>, ConfigError> {
         }
     };
     if text.trim().is_empty() {
-        return Ok(Some(toml::Table::new()));
+        return Err(ConfigError::malformed(
+            &path,
+            Some("schema_version".into()),
+            "required".into(),
+        ));
     }
-    match toml::from_str::<toml::Table>(&text) {
-        Ok(table) => Ok(Some(table)),
-        Err(error) => Err(ConfigError::malformed(path, None, error.to_string())),
-    }
+    parse_project_yaml(&path, &text)
 }
 
-fn expect_data_root(path: &Path, value: &toml::Value) -> Result<String, ConfigError> {
+fn parse_project_yaml(path: &Path, text: &str) -> Result<ProjectConfig, ConfigError> {
+    let root = parse(text, false)
+        .map_err(|error| ConfigError::malformed(path, None, error.to_string()))?;
+    let entries = root
+        .map_entries()
+        .ok_or_else(|| ConfigError::malformed(path, None, "expected a YAML mapping".into()))?;
+    let mut config = ProjectConfig::default();
+    let mut saw_schema_version = false;
+    for (key, value) in entries {
+        if key == "developer_mode" {
+            continue;
+        }
+        match key.as_str() {
+            "schema_version" => {
+                saw_schema_version = true;
+                config.schema_version = Some(expect_schema_version(path, value)?);
+            }
+            "data_root" => config.data_root = expect_data_root(path, value)?,
+            "default_view" => config.default_view = expect_string(path, "default_view", value)?,
+            "default_preset" => {
+                config.default_preset = expect_string(path, "default_preset", value)?;
+            }
+            "explorer_views" => {
+                config.explorer_views = expect_string_array(path, "explorer_views", value)?;
+            }
+            "source_labels" => {
+                config.source_labels = expect_string_array(path, "source_labels", value)?;
+            }
+            _ => {
+                return Err(ConfigError::malformed(
+                    path,
+                    Some(key.clone()),
+                    "unknown field".into(),
+                ));
+            }
+        }
+    }
+    if !saw_schema_version {
+        return Err(ConfigError::malformed(
+            path,
+            Some("schema_version".into()),
+            "required".into(),
+        ));
+    }
+    Ok(config)
+}
+
+fn expect_schema_version(path: &Path, value: &YamlNode) -> Result<u32, ConfigError> {
+    let text = value.scalar_value().ok_or_else(|| {
+        ConfigError::malformed(
+            path,
+            Some("schema_version".into()),
+            format!("expected an integer, found {}", yaml_kind(value)),
+        )
+    })?;
+    let version: u32 = text.parse().map_err(|_| {
+        ConfigError::malformed(
+            path,
+            Some("schema_version".into()),
+            format!("expected an integer, found {text:?}"),
+        )
+    })?;
+    if version != ProjectConfig::REQUIRED_SCHEMA_VERSION {
+        return Err(ConfigError::malformed(
+            path,
+            Some("schema_version".into()),
+            format!("must be {}", ProjectConfig::REQUIRED_SCHEMA_VERSION),
+        ));
+    }
+    Ok(version)
+}
+
+fn expect_data_root(path: &Path, value: &YamlNode) -> Result<String, ConfigError> {
     let text = expect_string(path, "data_root", value)?;
     if let Some(detail) = data_root_problem(&text) {
         return Err(ConfigError::malformed(
             path,
-            Some("data_root".to_string()),
+            Some("data_root".into()),
             detail,
         ));
     }
     Ok(text)
 }
 
-/// `data_root` is `.`, or slash-separated segments that stay inside the project.
 fn data_root_problem(value: &str) -> Option<String> {
     if value.trim().is_empty() {
-        return Some("must not be empty".to_string());
+        return Some("must not be empty".into());
     }
     if value.chars().any(|c| c.is_control() || c == '\\') {
-        return Some("must not contain backslashes or control characters".to_string());
+        return Some("must not contain backslashes or control characters".into());
     }
     if value.starts_with('/') || has_windows_drive_prefix(value) {
         return Some(format!(
@@ -273,13 +273,13 @@ fn has_windows_drive_prefix(value: &str) -> bool {
     )
 }
 
-fn expect_string(path: &Path, field: &str, value: &toml::Value) -> Result<String, ConfigError> {
-    match value.as_str() {
-        Some(text) => Ok(text.to_string()),
-        None => Err(ConfigError::malformed(
+fn expect_string(path: &Path, field: &str, value: &YamlNode) -> Result<String, ConfigError> {
+    match value {
+        YamlNode::Scalar(text) => Ok(text.clone()),
+        _ => Err(ConfigError::malformed(
             path,
-            Some(field.to_string()),
-            format!("expected a string, found {}", value_kind(value)),
+            Some(field.into()),
+            format!("expected a string, found {}", yaml_kind(value)),
         )),
     }
 }
@@ -287,26 +287,26 @@ fn expect_string(path: &Path, field: &str, value: &toml::Value) -> Result<String
 fn expect_string_array(
     path: &Path,
     field: &str,
-    value: &toml::Value,
+    value: &YamlNode,
 ) -> Result<Vec<String>, ConfigError> {
-    let Some(items) = value.as_array() else {
-        return Err(ConfigError::malformed(
+    let items = value.list_items().ok_or_else(|| {
+        ConfigError::malformed(
             path,
-            Some(field.to_string()),
-            format!("expected an array of strings, found {}", value_kind(value)),
-        ));
-    };
+            Some(field.into()),
+            format!("expected a list of strings, found {}", yaml_kind(value)),
+        )
+    })?;
     let mut strings = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
-        match item.as_str() {
+        match item.scalar_value() {
             Some(text) => strings.push(text.to_string()),
             None => {
                 return Err(ConfigError::malformed(
                     path,
-                    Some(field.to_string()),
+                    Some(field.into()),
                     format!(
                         "expected a string, found {} at index {index}",
-                        value_kind(item)
+                        yaml_kind(item)
                     ),
                 ));
             }
@@ -315,10 +315,11 @@ fn expect_string_array(
     Ok(strings)
 }
 
-fn value_kind(value: &toml::Value) -> String {
-    match value.type_str() {
-        "integer" | "array" => format!("an {}", value.type_str()),
-        other => format!("a {other}"),
+fn yaml_kind(value: &YamlNode) -> &'static str {
+    match value {
+        YamlNode::Scalar(_) => "a string",
+        YamlNode::List(_) => "a list",
+        YamlNode::Map(_) => "a mapping",
     }
 }
 
@@ -358,7 +359,6 @@ mod tests {
                 use std::os::unix::fs::PermissionsExt;
                 if let Ok(metadata) = fs::metadata(&self.path) {
                     let mut permissions = metadata.permissions();
-                    // Owner write bit, so a read-only test directory can be removed.
                     let mode = permissions.mode() | 0o200;
                     permissions.set_mode(mode);
                     let _ = fs::set_permissions(&self.path, permissions);
@@ -389,10 +389,6 @@ mod tests {
         ));
         assert!(!missing.exists());
         assert_eq!(
-            load_global_config(&missing).unwrap(),
-            GlobalConfig::default()
-        );
-        assert_eq!(
             load_project_config(&missing).unwrap(),
             ProjectConfig::default()
         );
@@ -405,17 +401,14 @@ mod tests {
         let dir = TempDir::new();
         let before = fs::read_dir(&dir.path).unwrap().count();
         assert_eq!(
-            load_global_config(&dir.path).unwrap(),
-            GlobalConfig {
-                recent_projects: Vec::new()
-            }
-        );
-        assert_eq!(
             load_project_config(&dir.path).unwrap(),
             ProjectConfig {
+                schema_version: None,
                 data_root: "data/raw".to_string(),
                 default_view: "tree".to_string(),
                 default_preset: "nature-single".to_string(),
+                explorer_views: Vec::new(),
+                source_labels: Vec::new(),
             }
         );
         assert_eq!(fs::read_dir(&dir.path).unwrap().count(), before);
@@ -423,55 +416,40 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_comment_files_return_defaults() {
+    fn empty_file_requires_schema_version() {
         let dir = TempDir::new();
         let file = config_file(&dir.path);
         fs::write(&file, "   \n\t\n").unwrap();
-        assert_eq!(
-            load_project_config(&dir.path).unwrap(),
-            ProjectConfig::default()
-        );
-        fs::write(&file, "# no settings yet\n").unwrap();
-        assert_eq!(
-            load_global_config(&dir.path).unwrap(),
-            GlobalConfig::default()
-        );
-        let bytes = fs::read(&file).unwrap();
-        let _ = load_project_config(&dir.path).unwrap();
-        assert_eq!(fs::read(&file).unwrap(), bytes);
+        let error = load_project_config(&dir.path).unwrap_err();
+        assert_names_file_and_field(&error, &file, "schema_version");
+        assert!(error.to_string().contains("required"), "{error}");
     }
 
     #[test]
-    fn valid_files_load_typed_values() {
+    fn valid_yaml_loads_typed_values() {
         let dir = TempDir::new();
         let file = config_file(&dir.path);
         fs::write(
             &file,
-            "recent_projects = [\"/lab/one\", \"D:\\\\lab\\\\two\"]\n",
-        )
-        .unwrap();
-        assert_eq!(
-            load_global_config(&dir.path).unwrap(),
-            GlobalConfig {
-                recent_projects: vec!["/lab/one".to_string(), "D:\\lab\\two".to_string()],
-            }
-        );
-
-        fs::write(
-            &file,
             "\
-data_root = \"measurements\"
-default_view = \"tree\"
-default_preset = \"science-single\"
+schema_version: 1
+data_root: measurements
+default_view: tree
+default_preset: science-single
+explorer_views: [tree, plot]
+source_labels: [row-a, row-b]
 ",
         )
         .unwrap();
         assert_eq!(
             load_project_config(&dir.path).unwrap(),
             ProjectConfig {
+                schema_version: Some(1),
                 data_root: "measurements".to_string(),
                 default_view: "tree".to_string(),
                 default_preset: "science-single".to_string(),
+                explorer_views: vec!["tree".into(), "plot".into()],
+                source_labels: vec!["row-a".into(), "row-b".into()],
             }
         );
     }
@@ -481,7 +459,7 @@ default_preset = \"science-single\"
         let dir = TempDir::new();
         fs::write(
             config_file(&dir.path),
-            "default_preset = \"science-single\"\n",
+            "schema_version: 1\ndefault_preset: science-single\n",
         )
         .unwrap();
         let config = load_project_config(&dir.path).unwrap();
@@ -493,10 +471,10 @@ default_preset = \"science-single\"
     #[test]
     fn wrong_types_name_the_file_and_the_field() {
         let cases = [
-            ("data_root = 1\n", "data_root"),
-            ("default_view = true\n", "default_view"),
+            ("schema_version: 1\ndata_root: [1]\n", "data_root"),
+            ("schema_version: 1\ndefault_view: [tree]\n", "default_view"),
             (
-                "default_preset = { name = \"nature-single\" }\n",
+                "schema_version: 1\ndefault_preset: [nature-single]\n",
                 "default_preset",
             ),
         ];
@@ -516,7 +494,7 @@ default_preset = \"science-single\"
         for value in accepted {
             let dir = TempDir::new();
             let file = config_file(&dir.path);
-            fs::write(&file, format!("data_root = {value:?}\n")).unwrap();
+            fs::write(&file, format!("schema_version: 1\ndata_root: {value:?}\n")).unwrap();
             let config = load_project_config(&dir.path).unwrap();
             assert_eq!(config.data_root, value);
         }
@@ -530,13 +508,11 @@ default_preset = \"science-single\"
             ("data//raw", "empty"),
             ("data/./raw", "'.'"),
             ("data\\raw", "backslash"),
-            ("", "empty"),
-            ("   ", "empty"),
         ];
         for (value, needle) in rejected {
             let dir = TempDir::new();
             let file = config_file(&dir.path);
-            fs::write(&file, format!("data_root = {value:?}\n")).unwrap();
+            fs::write(&file, format!("schema_version: 1\ndata_root: {value:?}\n")).unwrap();
             let error = load_project_config(&dir.path).unwrap_err();
             assert_names_file_and_field(&error, &file, "data_root");
             assert!(
@@ -544,54 +520,77 @@ default_preset = \"science-single\"
                 "value {value:?}: {error}"
             );
         }
+
+        let dir = TempDir::new();
+        let file = config_file(&dir.path);
+        fs::write(&file, "schema_version: 1\ndata_root: \"\"\n").unwrap();
+        let error = load_project_config(&dir.path).unwrap_err();
+        assert_names_file_and_field(&error, &file, "data_root");
+        assert!(error.to_string().contains("must not be empty"), "{error}");
     }
 
     #[test]
-    fn section_table_is_an_unknown_field() {
+    fn missing_schema_version_returns_typed_error() {
         let dir = TempDir::new();
         let file = config_file(&dir.path);
-        fs::write(&file, "[project]\ndata_root = \"data/raw\"\n").unwrap();
+        fs::write(&file, "data_root: data/raw\n").unwrap();
         let error = load_project_config(&dir.path).unwrap_err();
-        assert_names_file_and_field(&error, &file, "project");
-        assert!(error.to_string().contains("unknown field"), "{error}");
+        assert_names_file_and_field(&error, &file, "schema_version");
+        assert!(error.to_string().contains("required"), "{error}");
+    }
+
+    #[test]
+    fn schema_version_two_returns_typed_error() {
+        let dir = TempDir::new();
+        let file = config_file(&dir.path);
+        fs::write(&file, "schema_version: 2\ndata_root: data/raw\n").unwrap();
+        let error = load_project_config(&dir.path).unwrap_err();
+        assert_names_file_and_field(&error, &file, "schema_version");
+        assert!(error.to_string().contains("must be 1"), "{error}");
+    }
+
+    #[test]
+    fn developer_mode_is_ignored_without_error() {
+        let dir = TempDir::new();
+        fs::write(
+            config_file(&dir.path),
+            "schema_version: 1\ndeveloper_mode: true\ndata_root: data/raw\n",
+        )
+        .unwrap();
+        let config = load_project_config(&dir.path).unwrap();
+        assert_eq!(config.schema_version, Some(1));
+        assert_eq!(config.data_root, "data/raw");
     }
 
     #[test]
     fn unknown_field_names_the_file_and_the_field() {
         let dir = TempDir::new();
         let file = config_file(&dir.path);
-        fs::write(&file, "theme = \"dark\"\n").unwrap();
+        fs::write(&file, "schema_version: 1\ntheme: dark\n").unwrap();
         let error = load_project_config(&dir.path).unwrap_err();
         assert_names_file_and_field(&error, &file, "theme");
         assert!(error.to_string().contains("unknown field"), "{error}");
+    }
 
-        fs::write(&file, "recent_projects = []\n").unwrap();
+    #[test]
+    fn nested_mapping_is_an_unknown_field() {
+        let dir = TempDir::new();
+        let file = config_file(&dir.path);
+        fs::write(
+            &file,
+            "schema_version: 1\nproject:\n  data_root: data/raw\n",
+        )
+        .unwrap();
         let error = load_project_config(&dir.path).unwrap_err();
-        assert_names_file_and_field(&error, &file, "recent_projects");
+        assert_names_file_and_field(&error, &file, "project");
+        assert!(error.to_string().contains("unknown field"), "{error}");
     }
 
     #[test]
-    fn malformed_recent_projects_names_the_field() {
+    fn invalid_yaml_names_the_file() {
         let dir = TempDir::new();
         let file = config_file(&dir.path);
-        fs::write(&file, "recent_projects = \"/lab\"\n").unwrap();
-        let error = load_global_config(&dir.path).unwrap_err();
-        assert_names_file_and_field(&error, &file, "recent_projects");
-        assert!(error.to_string().contains("array"), "{error}");
-
-        fs::write(&file, "recent_projects = [\"/ok\", 2]\n").unwrap();
-        let error = load_global_config(&dir.path).unwrap_err();
-        assert_names_file_and_field(&error, &file, "recent_projects");
-        let message = error.to_string();
-        assert!(message.contains("index 1"), "{message}");
-        assert!(message.contains("integer"), "{message}");
-    }
-
-    #[test]
-    fn invalid_toml_names_the_file() {
-        let dir = TempDir::new();
-        let file = config_file(&dir.path);
-        fs::write(&file, "data_root = \"unterminated\n").unwrap();
+        fs::write(&file, "schema_version: 1\ndata_root: \"unterminated\n").unwrap();
         let error = load_project_config(&dir.path).unwrap_err();
         assert_eq!(error.path(), file.as_path());
         assert_eq!(error.field(), None);
@@ -605,7 +604,7 @@ default_preset = \"science-single\"
         let dir = TempDir::new();
         let file = config_file(&dir.path);
         fs::create_dir(&file).unwrap();
-        let error = load_global_config(&dir.path).unwrap_err();
+        let error = load_project_config(&dir.path).unwrap_err();
         assert_eq!(error.path(), file.as_path());
         assert!(error.to_string().contains("failed to read"), "{error}");
     }
