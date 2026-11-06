@@ -60,6 +60,12 @@ enum Commands {
         #[command(subcommand)]
         cmd: SkillsCommands,
     },
+
+    #[command(about = "Check for and install updates from GitHub releases")]
+    Update {
+        #[arg(long, help = "Only check for available updates without downloading")]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -393,6 +399,9 @@ fn main() {
                 commands::skills::manage_skills("repair", *dry_run),
             ),
         },
+        Commands::Update { check } => {
+            ("update", commands::update::run(*check, cli.json))
+        }
     };
 
     match result.output {
