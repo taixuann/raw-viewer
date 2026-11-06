@@ -1,0 +1,175 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.3.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-cli:
+    name: build cli (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: raw-viewer-aarch64-apple-darwin.tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: raw-viewer-x86_64-apple-darwin.tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: raw-viewer-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: raw-viewer-x86_64-pc-windows-msvc.zip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: "blob:none"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build CLI binary
+        run: cargo build --package raw-viewer-cli --release --target ${{ matrix.target }}
+
+      - name: Package Unix Archive
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/raw-viewer dist/
+          cd dist
+          tar -czf ../${{ matrix.archive }} raw-viewer
+          cd ..
+          shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+
+      - name: Package Windows Archive
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/raw-viewer.exe dist/
+          cd dist
+          7z a ../${{ matrix.archive }} raw-viewer.exe
+          cd ..
+          sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+
+  build-universal-macos:
+    name: build universal macos cli
+    needs: build-cli
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          filter: "blob:none"
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw-viewer-aarch64-apple-darwin.tar.gz
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw-viewer-x86_64-apple-darwin.tar.gz
+      - name: Create Universal Binary
+        run: |
+          mkdir -p arm64 intel universal
+          tar -xzf raw-viewer-aarch64-apple-darwin.tar.gz -C arm64
+          tar -xzf raw-viewer-x86_64-apple-darwin.tar.gz -C intel
+          lipo -create -output universal/raw-viewer arm64/raw-viewer intel/raw-viewer
+          file universal/raw-viewer
+          cd universal
+          tar -czf ../raw-viewer-universal-apple-darwin.tar.gz raw-viewer
+          cd ..
+          shasum -a 256 raw-viewer-universal-apple-darwin.tar.gz > raw-viewer-universal-apple-darwin.tar.gz.sha256
+      - name: Upload Universal Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-viewer-universal-apple-darwin.tar.gz
+          path: |
+            raw-viewer-universal-apple-darwin.tar.gz
+            raw-viewer-universal-apple-darwin.tar.gz.sha256
+
+  build-macos-app:
+    name: build macos app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          filter: "blob:none"
+      - name: Build macOS App
+        working-directory: apps/macos
+        run: |
+          swift build -c release
+      - name: Package macOS App
+        run: |
+          mkdir -p dist/RawView.app/Contents/MacOS
+          # Copy compiled binary if built via SPM
+          if [ -f "apps/macos/.build/release/RawView" ]; then
+            cp apps/macos/.build/release/RawView dist/RawView.app/Contents/MacOS/
+          fi
+          cd dist
+          zip -r ../RawView-macOS.zip RawView.app || tar -czf ../RawView-macOS.tar.gz RawView.app
+          cd ..
+          if [ -f RawView-macOS.zip ]; then
+            shasum -a 256 RawView-macOS.zip > RawView-macOS.zip.sha256
+          fi
+      - name: Upload macOS App Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RawView-macOS.zip
+          path: |
+            RawView-macOS.zip*
+
+  publish-release:
+    name: publish github release
+    needs: [build-cli, build-universal-macos, build-macos-app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          filter: "blob:none"
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Prepare Release Directory & Checksums
+        run: |
+          mkdir -p release-dist
+          find release-assets -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-dist/ \;
+          cd release-dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ github.event.inputs.tag || github.ref_name }}"
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME exists. Uploading assets..."
+            gh release upload "$TAG_NAME" release-dist/* --clobber
+          else
+            echo "Creating release $TAG_NAME..."
+            gh release create "$TAG_NAME" release-dist/* \
+              --title "$TAG_NAME" \
+              --generate-notes
+          fi
