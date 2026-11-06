@@ -188,3 +188,45 @@ fn tempfile_project(label: &str) -> PathBuf {
     fs::create_dir_all(dir.join(".raw-viewer")).unwrap();
     dir
 }
+
+#[test]
+fn legacy_setting_yaml_fallback_loads_when_new_config_is_absent() {
+    let dir = tempfile_project("legacy-fallback");
+    fs::create_dir_all(dir.join(".rawviewer")).unwrap();
+    fs::write(
+        dir.join(".rawviewer/setting.yaml"),
+        "schema_version: 1\ndata_root: measurements\ndefault_view: tree\ndefault_preset: science-single\n",
+    )
+    .unwrap();
+    let ctx = ProjectContext::open(&dir).expect("open with legacy fallback");
+    assert_eq!(ctx.config.schema_version, Some(1));
+    assert_eq!(ctx.config.data_root, "measurements");
+    assert_eq!(ctx.config.default_view, "tree");
+    assert_eq!(ctx.config.default_preset, "science-single");
+}
+
+#[test]
+fn legacy_setting_yaml_fallback_returns_defaults_when_absent() {
+    let dir = tempfile_project("legacy-absent");
+    let ctx = ProjectContext::open(&dir).expect("open with no config");
+    assert_eq!(ctx.config, ProjectConfig::default());
+}
+
+#[test]
+fn data_root_rejects_viewer_metadata_namespaces() {
+    let rejected = [
+        ".rawviewer",
+        "data/.rawview",
+        "data/snapshot",
+        ".rawviewer/sub",
+        "data/.rawview/instrument",
+        "data/snapshot/extra",
+    ];
+    for value in rejected {
+        let dir = tempfile_project("viewer-ns-reject");
+        let file = dir.join(".raw-viewer/config.yaml");
+        fs::write(&file, format!("schema_version: 1\ndata_root: {value:?}\n")).unwrap();
+        let err = load_project_config(&dir.join(".raw-viewer")).unwrap_err();
+        assert_schema_error(&err, "data_root", "viewer metadata or snapshot namespace");
+    }
+}

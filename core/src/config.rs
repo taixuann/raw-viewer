@@ -9,7 +9,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::paths::{PROJECT_CONFIG_DIRECTORY_NAME, PROJECT_CONFIG_FILE};
+use crate::paths::{
+    LEGACY_SETTING_DIRECTORY_NAME, LEGACY_SETTING_FILE, PROJECT_CONFIG_DIRECTORY_NAME,
+    PROJECT_CONFIG_FILE, VIEWER_METADATA_NAMESPACES,
+};
 
 /// Settings from a project's `.raw-viewer` directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +155,52 @@ pub fn load_project_config(config_dir: &Path) -> Result<ProjectConfig, ConfigErr
     parse_project_yaml(&path, &text)
 }
 
+/// Load project settings with legacy fallback.
+///
+/// Tries `<project>/.raw-viewer/config.yaml` first, then falls back to
+/// `<project>/.rawviewer/setting.yaml`. Returns defaults only when both are
+/// proven absent. A malformed file at either path produces a typed error;
+/// fallback does not swallow errors.
+pub fn load_project_config_with_fallback(
+    project_root: &Path,
+) -> Result<ProjectConfig, ConfigError> {
+    let config_dir = project_root.join(PROJECT_CONFIG_DIRECTORY_NAME);
+    let config_path = config_file(&config_dir);
+    let has_config = fs::metadata(&config_path)
+        .map(|meta| meta.is_file())
+        .unwrap_or(false);
+    if has_config {
+        return load_project_config(&config_dir);
+    }
+    load_legacy_setting(project_root)
+}
+
+fn load_legacy_setting(project_root: &Path) -> Result<ProjectConfig, ConfigError> {
+    let path = project_root
+        .join(LEGACY_SETTING_DIRECTORY_NAME)
+        .join(LEGACY_SETTING_FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Ok(ProjectConfig::default());
+        }
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    if text.trim().is_empty() {
+        return Err(ConfigError::malformed(
+            &path,
+            Some("schema_version".into()),
+            "required".into(),
+        ));
+    }
+    parse_project_yaml(&path, &text)
+}
+
 fn parse_project_yaml(path: &Path, text: &str) -> Result<ProjectConfig, ConfigError> {
     let root = parse(text, false)
         .map_err(|error| ConfigError::malformed(path, None, error.to_string()))?;
@@ -262,7 +311,21 @@ fn data_root_problem(value: &str) -> Option<String> {
             }
         }
     }
+    if is_viewer_metadata_namespace(value) {
+        return Some(format!(
+            "must not be a RawView viewer metadata or snapshot namespace (got {value:?})"
+        ));
+    }
     None
+}
+
+fn is_viewer_metadata_namespace(value: &str) -> bool {
+    for ns in VIEWER_METADATA_NAMESPACES {
+        if value == ns || value.starts_with(&format!("{ns}/")) {
+            return true;
+        }
+    }
+    false
 }
 
 fn has_windows_drive_prefix(value: &str) -> bool {
