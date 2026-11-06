@@ -399,9 +399,7 @@ fn main() {
                 commands::skills::manage_skills("repair", *dry_run),
             ),
         },
-        Commands::Update { check } => {
-            ("update", commands::update::run(*check, cli.json))
-        }
+        Commands::Update { check } => ("update", commands::update::run(*check, cli.json)),
     };
 
     match result.output {

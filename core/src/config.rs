@@ -216,7 +216,11 @@ fn load_legacy_setting(project_root: &Path) -> Result<ProjectConfig, ConfigError
     parse_project_yaml(&path, &text, true)
 }
 
-fn parse_project_yaml(path: &Path, text: &str, is_legacy: bool) -> Result<ProjectConfig, ConfigError> {
+fn parse_project_yaml(
+    path: &Path,
+    text: &str,
+    is_legacy: bool,
+) -> Result<ProjectConfig, ConfigError> {
     let root = parse(text, false)
         .map_err(|error| ConfigError::malformed(path, None, error.to_string()))?;
     let entries = root
