@@ -103,6 +103,23 @@ pub enum MatchOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileCandidateTrace {
+    pub profile_id: String,
+    pub instrument_name: String,
+    pub variant: String,
+    pub hit: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchTrace {
+    pub grammar_source: String,
+    pub tokens: BTreeMap<String, String>,
+    pub candidates: Vec<ProfileCandidateTrace>,
+    pub outcome: MatchOutcome,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnSummary {
     pub name: String,
     pub role: String,
@@ -419,6 +436,10 @@ impl Explorer {
     }
 
     pub fn match_file(&self, relative_path: &Path) -> Result<MatchOutcome, ExplorerError> {
+        self.match_trace(relative_path).map(|t| t.outcome)
+    }
+
+    pub fn match_trace(&self, relative_path: &Path) -> Result<MatchTrace, ExplorerError> {
         let full_path = self.project.source_path(relative_path);
         if !full_path.exists() {
             return Err(ExplorerError::InvalidSource(format!(
@@ -455,6 +476,12 @@ impl Explorer {
         for (k, v) in &facts.extracted_fields {
             tokens.insert(k.clone(), v.clone());
         }
+
+        let grammar_source = match self.effective_grammar.source {
+            GrammarSource::Project => "project".to_string(),
+            GrammarSource::Global => "global".to_string(),
+            GrammarSource::Builtin => "built-in".to_string(),
+        };
 
         let match_ctx = GrammarMatchContext {
             catalog_loaded: grammar_matched,
@@ -496,27 +523,54 @@ impl Explorer {
                 .collect();
 
         if candidates.is_empty() {
-            if grammar_matched {
-                return Ok(MatchOutcome::GrammarMatchedNoProfile { tokens });
+            let outcome = if grammar_matched {
+                MatchOutcome::GrammarMatchedNoProfile {
+                    tokens: tokens.clone(),
+                }
             } else {
-                return Ok(MatchOutcome::NoMatch {
+                MatchOutcome::NoMatch {
                     reason: format!("no profile claims extension \"{ext}\""),
-                });
-            }
+                }
+            };
+            return Ok(MatchTrace {
+                grammar_source,
+                tokens,
+                candidates: Vec::new(),
+                outcome,
+            });
         }
 
         let mut hits: Vec<ProfileMatch> = Vec::new();
+        let mut trace_candidates: Vec<ProfileCandidateTrace> = Vec::new();
         let basename_tokens = crate::profile::tokenize_basename(&basename);
 
         for (profile, format) in candidates {
             let decoded = match decode_with_format(&prefix, &format.encoding_names) {
                 Some(d) => d,
-                None => continue,
+                None => {
+                    for mode in profile.modes.iter().filter(|m| m.format_id == format.id) {
+                        trace_candidates.push(ProfileCandidateTrace {
+                            profile_id: profile.profile_id.clone(),
+                            instrument_name: profile.instrument_name.clone(),
+                            variant: mode.id.clone(),
+                            hit: false,
+                            reason: "failed to decode with format encodings".to_string(),
+                        });
+                    }
+                    continue;
+                }
             };
 
             for mode in profile.modes.iter().filter(|m| m.format_id == format.id) {
                 let merged = merge_when(profile.profile_when.as_ref(), Some(&mode.when));
                 if !mode_is_candidate(&merged, &match_ctx) {
+                    trace_candidates.push(ProfileCandidateTrace {
+                        profile_id: profile.profile_id.clone(),
+                        instrument_name: profile.instrument_name.clone(),
+                        variant: mode.id.clone(),
+                        hit: false,
+                        reason: "filename tokens do not satisfy when conditions".to_string(),
+                    });
                     continue;
                 }
                 if matches_when(
@@ -526,38 +580,58 @@ impl Explorer {
                     &decoded.1,
                     &basename,
                 ) {
+                    trace_candidates.push(ProfileCandidateTrace {
+                        profile_id: profile.profile_id.clone(),
+                        instrument_name: profile.instrument_name.clone(),
+                        variant: mode.id.clone(),
+                        hit: true,
+                        reason: "matched".to_string(),
+                    });
                     hits.push(ProfileMatch {
                         profile: (*profile).clone(),
                         format: (*format).clone(),
                         mode: mode.clone(),
                     });
+                } else {
+                    trace_candidates.push(ProfileCandidateTrace {
+                        profile_id: profile.profile_id.clone(),
+                        instrument_name: profile.instrument_name.clone(),
+                        variant: mode.id.clone(),
+                        hit: false,
+                        reason: "content signatures or parameters do not match".to_string(),
+                    });
                 }
             }
         }
 
-        if hits.len() >= 2 {
+        let outcome = if hits.len() >= 2 {
             let candidate_ids = ambiguous_candidate_labels(&hits);
-            return Ok(MatchOutcome::AmbiguousProfile { candidate_ids });
-        }
-
-        if hits.len() == 1 {
+            MatchOutcome::AmbiguousProfile { candidate_ids }
+        } else if hits.len() == 1 {
             let m = hits.remove(0);
-            return Ok(MatchOutcome::Matched {
+            MatchOutcome::Matched {
                 profile_id: m.profile.profile_id,
                 instrument_id: m.profile.instrument_id,
                 instrument_name: m.profile.instrument_name,
                 variant: m.mode.id,
-                tokens,
-            });
-        }
-
-        if grammar_matched {
-            Ok(MatchOutcome::GrammarMatchedNoProfile { tokens })
+                tokens: tokens.clone(),
+            }
+        } else if grammar_matched {
+            MatchOutcome::GrammarMatchedNoProfile {
+                tokens: tokens.clone(),
+            }
         } else {
-            Ok(MatchOutcome::NoMatch {
+            MatchOutcome::NoMatch {
                 reason: format!("no profile mode matched this source (basename \"{basename}\")"),
-            })
-        }
+            }
+        };
+
+        Ok(MatchTrace {
+            grammar_source,
+            tokens,
+            candidates: trace_candidates,
+            outcome,
+        })
     }
 
     pub fn inspect(&self, relative_path: &Path) -> Result<InspectionReport, ExplorerError> {

@@ -21,8 +21,12 @@ pub use v3::{
 
 pub use v3::MetadataCaptureRuleV3 as MetadataCaptureRule;
 
-pub use catalog::load_catalog;
+pub use catalog::{load_catalog, BUILTIN_PROFILES};
 pub use types::*;
+
+pub fn builtin_catalog() -> ProfileCatalog {
+    load_catalog(std::path::Path::new("/dummy"))
+}
 pub use when::{
     ambiguous_candidate_labels, candidate_profile_id, format_ambiguous,
     grammar_context_from_catalog, matches_when, merge_when, mode_is_candidate,
