@@ -30,6 +30,13 @@ struct RawViewApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             ExplorerToolbarCommands(model: model)
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    Task {
+                        await AppUpdateChecker.shared.checkForUpdates(userInitiated: true)
+                    }
+                }
+            }
         }
 
         Settings {

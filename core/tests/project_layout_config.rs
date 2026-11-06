@@ -206,6 +206,21 @@ fn legacy_setting_yaml_fallback_loads_when_new_config_is_absent() {
 }
 
 #[test]
+fn legacy_setting_yaml_fallback_loads_schema_version_three() {
+    let dir = tempfile_project("legacy-fallback-v3");
+    fs::create_dir_all(dir.join(".rawviewer")).unwrap();
+    fs::write(
+        dir.join(".rawviewer/setting.yaml"),
+        "schema_version: 3\ndata_root: data/raw\ndefault_view: tree\ndefault_preset: nature-single\ndeveloper_mode: false\nexplorer_views: []\n",
+    )
+    .unwrap();
+    let ctx = ProjectContext::open(&dir).expect("open with legacy fallback v3");
+    assert_eq!(ctx.config.schema_version, Some(3));
+    assert_eq!(ctx.config.data_root, "data/raw");
+    assert_eq!(ctx.config.default_view, "tree");
+}
+
+#[test]
 fn legacy_setting_yaml_fallback_returns_defaults_when_absent() {
     let dir = tempfile_project("legacy-absent");
     let ctx = ProjectContext::open(&dir).expect("open with no config");

@@ -167,7 +167,7 @@ pub fn load_project_config(config_dir: &Path) -> Result<ProjectConfig, ConfigErr
             "required".into(),
         ));
     }
-    parse_project_yaml(&path, &text)
+    parse_project_yaml(&path, &text, false)
 }
 
 /// Load project settings with legacy fallback.
@@ -213,10 +213,14 @@ fn load_legacy_setting(project_root: &Path) -> Result<ProjectConfig, ConfigError
             "required".into(),
         ));
     }
-    parse_project_yaml(&path, &text)
+    parse_project_yaml(&path, &text, true)
 }
 
-fn parse_project_yaml(path: &Path, text: &str) -> Result<ProjectConfig, ConfigError> {
+fn parse_project_yaml(
+    path: &Path,
+    text: &str,
+    is_legacy: bool,
+) -> Result<ProjectConfig, ConfigError> {
     let root = parse(text, false)
         .map_err(|error| ConfigError::malformed(path, None, error.to_string()))?;
     let entries = root
@@ -231,7 +235,7 @@ fn parse_project_yaml(path: &Path, text: &str) -> Result<ProjectConfig, ConfigEr
         match key.as_str() {
             "schema_version" => {
                 saw_schema_version = true;
-                config.schema_version = Some(expect_schema_version(path, value)?);
+                config.schema_version = Some(expect_schema_version(path, value, is_legacy)?);
             }
             "data_root" => config.data_root = expect_data_root(path, value)?,
             "default_view" => config.default_view = expect_string(path, "default_view", value)?,
@@ -315,7 +319,11 @@ fn expect_profiles_config(path: &Path, value: &YamlNode) -> Result<ProfilesConfi
     Ok(ProfilesConfig { enabled, disabled })
 }
 
-fn expect_schema_version(path: &Path, value: &YamlNode) -> Result<u32, ConfigError> {
+fn expect_schema_version(
+    path: &Path,
+    value: &YamlNode,
+    is_legacy: bool,
+) -> Result<u32, ConfigError> {
     let text = value.scalar_value().ok_or_else(|| {
         ConfigError::malformed(
             path,
@@ -330,7 +338,15 @@ fn expect_schema_version(path: &Path, value: &YamlNode) -> Result<u32, ConfigErr
             format!("expected an integer, found {text:?}"),
         )
     })?;
-    if version != ProjectConfig::REQUIRED_SCHEMA_VERSION {
+    if is_legacy {
+        if !(1..=3).contains(&version) {
+            return Err(ConfigError::malformed(
+                path,
+                Some("schema_version".into()),
+                "must be 1, 2, or 3".into(),
+            ));
+        }
+    } else if version != ProjectConfig::REQUIRED_SCHEMA_VERSION {
         return Err(ConfigError::malformed(
             path,
             Some("schema_version".into()),

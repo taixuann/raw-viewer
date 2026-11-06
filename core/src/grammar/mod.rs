@@ -165,8 +165,16 @@ pub fn grammar_context(project_root: &std::path::Path) -> GrammarContext {
     // If the project has local profiles (.raw-viewer/profiles or data/instruments)
     // without an explicit grammar file or config.grammar, do not inject default grammar
     // so existing local profiles with filename_contains_all run untouched.
-    let has_local_profiles = project_root.join(".raw-viewer/profiles").is_dir()
-        || project_root.join("data/instruments").is_dir();
+    let has_local_profiles = crate::profile::is_directory_with_yamls(
+        &project_root.join(".raw-viewer/profiles"),
+        project_root,
+    ) || crate::profile::is_directory_with_yamls(
+        &project_root.join("data/instruments"),
+        project_root,
+    ) || crate::profile::is_directory_with_yamls(
+        &project_root.join("data/instruments/rawview"),
+        project_root,
+    );
     if has_local_profiles {
         return GrammarContext {
             catalog: None,

@@ -5,3 +5,4 @@ pub mod grammar;
 pub mod profiles;
 pub mod projects;
 pub mod skills;
+pub mod update;

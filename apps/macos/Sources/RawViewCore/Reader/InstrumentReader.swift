@@ -1475,8 +1475,9 @@ enum V3Reader {
         }
 
         // 3. Fallback: If project has local profiles without grammar, do not inject default grammar.
-        let hasLocalProfiles = FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".raw-viewer/profiles").path)
-            || FileManager.default.fileExists(atPath: project.root.appendingPathComponent("data/instruments").path)
+        let hasLocalProfiles = ProfileCatalog.isDirectoryWithYAMLs(project.root.appendingPathComponent(".raw-viewer/profiles"), within: project.root)
+            || ProfileCatalog.isDirectoryWithYAMLs(project.root.appendingPathComponent("data/instruments"), within: project.root)
+            || ProfileCatalog.isDirectoryWithYAMLs(project.root.appendingPathComponent("data/instruments/rawview"), within: project.root)
         if hasLocalProfiles {
             return V3GrammarContext(catalog: nil, sha256: nil,
                                     error: "workspace with local profiles and no grammar file")
