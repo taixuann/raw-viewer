@@ -131,6 +131,10 @@ pub struct NormalizedMeasurement {
 }
 
 impl NormalizedMeasurement {
+    pub fn row_count(&self) -> usize {
+        self.channels.first().map(|c| c.row_count()).unwrap_or(0)
+    }
+
     pub fn channel(&self, name: &str) -> Option<&MeasurementChannel> {
         self.channels.iter().find(|c| c.name == name)
     }

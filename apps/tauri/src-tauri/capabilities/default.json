@@ -2,5 +2,14 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-core-status"]
+  "permissions": [
+    "core:default",
+    "allow-core-status",
+    "allow-open-project",
+    "allow-inventory",
+    "allow-list-profiles",
+    "allow-match-file",
+    "allow-inspect",
+    "allow-load-measurement"
+  ]
 }

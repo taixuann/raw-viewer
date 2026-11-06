@@ -515,9 +515,36 @@ fn usth_lab_metadata_keys_match_profiles() {
 }
 
 #[test]
-#[ignore = "pending discovery indexer port for .intake.log and .quarantine/ (#27 acceptance)"]
 fn usth_lab_discovery_skips_intake_log_and_quarantine() {
-    panic!("wire when Rust/Swift discovery shares ignore rules on this fixture");
+    let root = workspace_root();
+    let explorer = raw_viewer_core::explorer::Explorer::open(&root).expect("open explorer");
+    let report = explorer.inventory().expect("inventory");
+    for s in &report.sources {
+        assert!(
+            !s.relative_path.contains(".intake.log"),
+            "inventory source should not contain .intake.log"
+        );
+        assert!(
+            !s.relative_path.contains(".quarantine"),
+            "inventory source should not contain .quarantine"
+        );
+    }
+    assert!(
+        report
+            .ignored
+            .iter()
+            .any(|i| i == "data/raw/2026-10-07/.intake.log"),
+        "expected data/raw/2026-10-07/.intake.log in ignored: {:?}",
+        report.ignored
+    );
+    assert!(
+        report
+            .ignored
+            .iter()
+            .any(|i| i == "data/raw/2026-10-07/.quarantine/"),
+        "expected data/raw/2026-10-07/.quarantine/ in ignored: {:?}",
+        report.ignored
+    );
 }
 
 #[test]
