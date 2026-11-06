@@ -112,7 +112,10 @@ fi
 
 filtered="$(printf '%s\n' "$body" | drop_fenced_blocks)"
 
-mapfile -t raw_patterns < <(
+raw_patterns=()
+while IFS= read -r line; do
+  raw_patterns+=("$line")
+done < <(
   printf '%s\n' "$filtered" | awk -v heading="$HEADING" '
     $0 == heading { insec = 1; next }
     insec && /^## / { insec = 0 }
@@ -139,7 +142,10 @@ if [[ "${#patterns[@]}" -lt 1 ]]; then
   exit 1
 fi
 
-mapfile -t changed_paths < <(
+changed_paths=()
+while IFS= read -r line; do
+  changed_paths+=("$line")
+done < <(
   read_changed_file "$changed_file" | strip_cr | awk 'NF { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); if ($0 != "") print $0 }'
 )
 

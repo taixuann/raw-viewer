@@ -37,6 +37,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          filter: "blob:none"
       - name: Owned files check self-test
         run: ./Scripts/check_pr_owned_files_self_test.sh
       - name: PR changed files stay within owned list
@@ -56,6 +57,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@v2
       - name: Cross-language contract check self-test
         run: ./Scripts/check_cross_language_test_contract_self_test.sh
       - name: Cross-language grammar contract check
@@ -77,11 +79,12 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
@@ -111,6 +114,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Swift toolchain
         run: swift --version
+      - name: Cache Swift PM
+        uses: actions/cache@v4
+        with:
+          path: apps/macos/.build
+          key: swift-spm-${{ runner.os }}-${{ hashFiles('apps/macos/Package.resolved', 'apps/macos/Package.swift') }}
+          restore-keys: |
+            swift-spm-${{ runner.os }}-
       - name: swift build
         run: swift build
       - name: swift test

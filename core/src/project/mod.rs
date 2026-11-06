@@ -83,7 +83,7 @@ impl ProjectContext {
                 .ok()?
                 .to_string_lossy()
                 .trim_start_matches('/')
-                .to_string()
+                .replace('\\', "/")
         } else {
             return None;
         };

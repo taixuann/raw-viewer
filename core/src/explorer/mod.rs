@@ -638,7 +638,7 @@ impl Explorer {
                         };
 
                         Ok(InspectionReport {
-                            relative_path: relative_path.display().to_string(),
+                            relative_path: relative_path.display().to_string().replace('\\', "/"),
                             size_bytes,
                             sha256,
                             profile_id,
@@ -661,7 +661,7 @@ impl Explorer {
                         if msg.contains("no data rows were found after the header") =>
                     {
                         Ok(InspectionReport {
-                            relative_path: relative_path.display().to_string(),
+                            relative_path: relative_path.display().to_string().replace('\\', "/"),
                             size_bytes,
                             sha256,
                             profile_id,
@@ -704,7 +704,7 @@ impl Explorer {
                         .collect();
 
                     Ok(InspectionReport {
-                        relative_path: relative_path.display().to_string(),
+                        relative_path: relative_path.display().to_string().replace('\\', "/"),
                         size_bytes,
                         sha256,
                         profile_id: "generic-table".to_string(),
@@ -750,7 +750,7 @@ impl Explorer {
                         .collect();
 
                     Ok(InspectionReport {
-                        relative_path: relative_path.display().to_string(),
+                        relative_path: relative_path.display().to_string().replace('\\', "/"),
                         size_bytes,
                         sha256,
                         profile_id: "generic-table".to_string(),
