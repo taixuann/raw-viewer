@@ -139,3 +139,20 @@ grammars:
         Some("cv")
     );
 }
+
+#[test]
+fn data_instruments_with_non_yaml_files_does_not_suppress_builtin_profiles() {
+    let tmp = temp_project();
+    // Simulate a research project that has Python scripts in data/instruments
+    fs::create_dir_all(tmp.join("data/instruments")).unwrap();
+    fs::write(tmp.join("data/instruments/reader.py"), "# python script").unwrap();
+    let catalog = load_catalog(&tmp);
+    assert!(
+        !catalog.profiles.is_empty(),
+        "builtin profiles should be merged when data/instruments has no yaml profiles"
+    );
+    assert!(catalog
+        .profiles
+        .iter()
+        .any(|p| p.profile_id == "usth/keithley-2400"));
+}

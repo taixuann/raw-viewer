@@ -299,6 +299,9 @@ struct ProfileCatalog: Sendable {
                 "data/instruments/rawview could not be examined (\(reason)); no profiles were loaded."
             ], brokenClaims: [])
         }
+        guard isDirectoryWithYAMLs(instrumentsRoot, within: project.root) else {
+            return ProfileCatalog(profiles: [], issues: [], brokenClaims: [])
+        }
         return loadProfiles(from: instrumentsRoot, displayRoot: "data/instruments", project: project)
     }
 
@@ -309,16 +312,16 @@ struct ProfileCatalog: Sendable {
 
         let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
         let companionEntry = instrumentsRoot.appendingPathComponent("rawview", isDirectory: true)
-        var companionStat = stat()
-        if lstat(companionEntry.path, &companionStat) == 0 {
+        if isDirectoryWithYAMLs(companionEntry, within: project.root) {
             return catalog
         }
 
         let hasRawViewerDir = FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".raw-viewer").path)
         if !hasRawViewerDir {
-            let hasLegacyProfiles = FileManager.default.fileExists(atPath: instrumentsRoot.path)
-                || FileManager.default.fileExists(atPath: project.root.appendingPathComponent("data/.rawview/instrument").path)
-                || FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".rawviewer/instrument").path)
+            let hasLegacyProfiles = isDirectoryWithYAMLs(instrumentsRoot, within: project.root)
+                || isDirectoryWithYAMLs(companionEntry, within: project.root)
+                || isDirectoryWithYAMLs(project.root.appendingPathComponent("data/.rawview/instrument"), within: project.root)
+                || isDirectoryWithYAMLs(project.root.appendingPathComponent(".rawviewer/instrument"), within: project.root)
             if hasLegacyProfiles {
                 return catalog
             }
@@ -372,7 +375,7 @@ struct ProfileCatalog: Sendable {
         return rev
     }
 
-    private static func isDirectoryWithYAMLs(_ url: URL, within projectRoot: URL) -> Bool {
+    static func isDirectoryWithYAMLs(_ url: URL, within projectRoot: URL) -> Bool {
         var statInfo = stat()
         guard lstat(url.path, &statInfo) == 0 else { return false }
         guard (statInfo.st_mode & S_IFMT) != S_IFLNK else { return false }

@@ -47,4 +47,17 @@ struct ProfileCatalogDiscoveryTests {
         #expect(keysight != nil)
         #expect(keysight?.relativePath.hasPrefix("data/.rawview/instrument/") == true)
     }
+
+    @Test func dataInstrumentsWithNonYAMLFilesDoesNotSuppressBuiltins() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rawview-non-yaml-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("data/raw"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
+        try "# python script".write(to: tmp.appendingPathComponent("data/instruments/reader.py"), atomically: true, encoding: .utf8)
+        let project = try ProjectContext.open(tmp)
+        let catalog = ProfileCatalog.load(project: project)
+        #expect(!catalog.profiles.isEmpty)
+        #expect(catalog.profiles.contains { $0.profileID == "usth/keithley-2400" })
+    }
 }

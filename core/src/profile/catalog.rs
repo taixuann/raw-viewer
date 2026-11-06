@@ -41,15 +41,23 @@ pub fn merge_builtin_profiles(catalog: &mut ProfileCatalog, project: &ProjectCon
     }
 
     let companion = project.root.join("data/instruments/rawview");
-    if fs::symlink_metadata(&companion).is_ok() {
+    if is_directory_with_yamls(&companion, &project.root) {
         return;
     }
 
     let has_raw_viewer_dir = project.root.join(".raw-viewer").is_dir();
     if !has_raw_viewer_dir {
-        let has_legacy_profiles = project.root.join("data/instruments").is_dir()
-            || project.root.join("data/.rawview/instrument").is_dir()
-            || project.root.join(".rawviewer/instrument").is_dir();
+        let has_legacy_profiles =
+            is_directory_with_yamls(&project.root.join("data/instruments"), &project.root)
+                || is_directory_with_yamls(&companion, &project.root)
+                || is_directory_with_yamls(
+                    &project.root.join("data/.rawview/instrument"),
+                    &project.root,
+                )
+                || is_directory_with_yamls(
+                    &project.root.join(".rawviewer/instrument"),
+                    &project.root,
+                );
         if has_legacy_profiles {
             return;
         }
@@ -192,6 +200,14 @@ fn load_raw_catalog(project: &ProjectContext) -> ProfileCatalog {
             load_profiles(&companion, "data/instruments/rawview", project)
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            if !is_directory_with_yamls(&instruments, &project.root) {
+                return ProfileCatalog {
+                    profiles: vec![],
+                    issues: vec![],
+                    broken_claims: vec![],
+                    v3_documents: vec![],
+                };
+            }
             load_profiles(&instruments, "data/instruments", project)
         }
         Err(err) => ProfileCatalog {
@@ -205,7 +221,7 @@ fn load_raw_catalog(project: &ProjectContext) -> ProfileCatalog {
     }
 }
 
-fn is_directory_with_yamls(path: &Path, project_root: &Path) -> bool {
+pub fn is_directory_with_yamls(path: &Path, project_root: &Path) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return false;
     };
