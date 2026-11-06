@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SHIPPED_SKILLS: &[&str] = &["rawview-setup-grammar", "rawview-setup-profile"];
+const SHIPPED_SKILLS: &[&str] = &["set-grammar", "set-profile"];
 
 fn find_skill_source(name: &str) -> Option<PathBuf> {
     // 1. Check current directory or ancestors for .agents/skills/<name>
@@ -27,6 +27,7 @@ fn find_skill_source(name: &str) -> Option<PathBuf> {
                 exe_dir.join("../Resources/skills").join(name),
                 exe_dir.join("skills").join(name),
                 exe_dir.join("../../.agents/skills").join(name),
+                exe_dir.join("../share/raw-viewer/skills").join(name),
             ];
             for c in &candidates {
                 if c.is_dir() {
@@ -131,14 +132,36 @@ pub fn manage_skills(action: &str, dry_run: bool) -> CliResult {
             }
 
             if is_symlink {
-                let _ = fs::remove_file(&target);
+                if target.is_dir() {
+                    let _ = fs::remove_dir(&target);
+                } else {
+                    let _ = fs::remove_file(&target);
+                }
             }
 
             #[cfg(unix)]
             let link_res = std::os::unix::fs::symlink(&source, &target);
 
             #[cfg(windows)]
-            let link_res = std::os::windows::fs::symlink_dir(&source, &target);
+            let link_res = std::os::windows::fs::symlink_dir(&source, &target).or_else(|_| {
+                // Fallback to directory junction via cmd mklink /J
+                let s_str = source.display().to_string();
+                let t_str = target.display().to_string();
+                std::process::Command::new("cmd")
+                    .args(["/C", "mklink", "/J", &t_str, &s_str])
+                    .output()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    .and_then(|out| {
+                        if out.status.success() {
+                            Ok(())
+                        } else {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                String::from_utf8_lossy(&out.stderr).to_string(),
+                            ))
+                        }
+                    })
+            });
 
             match link_res {
                 Ok(_) => {

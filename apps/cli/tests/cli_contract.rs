@@ -331,3 +331,55 @@ fn test_skills_repair_dry_run() {
     assert_eq!(parsed["command"], "skills.repair");
     assert_eq!(parsed["data"]["dry_run"], true);
 }
+
+#[test]
+fn test_skills_install_idempotent_and_real_dir_safety() {
+    let bin = cli_bin();
+    let fake_home = temp_dir("fake_home");
+
+    // Pre-create ~/.agents/skills/set-grammar as a real directory with a sentinel file
+    let real_dir = fake_home.join(".agents").join("skills").join("set-grammar");
+    fs::create_dir_all(&real_dir).expect("create real dir");
+    fs::write(real_dir.join("sentinel.txt"), "untouchable").expect("write sentinel");
+
+    // 1. Run skills install
+    let output = Command::new(&bin)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["--json", "skills", "install"])
+        .output()
+        .expect("run skills install");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("parse json");
+    assert_eq!(parsed["ok"], true);
+
+    // Sentinel file must still exist and directory must remain real
+    assert!(real_dir.is_dir());
+    assert!(!real_dir.is_symlink());
+    assert!(real_dir.join("sentinel.txt").exists());
+
+    // set-profile in .agents/skills must be created as symlink
+    let profile_target = fake_home.join(".agents").join("skills").join("set-profile");
+    #[cfg(unix)]
+    assert!(profile_target.is_symlink());
+
+    // 2. Run skills install again (idempotent)
+    let output2 = Command::new(&bin)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["--json", "skills", "install"])
+        .output()
+        .expect("run skills install 2nd time");
+    assert_eq!(output2.status.code(), Some(0));
+
+    // 3. Run skills repair
+    let output3 = Command::new(&bin)
+        .env("HOME", &fake_home)
+        .env("USERPROFILE", &fake_home)
+        .args(["--json", "skills", "repair"])
+        .output()
+        .expect("run skills repair");
+    assert_eq!(output3.status.code(), Some(0));
+}
