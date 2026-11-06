@@ -41,10 +41,10 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(turns[1].content, "Grammar created.")
         XCTAssertEqual(turns[1].toolUses?.first?.name, "rawview-setup-grammar")
 
-        // Verify physical file path: .rawviewer/session/YYYY-MM-DD/<sessionId>.jsonl
+        // Verify physical file path: .raw-viewer/session/YYYY-MM-DD/<sessionId>.jsonl
         let expectedFile = store.fileURL(sessionId: sessionId, date: testDate)
         XCTAssertTrue(FileManager.default.fileExists(atPath: expectedFile.path))
-        XCTAssertTrue(expectedFile.path.contains(".rawviewer/session/"))
+        XCTAssertTrue(expectedFile.path.contains(".raw-viewer/session/"))
     }
 
     func testCorruptedLineIsSkippedGracefully() async throws {

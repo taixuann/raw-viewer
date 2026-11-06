@@ -272,10 +272,11 @@ public enum SafeDeleteError: Error, LocalizedError, Equatable {
 
 public enum FilenameGrammarEngine {
     /// Canonical project-owned grammar catalog (schema v1).
-    public static let relativePath = ".rawviewer/grammar.yaml"
+    public static let relativePath = ".raw-viewer/grammar.yaml"
     /// Previous storage location. Read only when the canonical file is absent;
     /// a malformed canonical file is an error, never a legacy fallback.
-    public static let legacyRelativePath = ".rawviewer/view/grammar.yaml"
+    public static let legacyRelativePath = ".rawviewer/grammar.yaml"
+    public static let ancientLegacyRelativePath = ".rawviewer/view/grammar.yaml"
     /// Grammar catalog schema version written and accepted by this engine.
     public static let schemaVersion = 1
 
@@ -843,12 +844,18 @@ public enum FilenameGrammarEngine {
         }
     }
 
-    /// Loads the canonical `.rawviewer/grammar.yaml` catalog in the project.
-    /// Never falls back to the legacy path: a malformed canonical file is an
-    /// error even when legacy definitions exist.
+    /// Loads the canonical `.raw-viewer/grammar.yaml` catalog in the project,
+    /// falling back to legacy `.rawviewer/grammar.yaml`.
     public static func load(project: ProjectContext) throws -> FilenameGrammarCatalog {
-        let file = project.root.appendingPathComponent(relativePath)
-        return try load(fileURL: file)
+        let primary = project.root.appendingPathComponent(relativePath)
+        if FileManager.default.fileExists(atPath: primary.path) {
+            return try load(fileURL: primary)
+        }
+        let legacy = project.root.appendingPathComponent(legacyRelativePath)
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            return try load(fileURL: legacy)
+        }
+        throw GrammarCatalogError.fileNotFound(path: primary.path)
     }
 
     /// Result of a legacy import: the migrated catalog plus human-reviewable
@@ -885,7 +892,7 @@ public enum FilenameGrammarEngine {
     /// Imports the legacy project grammar file. Throws fileNotFound when no
     /// legacy file exists.
     public static func importLegacy(project: ProjectContext) throws -> LegacyGrammarImport {
-        let file = project.root.appendingPathComponent(legacyRelativePath)
+        let file = project.root.appendingPathComponent(ancientLegacyRelativePath)
         return try importLegacy(fileURL: file)
     }
 

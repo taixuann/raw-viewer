@@ -2406,10 +2406,10 @@ enum CoreSelfCheck {
             let settings = ProjectSettings(dataRoot: "measurements", defaultView: "tree", defaultPreset: "nature-single")
             try ProjectSettingsStore.save(settings, projectRoot: root)
             let url = ProjectSettingsStore.settingsURL(projectRoot: root)
-            precondition(url.path.hasSuffix(".rawviewer/setting.yaml"), "settings file location changed: \(url.path)")
+            precondition(url.path.hasSuffix(".raw-viewer/config.yaml"), "settings file location changed: \(url.path)")
             let text = try String(contentsOf: url, encoding: .utf8)
-            precondition(text == "schema_version: 3\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\ndeveloper_mode: false\nexplorer_views: []\n",
-                         "exact schema v3 YAML changed: \(text)")
+            precondition(text == "schema_version: 1\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\ndeveloper_mode: false\nexplorer_views: []\n",
+                         "exact schema v1 YAML changed: \(text)")
             precondition(!text.contains(root.path), "settings stored the absolute project directory")
             let loaded = try ProjectSettingsStore.load(projectRoot: root)
             precondition(loaded == settings, "round trip lost settings")
@@ -2521,9 +2521,9 @@ enum CoreSelfCheck {
             precondition(targetText == validV2, "refused save touched the symlink target")
             let fileLink = fm.temporaryDirectory.appendingPathComponent("rawview-settings-filelink-\(UUID().uuidString)")
             defer { try? fm.removeItem(at: fileLink) }
-            try writeFixture(fileLink, ".rawviewer/placeholder", "x")
+            try writeFixture(fileLink, ".raw-viewer/.placeholder", "x")
             try Data(validV2.utf8).write(to: fileLink.appendingPathComponent("real.yaml"))
-            try fm.createSymbolicLink(at: fileLink.appendingPathComponent(".rawviewer/setting.yaml"),
+            try fm.createSymbolicLink(at: fileLink.appendingPathComponent(".raw-viewer/config.yaml"),
                                       withDestinationURL: fileLink.appendingPathComponent("real.yaml"))
             var fileLoadRejected = false
             do { _ = try ProjectSettingsStore.load(projectRoot: fileLink) } catch is ProjectSettingsError { fileLoadRejected = true }
@@ -3666,8 +3666,8 @@ enum CoreSelfCheck {
                          "\(name) still restores from advisory record payloads")
         }
         precondition(cutover.project.indexDatabaseURL.path
-                        .hasSuffix(".rawviewer/index.db"),
-                     "the writable index is project-local .rawviewer/index.db")
+                        .hasSuffix("index.db"),
+                     "the writable index resolves to index.db")
         precondition(ProjectIndexStore.legacyIndexURL(project: cutover.project).path
                         .hasSuffix("data/.rawview/index.db"),
                      "the legacy project path stays named for hints and rollback only")
@@ -3721,8 +3721,7 @@ enum CoreSelfCheck {
         precondition(rebuildReport?.complete == true, "rebuild is complete")
 
         // Writer busy check: hold flock lease
-        let leaseURL = MeasurementCache.appLocalRoot(project: fixture.project)
-            .appendingPathComponent(ProjectIndexStore.writerLeaseFileName)
+        let leaseURL = ProjectIndexStore.writerLeaseURL(project: fixture.project)
         try FileManager.default.createDirectory(at: leaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let fd = Darwin.open(leaseURL.path, O_RDWR | O_CREAT, 0o600)
         precondition(fd >= 0, "open lease fd")

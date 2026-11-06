@@ -157,13 +157,14 @@ public actor ProjectIndexStore {
         project: ProjectContext,
         catalogFingerprint: String = ""
     ) async throws -> ProjectIndexStore {
-        let components = destinationRelativePath.split(separator: "/").map(String.init)
-        if let offender = SecureFile.firstSymlinkedComponent(components, beneath: project.root.path) {
+        let metadataComponents = [".raw-viewer", "index.db"]
+        if let offender = SecureFile.firstSymlinkedComponent(metadataComponents, beneath: project.root.path) {
             throw StoreError.unsafeNamespace(path: offender)
         }
-        // The default fingerprint is the live catalog: a catalog change must
-        // produce a different active namespace, so stored rows stop being
-        // restorable until a coordinator run re-validates them.
+        let legacyComponents = [".rawviewer", "index.db"]
+        if let offender = SecureFile.firstSymlinkedComponent(legacyComponents, beneath: project.root.path) {
+            throw StoreError.unsafeNamespace(path: offender)
+        }
         let fingerprint = catalogFingerprint.isEmpty
             ? ProfileCatalog.load(project: project).fingerprint
             : catalogFingerprint
@@ -184,8 +185,21 @@ public actor ProjectIndexStore {
             catalogFingerprint: catalogFingerprint)
     }
 
+    public static func projectCacheDirectory(projectRoot: URL, home: URL? = nil) -> URL {
+        let canonical = SecureFile.kernelCanonical(projectRoot.path)
+        let hash = sha256Hex(Data(canonical.utf8))
+        let homeDir = home ?? FileManager.default.homeDirectoryForCurrentUser
+        let cacheBase = homeDir
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Caches", isDirectory: true)
+            .appendingPathComponent("raw-viewer", isDirectory: true)
+        return cacheBase
+            .appendingPathComponent("projects", isDirectory: true)
+            .appendingPathComponent(hash, isDirectory: true)
+    }
+
     public static func preferredDestinationURL(project: ProjectContext) -> URL {
-        project.root.appendingPathComponent(destinationRelativePath)
+        projectCacheDirectory(projectRoot: project.root).appendingPathComponent("index.db")
     }
 
     public static func legacyIndexURL(project: ProjectContext) -> URL {
@@ -195,7 +209,7 @@ public actor ProjectIndexStore {
     /// Lease location in private app-local state (never inside the project,
     /// so read-only roots can still run bounded writer jobs).
     public static func writerLeaseURL(project: ProjectContext) -> URL {
-        MeasurementCache.appLocalRoot(project: project)
+        projectCacheDirectory(projectRoot: project.root)
             .appendingPathComponent(writerLeaseFileName)
     }
 

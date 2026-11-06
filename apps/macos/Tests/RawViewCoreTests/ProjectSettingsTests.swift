@@ -28,8 +28,8 @@ private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndef
     let file = ProjectSettingsStore.settingsURL(projectRoot: root)
     #expect(file.path.hasSuffix(ProjectSettingsStore.relativePath))
     let text = try String(contentsOf: file, encoding: .utf8)
-    #expect(text == "schema_version: 3\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\ndeveloper_mode: false\nexplorer_views: []\n",
-            "exact schema v3 YAML changed: \(text)")
+    #expect(text == "schema_version: 1\ndata_root: \"measurements\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\ndeveloper_mode: false\nexplorer_views: []\n",
+            "exact schema v1 YAML changed: \(text)")
     #expect(!text.contains(root.path), "settings must never store the absolute project directory")
     #expect(try ProjectSettingsStore.load(projectRoot: root) == settings)
 
@@ -120,7 +120,7 @@ private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndef
 
     // Symlinked settings file: load refuses to follow it; save refuses to
     // replace it.
-    let fileLink = try makeSettingsProject([".rawviewer/placeholder": "x", "real.yaml": validSettingsYAML])
+    let fileLink = try makeSettingsProject([".raw-viewer/.placeholder": "x", "real.yaml": validSettingsYAML])
     defer { try? fm.removeItem(at: fileLink) }
     try fm.createSymbolicLink(at: ProjectSettingsStore.settingsURL(projectRoot: fileLink),
                               withDestinationURL: fileLink.appendingPathComponent("real.yaml"))
@@ -183,6 +183,19 @@ private func writeSettingsFile(_ root: URL, _ yaml: String) throws {
 
 // MARK: - Task 6: schema v3 developer_mode + explorer_views preservation.
 
+private let configV1YAML = """
+schema_version: 1
+data_root: "data/raw"
+default_view: "tree"
+default_preset: "nature-single"
+developer_mode: true
+explorer_views:
+  - grammar_id: "standard-scientific"
+    variable: "study"
+  - grammar_id: "standard-scientific"
+    variable: "device-id"
+"""
+
 private let v3SettingsYAML = """
 schema_version: 3
 data_root: "data/raw"
@@ -208,7 +221,7 @@ explorer_views:
         ])
     try ProjectSettingsStore.save(settings, projectRoot: root)
     let text = try String(contentsOf: ProjectSettingsStore.settingsURL(projectRoot: root), encoding: .utf8)
-    #expect(text == v3SettingsYAML + "\n", "exact schema v3 YAML changed: \(text)")
+    #expect(text == configV1YAML + "\n", "exact config YAML changed: \(text)")
     #expect(try ProjectSettingsStore.load(projectRoot: root) == settings)
 }
 
@@ -218,7 +231,7 @@ explorer_views:
     let settings = ProjectSettings(dataRoot: "data/raw")
     try ProjectSettingsStore.save(settings, projectRoot: root)
     let text = try String(contentsOf: ProjectSettingsStore.settingsURL(projectRoot: root), encoding: .utf8)
-    #expect(text.contains("schema_version: 3\n"), "new settings must be schema v3: \(text)")
+    #expect(text.contains("schema_version: 1\n"), "new settings must be schema v1: \(text)")
     #expect(text.contains("developer_mode: false\n"), "developer_mode must persist explicitly: \(text)")
     #expect(try ProjectSettingsStore.load(projectRoot: root) == settings)
 }

@@ -158,7 +158,7 @@ public enum IndexCommand {
             }
 
             guard let validSettings = settings else {
-                throw IndexCommandError.missingConfiguration("No .rawviewer/setting.yaml found")
+                throw IndexCommandError.missingConfiguration("No .raw-viewer/config.yaml found")
             }
             return try ProjectContext.open(projectRoot, dataRootRelativePath: validSettings.dataRoot)
         }
