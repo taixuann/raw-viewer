@@ -92,28 +92,42 @@ jobs:
   cross-language-test-contract:
     name: cross-language test contract
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Path filter check
+        id: check
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ needs.changes.outputs.contracts }}" = "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping contract check: no contract-related files were changed."
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.check.outputs.should_run == 'true'
         with:
           filter: "blob:none"
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.should_run == 'true'
       - name: Cross-language contract check self-test
+        if: steps.check.outputs.should_run == 'true'
         run: ./Scripts/check_cross_language_test_contract_self_test.sh
       - name: Cross-language grammar contract check
+        if: steps.check.outputs.should_run == 'true'
         run: ./Scripts/check_cross_language_test_contract.sh
       - name: Rust grammar vector tests
+        if: steps.check.outputs.should_run == 'true'
         run: cargo test -p raw-viewer-core --test grammar_vectors
 
   rust:
     name: rust (${{ matrix.os }})
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -121,16 +135,29 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      - name: Path filter check
+        id: check
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ needs.changes.outputs.rust }}" = "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping rust matrix: no rust-related files were changed."
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.check.outputs.should_run == 'true'
         with:
           filter: "blob:none"
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.should_run == 'true'
       - name: Cache Linux system dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.check.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: /home/runner/.cache/apt-archives
@@ -138,7 +165,7 @@ jobs:
           restore-keys: |
             apt-tauri-${{ runner.os }}-
       - name: Install Tauri Linux dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.check.outputs.should_run == 'true'
         run: |
           mkdir -p /home/runner/.cache/apt-archives/partial
           sudo apt-get update
@@ -149,29 +176,46 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
+          sudo chown -R runner:runner /home/runner/.cache/apt-archives || true
+          sudo rm -f /home/runner/.cache/apt-archives/lock* || true
       - name: cargo fmt
+        if: steps.check.outputs.should_run == 'true'
         run: cargo fmt --check
       - name: cargo clippy
+        if: steps.check.outputs.should_run == 'true'
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
+        if: steps.check.outputs.should_run == 'true'
         run: cargo test --workspace
 
   swift:
     name: swift (macos)
     needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.swift == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
     defaults:
       run:
         working-directory: apps/macos
     steps:
+      - name: Path filter check
+        id: check
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ needs.changes.outputs.swift }}" = "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping swift check: no swift-related files were changed."
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.check.outputs.should_run == 'true'
         with:
           filter: "blob:none"
       - name: Swift toolchain
+        if: steps.check.outputs.should_run == 'true'
         run: swift --version
       - name: Cache Swift PM
+        if: steps.check.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: apps/macos/.build
@@ -179,15 +223,20 @@ jobs:
           restore-keys: |
             swift-spm-${{ runner.os }}-
       - name: swift build
+        if: steps.check.outputs.should_run == 'true'
         run: swift build
       - name: swift test
+        if: steps.check.outputs.should_run == 'true'
         run: swift test
       - name: Golden JSON lock (Swift reader)
+        if: steps.check.outputs.should_run == 'true'
         run: |
           ./Scripts/write_golden_measurements.sh
           cd ../..
           git diff --exit-code core/tests/golden
       - name: Core self-check
+        if: steps.check.outputs.should_run == 'true'
         run: ./Scripts/check_core.sh
       - name: Index CLI check
+        if: steps.check.outputs.should_run == 'true'
         run: ./Scripts/check_index_cli.sh
