@@ -321,9 +321,11 @@ fn explorer_inventory_skips_symlinks_and_affm() {
     let affm_file = data_dir.join("scan.affm");
     fs::write(&affm_file, "dummy affm").expect("write affm");
 
-    let symlink_file = data_dir.join("symlink_run.csv");
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&real_file, &symlink_file).expect("symlink");
+    {
+        let symlink_file = data_dir.join("symlink_run.csv");
+        std::os::unix::fs::symlink(&real_file, &symlink_file).expect("symlink");
+    }
 
     let explorer = Explorer::open(&root).expect("open explorer");
     let report = explorer.inventory().expect("inventory");
