@@ -486,7 +486,7 @@ public enum FilenameGrammarEngine {
             return ExtractedGrammarFacts(isMatched: false, unmatchedReason: "Invalid template syntax")
         }
 
-        var target = stripDataExtension(filename, template: grammar.template)
+        let target = stripDataExtension(filename, template: grammar.template)
         let trimmed = grammar.template.trimmingCharacters(in: .whitespacesAndNewlines)
         let range = NSRange(target.startIndex..<target.endIndex, in: target)
         var match = regex.firstMatch(in: target, options: [], range: range)
@@ -966,79 +966,85 @@ public enum FilenameGrammarEngine {
         }
         var grammars: [FilenameGrammar] = []
         for (index, item) in list.enumerated() {
-            let label = item.value(for: "id")?.scalarValue ?? "grammars[\(index)]"
-            guard let itemEntries = item.mapEntries else {
-                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "grammar must be a mapping")
-            }
-            for (key, _) in itemEntries {
-                guard key == "id" || key == "name" || key == "template" || key == "description" || key == "fields" else {
-                    throw GrammarCatalogError.unexpectedKey(scope: "grammar '\(label)'", key: key)
-                }
-            }
-            guard let id = item.value(for: "id")?.scalarValue,
-                  let name = item.value(for: "name")?.scalarValue,
-                  let template = item.value(for: "template")?.scalarValue else {
-                throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "id, name and template are required")
-            }
-            let description = item.value(for: "description")?.scalarValue ?? ""
-            var fields: [GrammarField] = []
-            if let fieldList = item.value(for: "fields")?.listItems {
-                for fNode in fieldList {
-                    guard let fEntries = fNode.mapEntries else {
-                        throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field must be a mapping")
-                    }
-                    for (key, _) in fEntries {
-                        guard key == "name" || key == "role" || key == "type" || key == "format" || key == "optional" else {
-                            throw GrammarCatalogError.unexpectedKey(scope: "field in grammar '\(label)'", key: key)
-                        }
-                    }
-                    guard let fName = fNode.value(for: "name")?.scalarValue, !fName.isEmpty else {
-                        throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field name is required")
-                    }
-                    // Absent role means variable-native; a present role must
-                    // be nonempty and maps to its display label (legacy kept).
-                    let fRoleRaw = fNode.value(for: "role")?.scalarValue
-                    if let raw = fRoleRaw, raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        throw GrammarCatalogError.emptyRole(field: fName)
-                    }
-                    let mappedRole: String? = fRoleRaw.map { displayRole(for: $0) }
-                    guard let fTypeRaw = fNode.value(for: "type")?.scalarValue,
-                          let fType = GrammarFieldType(rawValue: fTypeRaw) else {
-                        throw GrammarCatalogError.unknownType(field: fName, found: fNode.value(for: "type")?.scalarValue)
-                    }
-                    let fFormat = fNode.value(for: "format")?.scalarValue ?? ""
-                    if let optRaw = fNode.value(for: "optional")?.scalarValue?.lowercased() {
-                        guard optRaw == "true" || optRaw == "false" else {
-                            throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field '\(fName)' optional must be true or false")
-                        }
-                        fields.append(GrammarField(
-                            name: fName,
-                            role: mappedRole,
-                            type: fType,
-                            formatHint: fFormat,
-                            isOptional: optRaw == "true"
-                        ))
-                    } else {
-                        fields.append(GrammarField(
-                            name: fName,
-                            role: mappedRole,
-                            type: fType,
-                            formatHint: fFormat
-                        ))
-                    }
-                }
-            }
-            grammars.append(FilenameGrammar(
-                id: id,
-                name: name,
-                template: template,
-                description: description,
-                fields: fields
-            ))
+            let grammar = try parseSingleGrammar(node: item, defaultLabel: "grammars[\(index)]")
+            grammars.append(grammar)
         }
         let catalog = FilenameGrammarCatalog(grammars: grammars)
         try validate(catalog: catalog)
         return catalog
+    }
+
+    static func parseSingleGrammar(node item: YAMLNode, defaultLabel: String = "grammar") throws -> FilenameGrammar {
+        let label = item.value(for: "id")?.scalarValue ?? defaultLabel
+        guard let itemEntries = item.mapEntries else {
+            throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "grammar must be a mapping")
+        }
+        for (key, _) in itemEntries {
+            guard key == "id" || key == "name" || key == "template" || key == "description" || key == "fields" else {
+                throw GrammarCatalogError.unexpectedKey(scope: "grammar '\(label)'", key: key)
+            }
+        }
+        guard let id = item.value(for: "id")?.scalarValue,
+              let name = item.value(for: "name")?.scalarValue,
+              let template = item.value(for: "template")?.scalarValue else {
+            throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "id, name and template are required")
+        }
+        let description = item.value(for: "description")?.scalarValue ?? ""
+        var fields: [GrammarField] = []
+        if let fieldList = item.value(for: "fields")?.listItems {
+            for fNode in fieldList {
+                guard let fEntries = fNode.mapEntries else {
+                    throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field must be a mapping")
+                }
+                for (key, _) in fEntries {
+                    guard key == "name" || key == "role" || key == "type" || key == "format" || key == "optional" else {
+                        throw GrammarCatalogError.unexpectedKey(scope: "field in grammar '\(label)'", key: key)
+                    }
+                }
+                guard let fName = fNode.value(for: "name")?.scalarValue, !fName.isEmpty else {
+                    throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field name is required")
+                }
+                // Absent role means variable-native; a present role must
+                // be nonempty and maps to its display label (legacy kept).
+                let fRoleRaw = fNode.value(for: "role")?.scalarValue
+                if let raw = fRoleRaw, raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw GrammarCatalogError.emptyRole(field: fName)
+                }
+                let mappedRole: String? = fRoleRaw.map { displayRole(for: $0) }
+                guard let fTypeRaw = fNode.value(for: "type")?.scalarValue,
+                      let fType = GrammarFieldType(rawValue: fTypeRaw) else {
+                    throw GrammarCatalogError.unknownType(field: fName, found: fNode.value(for: "type")?.scalarValue)
+                }
+                let fFormat = fNode.value(for: "format")?.scalarValue ?? ""
+                if let optRaw = fNode.value(for: "optional")?.scalarValue?.lowercased() {
+                    guard optRaw == "true" || optRaw == "false" else {
+                        throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field '\(fName)' optional must be true or false")
+                    }
+                    fields.append(GrammarField(
+                        name: fName,
+                        role: mappedRole,
+                        type: fType,
+                        formatHint: fFormat,
+                        isOptional: optRaw == "true"
+                    ))
+                } else {
+                    fields.append(GrammarField(
+                        name: fName,
+                        role: mappedRole,
+                        type: fType,
+                        formatHint: fFormat
+                    ))
+                }
+            }
+        }
+        let grammar = FilenameGrammar(
+            id: id,
+            name: name,
+            template: template,
+            description: description,
+            fields: fields
+        )
+        return grammar
     }
 
     /// Lenient legacy parse: tolerates absent files keys and legacy-only keys,

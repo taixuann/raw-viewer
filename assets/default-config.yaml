@@ -1,0 +1,47 @@
+schema_version: 1
+data_root: "data/raw"
+default_view: "tree"
+default_preset: "nature-single"
+grammar:
+  id: standard-scientific
+  name: Standard Filename Pattern
+  template: "{date}_{device}.{application-mode}_[{device-id}]_{library}.{study}_r.[{remarks}]_f.[{flags}]_{index}"
+  fields:
+    - name: date
+      role: datetime
+      type: datetime
+      format: DDMMYY-HHmmSS
+      optional: false
+    - name: device
+      role: instrument
+      type: string
+      optional: false
+    - name: application-mode
+      role: mode
+      type: string
+      optional: false
+    - name: device-id
+      role: device
+      type: string
+      optional: false
+    - name: library
+      role: library
+      type: string
+      optional: false
+    - name: study
+      role: category
+      type: string
+      optional: false
+    - name: remarks
+      role: remarks
+      type: string
+      optional: true
+    - name: flags
+      role: flags
+      type: string
+      optional: true
+    - name: index
+      role: batch
+      type: number
+      format: "001"
+      optional: true

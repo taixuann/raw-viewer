@@ -14,6 +14,13 @@ use crate::paths::{
     PROJECT_CONFIG_FILE, VIEWER_METADATA_NAMESPACES,
 };
 
+/// Settings for enabled/disabled built-in profiles.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProfilesConfig {
+    pub enabled: Option<Vec<String>>,
+    pub disabled: Vec<String>,
+}
+
 /// Settings from a project's `.raw-viewer` directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
@@ -24,6 +31,9 @@ pub struct ProjectConfig {
     pub default_preset: String,
     pub explorer_views: Vec<String>,
     pub source_labels: Vec<String>,
+    pub profiles: ProfilesConfig,
+    pub recent_projects: Vec<String>,
+    pub grammar: Option<crate::grammar::FilenameGrammar>,
 }
 
 impl ProjectConfig {
@@ -42,6 +52,9 @@ impl Default for ProjectConfig {
             default_preset: Self::DEFAULT_PRESET.to_string(),
             explorer_views: Vec::new(),
             source_labels: Vec::new(),
+            profiles: ProfilesConfig::default(),
+            recent_projects: Vec::new(),
+            grammar: None,
         }
     }
 }
@@ -229,6 +242,17 @@ fn parse_project_yaml(path: &Path, text: &str) -> Result<ProjectConfig, ConfigEr
             "source_labels" => {
                 config.source_labels = expect_string_array(path, "source_labels", value)?;
             }
+            "profiles" => {
+                config.profiles = expect_profiles_config(path, value)?;
+            }
+            "recent_projects" => {
+                config.recent_projects = expect_string_array(path, "recent_projects", value)?;
+            }
+            "grammar" => {
+                let grammar = crate::grammar::parse_single_grammar_node(value)
+                    .map_err(|err| ConfigError::malformed(path, Some("grammar".into()), err))?;
+                config.grammar = Some(grammar);
+            }
             _ => {
                 return Err(ConfigError::malformed(
                     path,
@@ -246,6 +270,47 @@ fn parse_project_yaml(path: &Path, text: &str) -> Result<ProjectConfig, ConfigEr
         ));
     }
     Ok(config)
+}
+
+fn expect_profiles_config(path: &Path, value: &YamlNode) -> Result<ProfilesConfig, ConfigError> {
+    let entries = value.map_entries().ok_or_else(|| {
+        ConfigError::malformed(
+            path,
+            Some("profiles".into()),
+            format!("expected a mapping, found {}", yaml_kind(value)),
+        )
+    })?;
+    let mut enabled: Option<Vec<String>> = None;
+    let mut disabled: Vec<String> = Vec::new();
+    for (key, val) in entries {
+        match key.as_str() {
+            "enabled" => {
+                enabled = Some(expect_string_array(path, "profiles.enabled", val)?);
+            }
+            "disabled" => {
+                disabled = expect_string_array(path, "profiles.disabled", val)?;
+            }
+            _ => {
+                return Err(ConfigError::malformed(
+                    path,
+                    Some(format!("profiles.{key}")),
+                    "unknown field; expected enabled, disabled".into(),
+                ));
+            }
+        }
+    }
+    if let Some(ref en) = enabled {
+        for id in en {
+            if disabled.contains(id) {
+                return Err(ConfigError::malformed(
+                    path,
+                    Some("profiles".into()),
+                    format!("profile id '{id}' cannot be in both profiles.enabled and profiles.disabled"),
+                ));
+            }
+        }
+    }
+    Ok(ProfilesConfig { enabled, disabled })
 }
 
 fn expect_schema_version(path: &Path, value: &YamlNode) -> Result<u32, ConfigError> {
@@ -472,6 +537,9 @@ mod tests {
                 default_preset: "nature-single".to_string(),
                 explorer_views: Vec::new(),
                 source_labels: Vec::new(),
+                profiles: ProfilesConfig::default(),
+                recent_projects: Vec::new(),
+                grammar: None,
             }
         );
         assert_eq!(fs::read_dir(&dir.path).unwrap().count(), before);
@@ -513,6 +581,9 @@ source_labels: [row-a, row-b]
                 default_preset: "science-single".to_string(),
                 explorer_views: vec!["tree".into(), "plot".into()],
                 source_labels: vec!["row-a".into(), "row-b".into()],
+                profiles: ProfilesConfig::default(),
+                recent_projects: Vec::new(),
+                grammar: None,
             }
         );
     }

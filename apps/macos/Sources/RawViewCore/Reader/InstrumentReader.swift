@@ -220,7 +220,7 @@ public enum InstrumentReader {
             // decoding: candidates are resolved using each candidate's own
             // encoding, and only one unique profile/format may match.
             let grammar = ProfileWhenMatcher.grammarContextFromCatalog(
-                (v3grammar ?? V3Reader.context(project: project)).catalog, basename: basename)
+                v3grammar.catalog, basename: basename)
             let encoded = resolveEncoded(
                 prefix: prefixData, catalog: catalog, extension: fileExtension, basename: basename, grammar: grammar)
             let match: ProfileMatch
@@ -1434,6 +1434,14 @@ private struct V3DeferHeader: Error {
 
 enum V3Reader {
     static func context(project: ProjectContext) -> V3GrammarContext {
+        // 1. Check if project config defines a grammar
+        if let settings = try? ProjectSettingsStore.load(projectRoot: project.root),
+           let grammar = settings.grammar {
+            let digest = sha256Hex(Data(BuiltinAssets.defaultConfigYAML.utf8))
+            return V3GrammarContext(catalog: FilenameGrammarCatalog(grammars: [grammar]), sha256: digest, error: nil)
+        }
+
+        // 2. Check dedicated grammar files
         let order = [
             FilenameGrammarEngine.relativePath,
             FilenameGrammarEngine.legacyRelativePath,
@@ -1447,26 +1455,36 @@ enum V3Reader {
                 break
             }
         }
-        guard let url = selectedURL else {
-            return V3GrammarContext(catalog: nil, sha256: nil,
-                                    error: "grammar catalog \(FilenameGrammarEngine.relativePath) not found")
-        }
-        guard let data = try? Data(contentsOf: url) else {
-            return V3GrammarContext(catalog: nil, sha256: nil,
-                                    error: "grammar catalog \(url.lastPathComponent) could not be read")
-        }
-        do {
-            if url.path.hasSuffix("/view/grammar.yaml") {
-                let imported = try FilenameGrammarEngine.importLegacy(fileURL: url)
-                return V3GrammarContext(catalog: imported.catalog, sha256: sha256Hex(data), error: nil)
-            } else {
-                return V3GrammarContext(catalog: try FilenameGrammarEngine.load(fileURL: url),
-                                        sha256: sha256Hex(data), error: nil)
+        if let url = selectedURL {
+            guard let data = try? Data(contentsOf: url) else {
+                return V3GrammarContext(catalog: nil, sha256: nil,
+                                        error: "grammar catalog \(url.lastPathComponent) could not be read")
             }
-        } catch {
-            return V3GrammarContext(catalog: nil, sha256: sha256Hex(data),
-                                    error: error.localizedDescription)
+            do {
+                if url.path.hasSuffix("/view/grammar.yaml") {
+                    let imported = try FilenameGrammarEngine.importLegacy(fileURL: url)
+                    return V3GrammarContext(catalog: imported.catalog, sha256: sha256Hex(data), error: nil)
+                } else {
+                    return V3GrammarContext(catalog: try FilenameGrammarEngine.load(fileURL: url),
+                                            sha256: sha256Hex(data), error: nil)
+                }
+            } catch {
+                return V3GrammarContext(catalog: nil, sha256: sha256Hex(data),
+                                        error: error.localizedDescription)
+            }
         }
+
+        // 3. Fallback: If project has local profiles without grammar, do not inject default grammar.
+        let hasLocalProfiles = FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".raw-viewer/profiles").path)
+            || FileManager.default.fileExists(atPath: project.root.appendingPathComponent("data/instruments").path)
+        if hasLocalProfiles {
+            return V3GrammarContext(catalog: nil, sha256: nil,
+                                    error: "workspace with local profiles and no grammar file")
+        }
+
+        let defaultCatalog = BuiltinAssets.defaultGrammarCatalog()
+        let digest = sha256Hex(Data(BuiltinAssets.defaultConfigYAML.utf8))
+        return V3GrammarContext(catalog: defaultCatalog, sha256: digest, error: nil)
     }
 
     /// Cache identity: the complete catalog fingerprint (which already covers

@@ -211,6 +211,7 @@ pub fn compile_instrument_profile(
     let profile_when = doc.when.as_ref().map(super::when::when_from_v4_clause);
     Ok(InstrumentProfile {
         profile_id: doc.profile_id.clone(),
+        revision: doc.revision.clone(),
         instrument_id: doc.instrument_id.clone(),
         instrument_name: doc.instrument_name.clone(),
         vendor: doc.vendor.clone(),

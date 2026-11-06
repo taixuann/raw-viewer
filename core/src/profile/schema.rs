@@ -907,6 +907,10 @@ fn validate(
                 .and_then(|n| n.scalar_value())
                 .map(str::to_string)
                 .unwrap_or_else(|| instrument_id.clone().unwrap()),
+            revision: root
+                .value_for_key("revision")
+                .and_then(|n| n.scalar_value())
+                .map(str::to_string),
             instrument_id: instrument_id.unwrap(),
             instrument_name: instrument_name.unwrap(),
             vendor,

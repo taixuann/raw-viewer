@@ -1,0 +1,40 @@
+schema_version: 4
+id: usth/horiba-labram
+revision: 1
+instrument:
+  id: horiba-labram
+  name: Horiba LabRAM HR Evolution Raman Spectrometer
+variants:
+  raman:
+    when:
+      content_contains_any:
+        - raman_shift;intensity
+        - Raman_shift;intensity
+      filename_contains_all:
+        - horiba-labram
+    format:
+      kind: first-row-header
+      extensions: [".txt"]
+      delimiter: ";"
+      encoding: [utf-8, windows-1252, iso-8859-1]
+    rows:
+      header: 1
+      data_start: 2
+    metadata: []
+    columns:
+      wavenumber:
+        role: channel
+        header: Raman_shift
+        aliases: [raman_shift]
+        quantity: wavenumber
+        unit: cm-1
+        label: Raman shift
+      intensity:
+        role: channel
+        header: intensity
+        quantity: intensity
+        unit: counts
+        label: Intensity
+    plot:
+      x: wavenumber
+      y: [intensity]

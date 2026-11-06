@@ -22,6 +22,11 @@ rm -rf -- "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/RawView"
 cp "$root/Sources/RawViewApp/Resources/NativePlotStyle.json" "$app/Contents/Resources/NativePlotStyle.json"
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+if [ -d "$repo_root/assets" ]; then
+  mkdir -p "$app/Contents/Resources/assets"
+  cp -R "$repo_root/assets/" "$app/Contents/Resources/assets/"
+fi
 if [ -f "$root/Sources/RawViewApp/Resources/AppIcon.icns" ]; then
   cp "$root/Sources/RawViewApp/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 fi

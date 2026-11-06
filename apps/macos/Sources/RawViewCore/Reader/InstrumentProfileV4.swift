@@ -114,6 +114,12 @@ enum ProfileV4Codec {
         return doc
     }
 
+    static func compileFromText(_ text: String, relativePath: String) throws -> InstrumentProfile {
+        let doc = try parse(text: text)
+        let sha = sha256Hex(Data(text.utf8))
+        return try compileInstrumentProfile(doc, relativePath: relativePath, sha256: sha)
+    }
+
     static func decode(_ root: YAMLNode) throws -> ProfileDocumentV4 {
         try rejectUnknown(root, allowed: ["schema_version", "id", "revision", "instrument", "when", "variants"], scope: "")
         guard root.value(for: "schema_version")?.scalarValue == "4" else {
@@ -181,7 +187,8 @@ enum ProfileV4Codec {
             relativePath: relativePath,
             sha256: sha256,
             schemaVersion: 4,
-            profileWhen: profileWhen
+            profileWhen: profileWhen,
+            revision: doc.revision
         )
     }
 
@@ -488,7 +495,7 @@ enum ProfileV4Codec {
         var out: [MetadataEntryV4] = []
         for (index, item) in items.enumerated() {
             let metaField = "\(field).metadata[\(index)]"
-            if let scalar = item.scalarValue {
+            if item.scalarValue != nil {
                 throw ProfileV4Error.invalid(reason: "\(metaField) must be a mapping with row/key/type or column/row/key.")
             }
             guard item.mapEntries != nil else {

@@ -20,11 +20,17 @@ public struct ProjectSettings: Sendable, Equatable {
     /// Optional per-grammar Explorer source-label rows. Absent in older
     /// files means no customization (exact filename display).
     public let sourceLabels: [SourceLabelLayout]
+    /// Profile selection configuration (schema v1).
+    public let profiles: ProfilesConfig
+    /// Optional project-level filename grammar.
+    public let grammar: FilenameGrammar?
 
     public init(
         dataRoot: String, defaultView: String = "tree", defaultPreset: String = "nature-single",
         developerMode: Bool = false, explorerViews: [ExplorerViewDefinition] = [],
-        sourceLabels: [SourceLabelLayout] = []
+        sourceLabels: [SourceLabelLayout] = [],
+        profiles: ProfilesConfig = ProfilesConfig(),
+        grammar: FilenameGrammar? = nil
     ) {
         self.dataRoot = dataRoot
         self.defaultView = defaultView
@@ -32,6 +38,19 @@ public struct ProjectSettings: Sendable, Equatable {
         self.developerMode = developerMode
         self.explorerViews = explorerViews
         self.sourceLabels = sourceLabels
+        self.profiles = profiles
+        self.grammar = grammar
+    }
+}
+
+/// Project-scoped profile enable/disable lists.
+public struct ProfilesConfig: Sendable, Equatable {
+    public let enabled: [String]?
+    public let disabled: [String]
+
+    public init(enabled: [String]? = nil, disabled: [String] = []) {
+        self.enabled = enabled
+        self.disabled = disabled
     }
 }
 
@@ -515,9 +534,65 @@ public enum ProjectSettingsStore {
             }
             try validateSourceLabels(sourceLabels)
         }
+        var profilesConfig = ProfilesConfig()
+        if let profilesNode = root.value(for: "profiles") {
+            guard let profileEntries = profilesNode.mapEntries else {
+                throw ProjectSettingsError(reason: "profiles must be a mapping with enabled and disabled lists.")
+            }
+            var enabledList: [String]? = nil
+            var disabledList: [String] = []
+            for entry in profileEntries {
+                switch entry.key {
+                case "enabled":
+                    guard let items = entry.value.listItems else {
+                        throw ProjectSettingsError(reason: "profiles.enabled must be a list of profile ids.")
+                    }
+                    var list: [String] = []
+                    for item in items {
+                        guard let id = item.scalarValue else {
+                            throw ProjectSettingsError(reason: "profiles.enabled entries must be scalar strings.")
+                        }
+                        list.append(id)
+                    }
+                    enabledList = list
+                case "disabled":
+                    guard let items = entry.value.listItems else {
+                        throw ProjectSettingsError(reason: "profiles.disabled must be a list of profile ids.")
+                    }
+                    for item in items {
+                        guard let id = item.scalarValue else {
+                            throw ProjectSettingsError(reason: "profiles.disabled entries must be scalar strings.")
+                        }
+                        disabledList.append(id)
+                    }
+                default:
+                    throw ProjectSettingsError(reason: "unknown profiles key \"\(entry.key)\"; expected enabled, disabled.")
+                }
+            }
+            if let enabled = enabledList {
+                let disabledSet = Set(disabledList)
+                for id in enabled {
+                    if disabledSet.contains(id) {
+                        throw ProjectSettingsError(reason: "field `profiles`: profile id '\(id)' cannot be in both profiles.enabled and profiles.disabled")
+                    }
+                }
+            }
+            profilesConfig = ProfilesConfig(enabled: enabledList, disabled: disabledList)
+        }
+
+        var parsedGrammar: FilenameGrammar? = nil
+        if let grammarNode = root.value(for: "grammar") {
+            do {
+                parsedGrammar = try FilenameGrammarEngine.parseSingleGrammar(node: grammarNode)
+            } catch {
+                throw ProjectSettingsError(reason: "config grammar is invalid: \(error.localizedDescription)")
+            }
+        }
+
         return ProjectSettings(
             dataRoot: dataRoot, defaultView: defaultView, defaultPreset: defaultPreset,
-            developerMode: developerMode, explorerViews: explorerViews, sourceLabels: sourceLabels)
+            developerMode: developerMode, explorerViews: explorerViews, sourceLabels: sourceLabels,
+            profiles: profilesConfig, grammar: parsedGrammar)
     }
 
     static func parseLegacy(text: String) throws -> ProjectSettings {

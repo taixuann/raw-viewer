@@ -57,6 +57,7 @@ struct InstrumentProfile: Sendable, Equatable {
     let sha256: String
     let schemaVersion: Int
     let profileWhen: ProfileWhenMatcher.WhenClause?
+    let revision: String?
 }
 
 struct ProfileMatch: Sendable {
@@ -227,6 +228,11 @@ struct ProfileCatalog: Sendable {
     }
 
     static func load(project: ProjectContext) -> ProfileCatalog {
+        let projectCatalog = loadProjectProfiles(project: project)
+        return mergeBuiltinProfiles(projectCatalog, project: project)
+    }
+
+    private static func loadProjectProfiles(project: ProjectContext) -> ProfileCatalog {
         // Precedence: `.raw-viewer/profiles/` → `.rawviewer/instrument/` →
         // `data/.rawview/instrument/` → `data/instruments/` (companion `rawview/` when present).
         let rawViewerProfilesRoot = project.root
@@ -294,6 +300,76 @@ struct ProfileCatalog: Sendable {
             ], brokenClaims: [])
         }
         return loadProfiles(from: instrumentsRoot, displayRoot: "data/instruments", project: project)
+    }
+
+    private static func mergeBuiltinProfiles(_ catalog: ProfileCatalog, project: ProjectContext) -> ProfileCatalog {
+        if catalog.issues.contains(where: { $0.localizedCaseInsensitiveContains("no profiles were loaded") }) {
+            return catalog
+        }
+
+        let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
+        let companionEntry = instrumentsRoot.appendingPathComponent("rawview", isDirectory: true)
+        var companionStat = stat()
+        if lstat(companionEntry.path, &companionStat) == 0 {
+            return catalog
+        }
+
+        let hasRawViewerDir = FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".raw-viewer").path)
+        if !hasRawViewerDir {
+            let hasLegacyProfiles = FileManager.default.fileExists(atPath: instrumentsRoot.path)
+                || FileManager.default.fileExists(atPath: project.root.appendingPathComponent("data/.rawview/instrument").path)
+                || FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".rawviewer/instrument").path)
+            if hasLegacyProfiles {
+                return catalog
+            }
+        }
+
+        let settings = (try? ProjectSettingsStore.load(projectRoot: project.root))
+            ?? (try? ProjectSettingsStore.loadConfigOrDefault(projectRoot: project.root))
+        let profilesConfig = settings?.profiles ?? ProfilesConfig()
+
+        var profiles = catalog.profiles
+        var issues = catalog.issues
+
+        for (id, relPath, yaml) in BuiltinAssets.builtinProfiles {
+            if profilesConfig.disabled.contains(id) {
+                continue
+            }
+            if let enabled = profilesConfig.enabled, !enabled.contains(id) {
+                continue
+            }
+
+            if let existing = profiles.first(where: { $0.profileID == id }) {
+                let builtinRev = revisionFromYAML(yaml) ?? 1
+                let projectRev = existing.revision.flatMap { Int($0) } ?? 0
+                if projectRev < builtinRev {
+                    issues.append("warning: project profile '\(id)' (revision \(projectRev)) is older than built-in revision \(builtinRev)")
+                }
+                continue
+            }
+
+            do {
+                let profile = try ProfileV4Codec.compileFromText(yaml, relativePath: relPath)
+                profiles.append(profile)
+            } catch {
+                issues.append("warning: builtin profile '\(id)' failed to compile: \(error.localizedDescription)")
+            }
+        }
+
+        profiles.sort { $0.profileID < $1.profileID }
+        return ProfileCatalog(
+            profiles: profiles,
+            issues: issues,
+            brokenClaims: catalog.brokenClaims,
+            v3Documents: catalog.v3Documents
+        )
+    }
+
+    private static func revisionFromYAML(_ yaml: String) -> Int? {
+        guard let node = try? YAMLParser.parse(yaml, allowIndentlessSequences: false),
+              let revStr = node.value(for: "revision")?.scalarValue,
+              let rev = Int(revStr) else { return nil }
+        return rev
     }
 
     private static func isDirectoryWithYAMLs(_ url: URL, within projectRoot: URL) -> Bool {
@@ -1039,7 +1115,7 @@ enum ProfileSchema {
         let profile = InstrumentProfile(profileID: profileID, instrumentID: instrumentID, instrumentName: instrumentName,
                                         vendor: vendor, model: model, formats: formats, modes: modes,
                                         relativePath: relativePath, sha256: sha256, schemaVersion: version,
-                                        profileWhen: nil)
+                                        profileWhen: nil, revision: nil)
         return ProfileLoadOutcome(profile: profile, issues: [], extensions: extensions, modeSelectors: [])
     }
 

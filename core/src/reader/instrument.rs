@@ -109,6 +109,15 @@ pub fn load_measurement(
         grammar_context_from_catalog(grammar.catalog.as_ref(), &basename),
     );
     let (profile_match, encoding, sample, pending) = match encoded {
+        EncodedResolution::AmbiguousProfile { candidate_ids } => {
+            return Err(ReaderError::InvalidSource(format_ambiguous(&candidate_ids)));
+        }
+        EncodedResolution::GrammarMatchedNoProfile => {
+            return Err(ReaderError::InvalidSource(
+                "Filename matched the project grammar but no instrument profile mode matched this source."
+                    .into(),
+            ));
+        }
         EncodedResolution::Failed(message) => {
             if let Ok(measurement) =
                 generic_table::load_measurement_default(&source_path, &relative_path)
@@ -149,6 +158,10 @@ pub fn load_measurement(
 
 enum EncodedResolution {
     Failed(String),
+    AmbiguousProfile {
+        candidate_ids: Vec<String>,
+    },
+    GrammarMatchedNoProfile,
     Matched {
         profile_match: Box<ProfileMatch>,
         encoding: TextEncoding,
@@ -186,7 +199,15 @@ fn resolve_encoded(
     }
     if candidates.is_empty() {
         let resolution = catalog.resolve(file_extension, "", basename, grammar.clone());
-        return EncodedResolution::Failed(profile_resolution_error(resolution));
+        return match resolution {
+            ProfileResolution::AmbiguousProfile { candidate_ids } => {
+                EncodedResolution::AmbiguousProfile { candidate_ids }
+            }
+            ProfileResolution::GrammarMatchedNoProfile => {
+                EncodedResolution::GrammarMatchedNoProfile
+            }
+            other => EncodedResolution::Failed(profile_resolution_error(other)),
+        };
     }
     struct CandidateHit {
         profile_match: ProfileMatch,
@@ -256,13 +277,21 @@ fn resolve_encoded(
     if hits.len() > 1 {
         let matches: Vec<_> = hits.iter().map(|hit| hit.profile_match.clone()).collect();
         let candidate_ids = ambiguous_candidate_labels(&matches);
-        return EncodedResolution::Failed(format_ambiguous(&candidate_ids));
+        return EncodedResolution::AmbiguousProfile { candidate_ids };
     }
     if !decoded_any {
         if catalog.has_broken_claim(file_extension) {
             let resolution = catalog.resolve(file_extension, "", basename, grammar.clone());
             if !matches!(resolution, ProfileResolution::Matched(_)) {
-                return EncodedResolution::Failed(profile_resolution_error(resolution));
+                return match resolution {
+                    ProfileResolution::AmbiguousProfile { candidate_ids } => {
+                        EncodedResolution::AmbiguousProfile { candidate_ids }
+                    }
+                    ProfileResolution::GrammarMatchedNoProfile => {
+                        EncodedResolution::GrammarMatchedNoProfile
+                    }
+                    other => EncodedResolution::Failed(profile_resolution_error(other)),
+                };
             }
         }
         return EncodedResolution::Failed(
@@ -273,11 +302,9 @@ fn resolve_encoded(
     match fallback {
         ProfileResolution::Failed(message) => EncodedResolution::Failed(message),
         ProfileResolution::AmbiguousProfile { candidate_ids } => {
-            EncodedResolution::Failed(format_ambiguous(&candidate_ids))
+            EncodedResolution::AmbiguousProfile { candidate_ids }
         }
-        ProfileResolution::GrammarMatchedNoProfile => EncodedResolution::Failed(
-            profile_resolution_error(ProfileResolution::GrammarMatchedNoProfile),
-        ),
+        ProfileResolution::GrammarMatchedNoProfile => EncodedResolution::GrammarMatchedNoProfile,
         ProfileResolution::Matched(foreign) => EncodedResolution::Failed(format!(
             "No profile mode matched this source using its own declared encoding (basename \"{basename}\"). A mode ({} mode {}) matches only in another candidate's decoded text and cannot decode this source.",
             foreign.profile.relative_path, foreign.mode.id
