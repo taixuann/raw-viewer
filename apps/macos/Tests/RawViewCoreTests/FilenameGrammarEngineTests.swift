@@ -364,7 +364,9 @@ struct FilenameGrammarEngineTests {
     @Test func canonicalRoundTripWritesStrictSchemaV1() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
-        #expect(FilenameGrammarEngine.relativePath == ".rawviewer/grammar.yaml")
+        #expect(FilenameGrammarEngine.relativePath == ".raw-viewer/grammar.yaml")
+        #expect(FilenameGrammarEngine.legacyRelativePath == ".rawviewer/grammar.yaml")
+        #expect(FilenameGrammarEngine.ancientLegacyRelativePath == ".rawviewer/view/grammar.yaml")
 
         let catalog = makeStrictCatalog()
         try FilenameGrammarEngine.save(catalog: catalog, project: project)
@@ -579,7 +581,7 @@ struct FilenameGrammarEngineTests {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let legacyURL = project.root.appendingPathComponent(FilenameGrammarEngine.legacyRelativePath)
+        let legacyURL = project.root.appendingPathComponent(FilenameGrammarEngine.ancientLegacyRelativePath)
         let legacyText = """
             active_grammar_id: "autolab-convention"
             grammars:
@@ -655,7 +657,7 @@ struct FilenameGrammarEngineTests {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let legacyURL = project.root.appendingPathComponent(FilenameGrammarEngine.legacyRelativePath)
+        let legacyURL = project.root.appendingPathComponent(FilenameGrammarEngine.ancientLegacyRelativePath)
         try writeText("grammars:\n  - id: \"legacy-only\"\n    name: \"Legacy\"\n    template: \"{a}\"\n    fields:\n      - name: \"a\"\n        role: \"remarks\"\n        type: \"string\"\n", to: legacyURL)
         let canonicalURL = project.root.appendingPathComponent(FilenameGrammarEngine.relativePath)
         try writeText("schema_version: 1\ngrammars: [oops\n", to: canonicalURL)
@@ -692,7 +694,7 @@ struct FilenameGrammarEngineTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         // Legacy side present with a distinctive id that must never leak through.
-        let legacyURL = project.root.appendingPathComponent(FilenameGrammarEngine.legacyRelativePath)
+        let legacyURL = project.root.appendingPathComponent(FilenameGrammarEngine.ancientLegacyRelativePath)
         try writeText("grammars:\n  - id: \"legacy-smuggle\"\n    name: \"Legacy\"\n    template: \"{a}\"\n    fields:\n      - name: \"a\"\n        role: \"remarks\"\n        type: \"string\"\n", to: legacyURL)
         // Canonical exists but is malformed: strict load correctly throws.
         let canonicalURL = project.root.appendingPathComponent(FilenameGrammarEngine.relativePath)
@@ -1275,7 +1277,7 @@ struct FilenameGrammarEngineTests {
         reduced.activeGrammarID = nil
         try FilenameGrammarEngine.save(catalog: reduced, project: project)
 
-        let file = root.appendingPathComponent(".rawviewer/grammar.yaml")
+        let file = root.appendingPathComponent(FilenameGrammarEngine.relativePath)
         #expect(FileManager.default.fileExists(atPath: file.path))
         #expect(try String(contentsOf: file, encoding: .utf8) == "schema_version: 1\ngrammars: []\n")
         let reloaded = try FilenameGrammarEngine.load(project: project)

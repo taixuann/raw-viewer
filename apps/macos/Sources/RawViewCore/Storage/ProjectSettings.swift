@@ -96,10 +96,11 @@ public struct ProjectSettingsError: Error, Equatable, LocalizedError {
 /// namespaces are rejections, never guesses.
 public enum ProjectSettingsStore {
     public static let maximumFileBytes = 64 * 1024
-    public static let relativePath = ".rawviewer/setting.yaml"
-    public static let legacyRelativePath = ".rawviewer/setting/setting.yaml"
-    static let supportedSchemaVersions: Set<Int> = [1, 2, 3]
-    static let currentSchemaVersion = 3
+    public static let relativePath = ".raw-viewer/config.yaml"
+    public static let legacyRelativePath = ".rawviewer/setting.yaml"
+    public static let ancientLegacyRelativePath = ".rawviewer/setting/setting.yaml"
+    static let supportedLegacySchemaVersions: Set<Int> = [1, 2, 3]
+    static let currentSchemaVersion = 1
     /// Schema v1 and v2 define exactly one navigator view.
     static let supportedDefaultViews: Set<String> = ["tree"]
 
@@ -107,7 +108,7 @@ public enum ProjectSettingsStore {
     /// data root may never equal or sit beneath one of them, and every
     /// traversal (source inventory and manifest scanning) excludes them for
     /// every data root, not only for ".".
-    public static let viewerMetadataNamespaces = [".rawviewer", "data/.rawview", "data/snapshot"]
+    public static let viewerMetadataNamespaces = [".raw-viewer", ".rawviewer", "data/.rawview", "data/snapshot"]
 
     public static func isViewerMetadataNamespace(_ relativePath: String) -> Bool {
         viewerMetadataNamespaces.contains { relativePath == $0 || relativePath.hasPrefix($0 + "/") }
@@ -121,29 +122,44 @@ public enum ProjectSettingsStore {
         projectRoot.appendingPathComponent(legacyRelativePath)
     }
 
+    public static func ancientLegacySettingsURL(projectRoot: URL) -> URL {
+        projectRoot.appendingPathComponent(ancientLegacyRelativePath)
+    }
+
     /// Loads saved settings; nil ONLY when the file is proven absent (ENOENT
-    /// at the file itself for both current and legacy paths). Any other state —
+    /// at the file itself for current, legacy, and ancient legacy paths). Any other state —
     /// symlink, directory, unreadable, oversized, malformed, unsupported —
     /// throws so callers can never mistake corrupt configuration for missing
     /// configuration.
     public static func load(projectRoot: URL) throws -> ProjectSettings? {
         let currentURL = settingsURL(projectRoot: projectRoot)
         let legacyURL = legacySettingsURL(projectRoot: projectRoot)
+        let ancientLegacyURL = ancientLegacySettingsURL(projectRoot: projectRoot)
 
-        // Try primary path first: .rawviewer/setting.yaml
-        if let settings = try loadSingle(from: currentURL, projectRoot: projectRoot, relative: relativePath, namespaceComponents: [".rawviewer"]) {
+        // Try primary path first: .raw-viewer/config.yaml
+        if let settings = try loadSingle(from: currentURL, projectRoot: projectRoot, relative: relativePath, namespaceComponents: [".raw-viewer"], isLegacy: false) {
             return settings
         }
 
-        // Fallback to legacy path: .rawviewer/setting/setting.yaml
-        if let settings = try loadSingle(from: legacyURL, projectRoot: projectRoot, relative: legacyRelativePath, namespaceComponents: [".rawviewer", "setting"]) {
+        // Fallback to legacy path: .rawviewer/setting.yaml
+        if let settings = try loadSingle(from: legacyURL, projectRoot: projectRoot, relative: legacyRelativePath, namespaceComponents: [".rawviewer"], isLegacy: true) {
+            return settings
+        }
+
+        // Fallback to ancient legacy path: .rawviewer/setting/setting.yaml
+        if let settings = try loadSingle(from: ancientLegacyURL, projectRoot: projectRoot, relative: ancientLegacyRelativePath, namespaceComponents: [".rawviewer", "setting"], isLegacy: true) {
             return settings
         }
 
         return nil
     }
 
-    private static func loadSingle(from url: URL, projectRoot: URL, relative: String, namespaceComponents: [String]) throws -> ProjectSettings? {
+    /// Loads saved settings or returns default settings when proven absent.
+    public static func loadConfigOrDefault(projectRoot: URL) throws -> ProjectSettings {
+        try load(projectRoot: projectRoot) ?? ProjectSettings(dataRoot: "data/raw")
+    }
+
+    private static func loadSingle(from url: URL, projectRoot: URL, relative: String, namespaceComponents: [String], isLegacy: Bool) throws -> ProjectSettings? {
         var info = stat()
         guard lstat(url.path, &info) == 0 else {
             guard errno == ENOENT else {
@@ -179,7 +195,11 @@ public enum ProjectSettingsStore {
         guard let text = String(data: raw, encoding: .utf8) else {
             throw ProjectSettingsError(reason: "\(relative) is not UTF-8 text.")
         }
-        return try parse(text: text)
+        if isLegacy {
+            return try parseLegacy(text: text)
+        } else {
+            return try parseConfig(text: text)
+        }
     }
 
     /// Atomic no-follow save: settings are validated first, the namespace is
@@ -205,8 +225,9 @@ public enum ProjectSettingsStore {
         guard data.count <= maximumFileBytes else {
             throw ProjectSettingsError(reason: "serialized settings exceed the 64 KiB settings limit.")
         }
-        let namespace = projectRoot.appendingPathComponent(".rawviewer", isDirectory: true)
-        if let symlinked = SecureFile.firstSymlinkedComponent([".rawviewer"], beneath: projectRoot.path) {
+        let namespace = projectRoot.appendingPathComponent(".raw-viewer", isDirectory: true)
+        if let symlinked = SecureFile.firstSymlinkedComponent([".raw-viewer"], beneath: projectRoot.path)
+            ?? SecureFile.firstSymlinkedComponent([".rawviewer"], beneath: projectRoot.path) {
             throw ProjectSettingsError(reason: "\(symlinked) is a symlink; refusing to save settings through it.")
         }
         do {
@@ -226,6 +247,13 @@ public enum ProjectSettingsStore {
         }
     }
 
+    private static func hasWindowsDrivePrefix(_ value: String) -> Bool {
+        guard value.count >= 2 else { return false }
+        let first = value[value.startIndex]
+        let second = value[value.index(after: value.startIndex)]
+        return first.isLetter && second == ":"
+    }
+
     /// Trust-boundary validation of a configured data root: project-relative,
     /// normalized, contained. Absolute paths and any `..`/`.`/empty component
     /// are rejected BEFORE normalization — the stored value is exactly the
@@ -235,6 +263,9 @@ public enum ProjectSettingsStore {
             throw ProjectSettingsError(reason: "data_root must not be empty.")
         }
         guard !value.hasPrefix("/") else {
+            throw ProjectSettingsError(reason: "data_root \"\(value)\" must be project-relative, not absolute.")
+        }
+        guard !hasWindowsDrivePrefix(value) else {
             throw ProjectSettingsError(reason: "data_root \"\(value)\" must be project-relative, not absolute.")
         }
         guard value != "~", !value.hasPrefix("~/") else {
@@ -347,6 +378,149 @@ public enum ProjectSettingsStore {
     }
 
     static func parse(text: String) throws -> ProjectSettings {
+        if let root = try? YAMLParser.parse(text, allowIndentlessSequences: false),
+           let versionStr = root.value(for: "schema_version")?.scalarValue,
+           let version = Int(versionStr), version > 1 {
+            return try parseLegacy(text: text)
+        }
+        return try parseConfig(text: text)
+    }
+
+    static func parseConfig(text: String) throws -> ProjectSettings {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ProjectSettingsError(reason: "schema_version is required.")
+        }
+        let root: YAMLNode
+        do {
+            root = try YAMLParser.parse(text, allowIndentlessSequences: false)
+        } catch let error as YAMLParseError {
+            throw ProjectSettingsError(reason: "config YAML parse error \(error.localizedDescription).")
+        } catch {
+            throw ProjectSettingsError(reason: "config could not be parsed as YAML.")
+        }
+        guard root.mapEntries != nil else {
+            throw ProjectSettingsError(reason: "config must be a YAML mapping.")
+        }
+        guard let versionNode = root.value(for: "schema_version") else {
+            throw ProjectSettingsError(reason: "schema_version is required.")
+        }
+        guard let versionStr = versionNode.scalarValue, let version = Int(versionStr) else {
+            throw ProjectSettingsError(reason: "schema_version must be an integer; found \"\(versionNode.scalarValue ?? "")\".")
+        }
+        guard version == 1 else {
+            throw ProjectSettingsError(reason: "schema_version must be 1; found \"\(version)\".")
+        }
+        let allowedKeys: Set<String> = [
+            "schema_version", "data_root", "default_view", "default_preset",
+            "developer_mode", "explorer_views", "source_labels", "grammar", "profiles"
+        ]
+        for entry in root.mapEntries ?? [] where !allowedKeys.contains(entry.key) {
+            throw ProjectSettingsError(reason: "unknown config key \"\(entry.key)\" for schema_version 1.")
+        }
+        let dataRoot: String
+        if let dr = root.value(for: "data_root")?.scalarValue {
+            try validateDataRoot(dr)
+            dataRoot = dr
+        } else {
+            dataRoot = "data/raw"
+        }
+        let defaultView = root.value(for: "default_view")?.scalarValue ?? "tree"
+        guard supportedDefaultViews.contains(defaultView) else {
+            throw ProjectSettingsError(reason: "default_view must be \"tree\"; found \"\(defaultView)\".")
+        }
+        let defaultPreset = root.value(for: "default_preset")?.scalarValue ?? "nature-single"
+        var developerMode = false
+        if let modeNode = root.value(for: "developer_mode") {
+            guard let raw = modeNode.scalarValue, raw == "true" || raw == "false" else {
+                throw ProjectSettingsError(reason: "developer_mode must be true or false.")
+            }
+            developerMode = (raw == "true")
+        }
+        var explorerViews: [ExplorerViewDefinition] = []
+        if let viewsNode = root.value(for: "explorer_views") {
+            guard let items = viewsNode.listItems else {
+                throw ProjectSettingsError(reason: "explorer_views must be a YAML list of grammar_id/variable references.")
+            }
+            for item in items {
+                guard let entries = item.mapEntries else {
+                    throw ProjectSettingsError(reason: "each explorer_views entry must be a mapping with grammar_id and variable.")
+                }
+                for entry in entries where entry.key != "grammar_id" && entry.key != "variable" {
+                    throw ProjectSettingsError(reason: "unknown explorer_views key \"\(entry.key)\"; expected grammar_id, variable.")
+                }
+                guard let grammarID = item.value(for: "grammar_id")?.scalarValue,
+                      let variable = item.value(for: "variable")?.scalarValue else {
+                    throw ProjectSettingsError(reason: "each explorer_views entry needs grammar_id and variable.")
+                }
+                try validateViewToken(grammarID, field: "explorer_views grammar_id")
+                try validateViewToken(variable, field: "explorer_views variable")
+                explorerViews.append(ExplorerViewDefinition(grammarID: grammarID, variable: variable))
+            }
+            let seen = explorerViews.map { "\($0.grammarID)\0\($0.variable)" }
+            guard Set(seen).count == seen.count else {
+                throw ProjectSettingsError(reason: "explorer_views must not repeat a (grammar_id, variable) reference.")
+            }
+        }
+        var sourceLabels: [SourceLabelLayout] = []
+        if let labelsNode = root.value(for: "source_labels") {
+            guard let items = labelsNode.listItems else {
+                throw ProjectSettingsError(reason: "source_labels must be a YAML list of grammar layouts.")
+            }
+            for item in items {
+                guard item.mapEntries != nil else {
+                    throw ProjectSettingsError(reason: "each source_labels entry must be a mapping with grammar_id and rows.")
+                }
+                for entry in item.mapEntries ?? [] where entry.key != "grammar_id" && entry.key != "rows" {
+                    throw ProjectSettingsError(reason: "unknown source_labels key \"\(entry.key)\"; expected grammar_id, rows.")
+                }
+                guard let grammarID = item.value(for: "grammar_id")?.scalarValue,
+                      let rowsNode = item.value(for: "rows"),
+                      let rowItems = rowsNode.listItems else {
+                    throw ProjectSettingsError(reason: "each source_labels entry needs grammar_id and rows.")
+                }
+                var rows: [SourceLabelRow] = []
+                for rowItem in rowItems {
+                    guard rowItem.mapEntries != nil else {
+                        throw ProjectSettingsError(reason: "each source_labels row must be a mapping with variables, font_size, weight, font, emphasis.")
+                    }
+                    for entry in rowItem.mapEntries ?? []
+                        where entry.key != "variables" && entry.key != "font_size" && entry.key != "weight"
+                            && entry.key != "font" && entry.key != "emphasis" {
+                        throw ProjectSettingsError(reason: "unknown source_labels row key \"\(entry.key)\"; expected variables, font_size, weight, font, emphasis.")
+                    }
+                    guard let varsNode = rowItem.value(for: "variables"),
+                          let varItems = varsNode.listItems else {
+                        throw ProjectSettingsError(reason: "each source_labels row needs variables, font_size, weight, font, emphasis.")
+                    }
+                    var variables: [String] = []
+                    for varItem in varItems {
+                        guard let name = varItem.scalarValue else {
+                            throw ProjectSettingsError(reason: "source_labels variable must be a nonempty identifier.")
+                        }
+                        variables.append(name)
+                    }
+                    guard let sizeStr = rowItem.value(for: "font_size")?.scalarValue,
+                          let fontSize = Int(sizeStr),
+                          let weight = rowItem.value(for: "weight")?.scalarValue,
+                          let font = rowItem.value(for: "font")?.scalarValue,
+                          let emphasis = rowItem.value(for: "emphasis")?.scalarValue else {
+                        throw ProjectSettingsError(reason: "each source_labels row needs variables, font_size, weight, font, emphasis.")
+                    }
+                    rows.append(SourceLabelRow(
+                        variables: variables, fontSize: fontSize,
+                        weight: weight, font: font, emphasis: emphasis))
+                }
+                sourceLabels.append(SourceLabelLayout(grammarID: grammarID, rows: rows))
+            }
+            try validateSourceLabels(sourceLabels)
+        }
+        return ProjectSettings(
+            dataRoot: dataRoot, defaultView: defaultView, defaultPreset: defaultPreset,
+            developerMode: developerMode, explorerViews: explorerViews, sourceLabels: sourceLabels)
+    }
+
+    static func parseLegacy(text: String) throws -> ProjectSettings {
         let root: YAMLNode
         do {
             root = try YAMLParser.parse(text, allowIndentlessSequences: false)
@@ -360,13 +534,9 @@ public enum ProjectSettingsStore {
         }
         guard let versionStr = root.value(for: "schema_version")?.scalarValue,
               let version = Int(versionStr),
-              supportedSchemaVersions.contains(version) else {
+              supportedLegacySchemaVersions.contains(version) else {
             throw ProjectSettingsError(reason: "schema_version must be 1, 2 or 3; found \"\(root.value(for: "schema_version")?.scalarValue ?? "")\".")
         }
-        // Duplicate keys already fail closed inside YAMLParser; unknown keys
-        // fail closed here against the per-version schema key set. The v3
-        // keys are unknown outside v3, so older files keep their meaning and
-        // older settings default to developerMode false with no views.
         var allowedKeys: Set<String> = ["schema_version", "data_root", "default_view", "default_preset"]
         if version == 3 {
             allowedKeys.insert("developer_mode")

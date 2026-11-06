@@ -1434,18 +1434,35 @@ private struct V3DeferHeader: Error {
 
 enum V3Reader {
     static func context(project: ProjectContext) -> V3GrammarContext {
-        let url = project.root.appendingPathComponent(FilenameGrammarEngine.relativePath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        let order = [
+            FilenameGrammarEngine.relativePath,
+            FilenameGrammarEngine.legacyRelativePath,
+            FilenameGrammarEngine.ancientLegacyRelativePath
+        ]
+        var selectedURL: URL?
+        for rel in order {
+            let candidate = project.root.appendingPathComponent(rel)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                selectedURL = candidate
+                break
+            }
+        }
+        guard let url = selectedURL else {
             return V3GrammarContext(catalog: nil, sha256: nil,
                                     error: "grammar catalog \(FilenameGrammarEngine.relativePath) not found")
         }
         guard let data = try? Data(contentsOf: url) else {
             return V3GrammarContext(catalog: nil, sha256: nil,
-                                    error: "grammar catalog \(FilenameGrammarEngine.relativePath) could not be read")
+                                    error: "grammar catalog \(url.lastPathComponent) could not be read")
         }
         do {
-            return V3GrammarContext(catalog: try FilenameGrammarEngine.load(fileURL: url),
-                                    sha256: sha256Hex(data), error: nil)
+            if url.path.hasSuffix("/view/grammar.yaml") {
+                let imported = try FilenameGrammarEngine.importLegacy(fileURL: url)
+                return V3GrammarContext(catalog: imported.catalog, sha256: sha256Hex(data), error: nil)
+            } else {
+                return V3GrammarContext(catalog: try FilenameGrammarEngine.load(fileURL: url),
+                                        sha256: sha256Hex(data), error: nil)
+            }
         } catch {
             return V3GrammarContext(catalog: nil, sha256: sha256Hex(data),
                                     error: error.localizedDescription)

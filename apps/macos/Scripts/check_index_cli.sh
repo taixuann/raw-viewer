@@ -63,7 +63,7 @@ if [[ $STATUS -ne 0 ]]; then
 fi
 
 # Verify settings file exists
-if [[ ! -f "$PROJ_A/.rawviewer/setting.yaml" ]]; then
+if [[ ! -f "$PROJ_A/.raw-viewer/config.yaml" ]]; then
     echo "FAIL: Settings file was not created by --save-settings" >&2
     exit 1
 fi

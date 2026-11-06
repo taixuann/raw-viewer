@@ -31,7 +31,6 @@ config_vectors:
   swift:
     test_file: apps/macos/Tests/RawViewCoreTests/ProjectLayoutConfigVectorsTests.swift
     test_name: sharedConfigVectorsMatchSwiftLoader
-    status: rust-only-pending
 
 cache_vectors:
   file: ../config/vectors.yaml
@@ -41,4 +40,3 @@ cache_vectors:
   swift:
     test_file: apps/macos/Tests/RawViewCoreTests/ProjectLayoutCacheVectorsTests.swift
     test_name: sharedCacheVectorsMatchSwiftLayout
-    status: rust-only-pending

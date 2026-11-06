@@ -79,8 +79,17 @@ public actor SessionStore {
         self.decoder = dec
     }
 
-    /// Resolves the daily session directory: `.rawviewer/session/YYYY-MM-DD/`
+    /// Resolves the daily session directory: `.raw-viewer/session/YYYY-MM-DD/`
     nonisolated public func dailyDirectory(for date: Date = Date()) -> URL {
+        let dateString = Self.formatDayString(date: date)
+        return projectRoot
+            .appendingPathComponent(".raw-viewer", isDirectory: true)
+            .appendingPathComponent("session", isDirectory: true)
+            .appendingPathComponent(dateString, isDirectory: true)
+    }
+
+    /// Resolves the legacy daily session directory: `.rawviewer/session/YYYY-MM-DD/`
+    nonisolated public func legacyDailyDirectory(for date: Date = Date()) -> URL {
         let dateString = Self.formatDayString(date: date)
         return projectRoot
             .appendingPathComponent(".rawviewer", isDirectory: true)
@@ -114,7 +123,13 @@ public actor SessionStore {
 
     /// Reads and decodes all turns from the session file line by line.
     public func loadTurns(sessionId: UUID, date: Date = Date()) throws -> [ChatTurn] {
-        let url = fileURL(sessionId: sessionId, date: date)
+        var url = fileURL(sessionId: sessionId, date: date)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            let legacy = legacyDailyDirectory(for: date).appendingPathComponent("\(sessionId.uuidString).jsonl")
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                url = legacy
+            }
+        }
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         let content = try String(contentsOf: url, encoding: .utf8)
         let lines = content.split(separator: "\n", omittingEmptySubsequences: true)
