@@ -116,23 +116,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           filter: "blob:none"
-      - name: Build macOS App
-        working-directory: apps/macos
+      - name: Build and Package macOS App
         run: |
-          swift build -c release
-      - name: Package macOS App
-        run: |
-          mkdir -p dist/RawView.app/Contents/MacOS
-          # Copy compiled binary if built via SPM
-          if [ -f "apps/macos/.build/release/RawView" ]; then
-            cp apps/macos/.build/release/RawView dist/RawView.app/Contents/MacOS/
-          fi
+          mkdir -p dist
+          RAWVIEW_APP_PATH="dist/RawView.app" ./apps/macos/Scripts/package_app.sh
           cd dist
-          zip -r ../RawView-macOS.zip RawView.app || tar -czf ../RawView-macOS.tar.gz RawView.app
+          zip -r ../RawView-macOS.zip RawView.app
           cd ..
-          if [ -f RawView-macOS.zip ]; then
-            shasum -a 256 RawView-macOS.zip > RawView-macOS.zip.sha256
-          fi
+          shasum -a 256 RawView-macOS.zip > RawView-macOS.zip.sha256
       - name: Upload macOS App Artifact
         uses: actions/upload-artifact@v4
         with:

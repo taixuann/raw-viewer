@@ -107,55 +107,69 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 info "Downloading ${DOWNLOAD_URL}..."
-if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME" 2>/dev/null; then
-  if [ -n "$FALLBACK_ARCHIVE" ]; then
-    DOWNLOAD_URL="$RELEASE_URL/$FALLBACK_ARCHIVE"
-    ARCHIVE_NAME="$FALLBACK_ARCHIVE"
-    info "Attempting fallback asset ${DOWNLOAD_URL}..."
-    curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME" || error "Failed to download $DOWNLOAD_URL"
-  else
-    error "Failed to download $DOWNLOAD_URL"
+DOWNLOAD_SUCCESS=false
+if curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME" 2>/dev/null; then
+  DOWNLOAD_SUCCESS=true
+elif [ -n "$FALLBACK_ARCHIVE" ]; then
+  DOWNLOAD_URL="$RELEASE_URL/$FALLBACK_ARCHIVE"
+  ARCHIVE_NAME="$FALLBACK_ARCHIVE"
+  info "Attempting fallback asset ${DOWNLOAD_URL}..."
+  if curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME" 2>/dev/null; then
+    DOWNLOAD_SUCCESS=true
   fi
 fi
 
-# 4. Optional Checksum Verification
-if curl -fsSL "$RELEASE_URL/SHA256SUMS.txt" -o "$TMP_DIR/SHA256SUMS.txt" 2>/dev/null; then
-  info "Verifying SHA256 checksum..."
-  cd "$TMP_DIR"
-  EXPECTED_SUM="$(grep "$ARCHIVE_NAME" SHA256SUMS.txt | awk '{print $1}' || true)"
-  if [ -n "$EXPECTED_SUM" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      ACTUAL_SUM="$(sha256sum "$ARCHIVE_NAME" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-      ACTUAL_SUM="$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')"
-    else
-      ACTUAL_SUM=""
-    fi
-    if [ -n "$ACTUAL_SUM" ]; then
-      if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
-        error "Checksum mismatch! Expected $EXPECTED_SUM, got $ACTUAL_SUM"
+if [ "$DOWNLOAD_SUCCESS" = "false" ]; then
+  warn "Pre-built binary asset not found for $VERSION on GitHub Releases."
+  if command -v cargo >/dev/null 2>&1; then
+    info "Rust toolchain detected. Building and installing from source via cargo..."
+    cargo install --git "https://github.com/$REPO.git" raw-viewer-cli --root "$TMP_DIR"
+    mkdir -p "$BIN_DIR"
+    mv "$TMP_DIR/bin/$BIN_NAME" "$BIN_DIR/$BIN_NAME"
+    chmod +x "$BIN_DIR/$BIN_NAME"
+  else
+    error "Failed to download $DOWNLOAD_URL and cargo is not available for source compilation."
+  fi
+else
+  # 4. Optional Checksum Verification
+  if curl -fsSL "$RELEASE_URL/SHA256SUMS.txt" -o "$TMP_DIR/SHA256SUMS.txt" 2>/dev/null; then
+    info "Verifying SHA256 checksum..."
+    cd "$TMP_DIR"
+    EXPECTED_SUM="$(grep "$ARCHIVE_NAME" SHA256SUMS.txt | awk '{print $1}' || true)"
+    if [ -n "$EXPECTED_SUM" ]; then
+      if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SUM="$(sha256sum "$ARCHIVE_NAME" | awk '{print $1}')"
+      elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL_SUM="$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')"
+      else
+        ACTUAL_SUM=""
       fi
-      info "Checksum verified: ${GREEN}OK${NC}"
+      if [ -n "$ACTUAL_SUM" ]; then
+        if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
+          error "Checksum mismatch! Expected $EXPECTED_SUM, got $ACTUAL_SUM"
+        fi
+        info "Checksum verified: ${GREEN}OK${NC}"
+      fi
     fi
   fi
-fi
 
-# 5. Extract and install binary
-mkdir -p "$BIN_DIR"
-tar -xzf "$TMP_DIR/$ARCHIVE_NAME" -C "$TMP_DIR"
+  # 5. Extract and install binary
+  mkdir -p "$BIN_DIR"
+  tar -xzf "$TMP_DIR/$ARCHIVE_NAME" -C "$TMP_DIR"
 
-if [ ! -f "$TMP_DIR/$BIN_NAME" ]; then
-  # Check if unpacked into subfolder
-  FOUND_BIN="$(find "$TMP_DIR" -type f -name "$BIN_NAME" | head -n1)"
-  if [ -n "$FOUND_BIN" ]; then
-    mv "$FOUND_BIN" "$TMP_DIR/$BIN_NAME"
-  else
-    error "Binary $BIN_NAME not found inside archive."
+  if [ ! -f "$TMP_DIR/$BIN_NAME" ]; then
+    # Check if unpacked into subfolder
+    FOUND_BIN="$(find "$TMP_DIR" -type f -name "$BIN_NAME" | head -n1)"
+    if [ -n "$FOUND_BIN" ]; then
+      mv "$FOUND_BIN" "$TMP_DIR/$BIN_NAME"
+    else
+      error "Binary $BIN_NAME not found inside archive."
+    fi
   fi
-fi
 
-chmod +x "$TMP_DIR/$BIN_NAME"
-mv "$TMP_DIR/$BIN_NAME" "$BIN_DIR/$BIN_NAME"
+  chmod +x "$TMP_DIR/$BIN_NAME"
+  mv "$TMP_DIR/$BIN_NAME" "$BIN_DIR/$BIN_NAME"
+fi
 
 success "Successfully installed $BIN_NAME to $BIN_DIR/$BIN_NAME"
 
