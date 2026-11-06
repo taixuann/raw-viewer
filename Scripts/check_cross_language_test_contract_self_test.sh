@@ -41,6 +41,8 @@ sed -i 's/cross_language_contract.yaml/disconnected_contract.yaml/g' "$broken_sw
 export REPO_ROOT="$tmpdir"
 mkdir -p "$tmpdir/apps/macos/Tests/RawViewCoreTests"
 cp "$broken_swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
+cp "$root/apps/macos/Tests/RawViewCoreTests/ProjectLayoutConfigVectorsTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/"
+cp "$root/apps/macos/Tests/RawViewCoreTests/ProjectLayoutCacheVectorsTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/"
 mkdir -p "$tmpdir/core/tests"
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
 cp "$root/core/tests/project_layout_config.rs" "$tmpdir/core/tests/project_layout_config.rs"
@@ -66,6 +68,8 @@ cp "$root/core/tests/project_layout_cache.rs" "$tmpdir/core/tests/project_layout
 
 # Contract points at renamed vectors copy; wiring check must still pass.
 cp "$root/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/GrammarVectorTests.swift"
+cp "$root/apps/macos/Tests/RawViewCoreTests/ProjectLayoutConfigVectorsTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/"
+cp "$root/apps/macos/Tests/RawViewCoreTests/ProjectLayoutCacheVectorsTests.swift" "$tmpdir/apps/macos/Tests/RawViewCoreTests/"
 cp "$root/core/tests/grammar_vectors.rs" "$tmpdir/core/tests/grammar_vectors.rs"
 cp "$root/core/tests/project_layout_config.rs" "$tmpdir/core/tests/project_layout_config.rs"
 cp "$root/core/tests/project_layout_cache.rs" "$tmpdir/core/tests/project_layout_cache.rs"
