@@ -31,10 +31,7 @@ pub const BUILTIN_PROFILES: &[(&str, &str)] = &[
     ),
 ];
 
-pub fn merge_builtin_profiles(
-    catalog: &mut ProfileCatalog,
-    project: &ProjectContext,
-) {
+pub fn merge_builtin_profiles(catalog: &mut ProfileCatalog, project: &ProjectContext) {
     if catalog
         .issues
         .iter()

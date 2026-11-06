@@ -158,7 +158,9 @@ pub fn load_measurement(
 
 enum EncodedResolution {
     Failed(String),
-    AmbiguousProfile { candidate_ids: Vec<String> },
+    AmbiguousProfile {
+        candidate_ids: Vec<String>,
+    },
     GrammarMatchedNoProfile,
     Matched {
         profile_match: Box<ProfileMatch>,
@@ -201,7 +203,9 @@ fn resolve_encoded(
             ProfileResolution::AmbiguousProfile { candidate_ids } => {
                 EncodedResolution::AmbiguousProfile { candidate_ids }
             }
-            ProfileResolution::GrammarMatchedNoProfile => EncodedResolution::GrammarMatchedNoProfile,
+            ProfileResolution::GrammarMatchedNoProfile => {
+                EncodedResolution::GrammarMatchedNoProfile
+            }
             other => EncodedResolution::Failed(profile_resolution_error(other)),
         };
     }

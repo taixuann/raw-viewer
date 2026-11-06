@@ -100,7 +100,8 @@ pub fn load_file(path: &std::path::Path) -> Result<FilenameGrammarCatalog, Strin
 }
 
 pub fn default_grammar() -> FilenameGrammar {
-    let root = parse(DEFAULT_CONFIG_YAML, false).expect("bundled default-config.yaml is valid YAML");
+    let root =
+        parse(DEFAULT_CONFIG_YAML, false).expect("bundled default-config.yaml is valid YAML");
     let grammar_node = root
         .value_for_key("grammar")
         .expect("bundled default-config.yaml defines grammar");
