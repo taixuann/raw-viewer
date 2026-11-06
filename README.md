@@ -165,7 +165,12 @@ raw-viewer --json skills repair
 
 ## Local Development & CI Verification
 
-Run the full local verification suite before pushing:
+Install git pre-push hooks to enforce checks on every push automatically:
+```bash
+./Scripts/install_git_hooks.sh
+```
+
+Run the full local verification suite manually:
 ```bash
 # Run local pre-push checks (fmt, clippy, workspace tests, swift checks, PR contract checks)
 ./Scripts/pre_push.sh

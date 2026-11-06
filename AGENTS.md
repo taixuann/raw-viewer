@@ -69,6 +69,11 @@ graph TD
 
 ## Verification Gate
 
+Install git pre-push hooks to catch issues before pushing:
+```bash
+./Scripts/install_git_hooks.sh
+```
+
 Always verify all targets locally before pushing:
 ```bash
 ./Scripts/pre_push.sh

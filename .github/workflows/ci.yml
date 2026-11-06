@@ -7,12 +7,51 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      swift: ${{ steps.filter.outputs.swift }}
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: "blob:none"
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'core/**'
+              - 'bindings/**'
+              - 'apps/cli/**'
+              - 'apps/tauri/**'
+              - 'Cargo.*'
+              - 'Scripts/**'
+              - '.github/workflows/ci.yml'
+            swift:
+              - 'apps/macos/**'
+              - 'core/**'
+              - 'Cargo.*'
+              - 'Scripts/**'
+              - '.github/workflows/ci.yml'
+            contracts:
+              - 'core/**'
+              - 'apps/macos/**'
+              - 'Scripts/**'
+              - '.github/workflows/ci.yml'
+
   pr-acceptance-mapping:
     name: pr acceptance mapping
     if: github.event_name == 'pull_request'
@@ -21,6 +60,8 @@ jobs:
     steps:
       # Checkout required: scripts and self-test fixtures live in the repo (PR_BODY alone is not enough).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: "blob:none"
       - name: Acceptance mapping check self-test
         run: ./Scripts/check_pr_acceptance_mapping_self_test.sh
       - name: PR body includes acceptance-case mapping
@@ -50,10 +91,14 @@ jobs:
 
   cross-language-test-contract:
     name: cross-language test contract
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: "blob:none"
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
@@ -67,6 +112,8 @@ jobs:
 
   rust:
     name: rust (${{ matrix.os }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -75,27 +122,33 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: "blob:none"
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Cache Linux system dependencies
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/apt-archives
+          key: apt-tauri-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            apt-tauri-${{ runner.os }}-
       - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
         run: |
+          mkdir -p /home/runner/.cache/apt-archives/partial
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            -o Dir::Cache::archives=/home/runner/.cache/apt-archives \
             libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
             libxdo-dev \
-            libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf \
-            pkg-config
+            patchelf
       - name: cargo fmt
         run: cargo fmt --check
       - name: cargo clippy
@@ -105,6 +158,8 @@ jobs:
 
   swift:
     name: swift (macos)
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.swift == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
     defaults:
@@ -112,13 +167,15 @@ jobs:
         working-directory: apps/macos
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: "blob:none"
       - name: Swift toolchain
         run: swift --version
       - name: Cache Swift PM
         uses: actions/cache@v4
         with:
           path: apps/macos/.build
-          key: swift-spm-${{ runner.os }}-${{ hashFiles('apps/macos/Package.resolved', 'apps/macos/Package.swift') }}
+          key: swift-spm-${{ runner.os }}-${{ hashFiles('apps/macos/Package.swift') }}
           restore-keys: |
             swift-spm-${{ runner.os }}-
       - name: swift build
