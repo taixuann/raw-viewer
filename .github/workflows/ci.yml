@@ -193,9 +193,6 @@ jobs:
     needs: changes
     runs-on: macos-latest
     timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: apps/macos
     steps:
       - name: Path filter check
         id: check
@@ -224,19 +221,24 @@ jobs:
             swift-spm-${{ runner.os }}-
       - name: swift build
         if: steps.check.outputs.should_run == 'true'
+        working-directory: apps/macos
         run: swift build
       - name: swift test
         if: steps.check.outputs.should_run == 'true'
+        working-directory: apps/macos
         run: swift test
       - name: Golden JSON lock (Swift reader)
         if: steps.check.outputs.should_run == 'true'
+        working-directory: apps/macos
         run: |
           ./Scripts/write_golden_measurements.sh
           cd ../..
           git diff --exit-code core/tests/golden
       - name: Core self-check
         if: steps.check.outputs.should_run == 'true'
+        working-directory: apps/macos
         run: ./Scripts/check_core.sh
       - name: Index CLI check
         if: steps.check.outputs.should_run == 'true'
+        working-directory: apps/macos
         run: ./Scripts/check_index_cli.sh
