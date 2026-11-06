@@ -360,10 +360,12 @@ fn test_skills_install_idempotent_and_real_dir_safety() {
     assert!(!real_dir.is_symlink());
     assert!(real_dir.join("sentinel.txt").exists());
 
-    // set-profile in .agents/skills must be created as symlink
+    // set-profile in .agents/skills must be created as symlink/junction
     let profile_target = fake_home.join(".agents").join("skills").join("set-profile");
     #[cfg(unix)]
     assert!(profile_target.is_symlink());
+    #[cfg(windows)]
+    assert!(profile_target.exists());
 
     // 2. Run skills install again (idempotent)
     let output2 = Command::new(&bin)

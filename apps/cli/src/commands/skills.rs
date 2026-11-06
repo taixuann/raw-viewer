@@ -145,18 +145,17 @@ pub fn manage_skills(action: &str, dry_run: bool) -> CliResult {
             #[cfg(windows)]
             let link_res = std::os::windows::fs::symlink_dir(&source, &target).or_else(|_| {
                 // Fallback to directory junction via cmd mklink /J
-                let s_str = source.display().to_string();
-                let t_str = target.display().to_string();
+                let s_str = source.display().to_string().replace('/', "\\");
+                let t_str = target.display().to_string().replace('/', "\\");
                 std::process::Command::new("cmd")
                     .args(["/C", "mklink", "/J", &t_str, &s_str])
                     .output()
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    .map_err(|e| std::io::Error::other(e.to_string()))
                     .and_then(|out| {
                         if out.status.success() {
                             Ok(())
                         } else {
-                            Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
+                            Err(std::io::Error::other(
                                 String::from_utf8_lossy(&out.stderr).to_string(),
                             ))
                         }
