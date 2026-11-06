@@ -7,3 +7,4 @@ publish = false
 description = "Placeholder for a future UniFFI bridge to raw-viewer-core."
 
 [dependencies]
+raw-viewer-core = { path = "../core" }

@@ -8,6 +8,7 @@
 //! [`yaml`] is the profile YAML subset parser shared with the Swift app.
 
 pub mod config;
+pub mod explorer;
 pub mod grammar;
 pub mod measurement;
 pub mod paths;

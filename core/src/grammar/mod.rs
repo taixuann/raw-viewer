@@ -2,6 +2,7 @@
 
 use crate::profile::sha256_hex;
 use crate::yaml::parse;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod compile;
@@ -21,7 +22,7 @@ pub const GRAMMAR_READ_ORDER: [&str; 3] = [
     ".rawviewer/view/grammar.yaml",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GrammarFieldType {
     String,
     Number,
@@ -39,7 +40,7 @@ impl GrammarFieldType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrammarField {
     pub name: String,
     pub role: Option<String>,
@@ -48,7 +49,7 @@ pub struct GrammarField {
     pub is_optional: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilenameGrammar {
     pub id: String,
     pub name: String,
@@ -56,7 +57,7 @@ pub struct FilenameGrammar {
     pub fields: Vec<GrammarField>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilenameGrammarCatalog {
     pub grammars: Vec<FilenameGrammar>,
 }

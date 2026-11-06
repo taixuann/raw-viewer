@@ -1,2 +1,4 @@
-//! Placeholder for the future UniFFI bridge to `raw-viewer-core`.
-//! This crate generates no bindings yet.
+//! Bridge facade to `raw-viewer-core`.
+//! Exposes the unified explorer facade for future UniFFI foreign bindings.
+
+pub use raw_viewer_core::explorer::*;

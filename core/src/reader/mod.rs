@@ -49,3 +49,4 @@ pub use generic_table::{
     inspect, load_measurement_default, GenericTableInspection, GenericTablePreview,
 };
 pub use instrument::{load_measurement, parse_filename};
+pub(crate) use line_puller::decode_with_format;
