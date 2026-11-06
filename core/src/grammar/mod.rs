@@ -11,6 +11,9 @@ pub use compile::compile;
 /// Primary grammar path (`.raw-viewer/grammar.yaml`).
 pub const RELATIVE_PATH: &str = ".raw-viewer/grammar.yaml";
 
+/// Bundled default config file containing the standard scientific grammar.
+pub const DEFAULT_CONFIG_YAML: &str = include_str!("../../../assets/default-config.yaml");
+
 /// Grammar read order: new layout first, then legacy paths (read-only).
 pub const GRAMMAR_READ_ORDER: [&str; 3] = [
     ".raw-viewer/grammar.yaml",
@@ -96,40 +99,168 @@ pub fn load_file(path: &std::path::Path) -> Result<FilenameGrammarCatalog, Strin
     parse_catalog_text(&text)
 }
 
+pub fn default_grammar() -> FilenameGrammar {
+    let root = parse(DEFAULT_CONFIG_YAML, false).expect("bundled default-config.yaml is valid YAML");
+    let grammar_node = root
+        .value_for_key("grammar")
+        .expect("bundled default-config.yaml defines grammar");
+    parse_single_grammar_node(grammar_node).expect("bundled default-config.yaml grammar is valid")
+}
+
+pub fn default_grammar_catalog() -> FilenameGrammarCatalog {
+    FilenameGrammarCatalog {
+        grammars: vec![default_grammar()],
+    }
+}
+
 pub fn grammar_context(project_root: &std::path::Path) -> GrammarContext {
-    let Some((path, relative)) = resolve_grammar_path(project_root) else {
+    // 1. Check if <project>/.raw-viewer/config.yaml (or fallback) defines a grammar
+    if let Ok(config) = crate::config::load_project_config_with_fallback(project_root) {
+        if let Some(grammar) = config.grammar {
+            let config_path = crate::config::project_config_file(project_root);
+            let digest = std::fs::read(&config_path)
+                .ok()
+                .map(|b| sha256_hex(&b))
+                .unwrap_or_else(|| sha256_hex(grammar.template.as_bytes()));
+            return GrammarContext {
+                catalog: Some(FilenameGrammarCatalog {
+                    grammars: vec![grammar],
+                }),
+                sha256: Some(digest),
+                error: None,
+            };
+        }
+    }
+
+    // 2. Check if a dedicated grammar catalog file exists
+    if let Some((path, relative)) = resolve_grammar_path(project_root) {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => {
+                return GrammarContext {
+                    catalog: None,
+                    sha256: None,
+                    error: Some(format!("grammar catalog {relative} could not be read")),
+                };
+            }
+        };
+        let digest = sha256_hex(&bytes);
+        return match parse_catalog_text(std::str::from_utf8(&bytes).unwrap_or("")) {
+            Ok(catalog) => GrammarContext {
+                catalog: Some(catalog),
+                sha256: Some(digest),
+                error: None,
+            },
+            Err(err) => GrammarContext {
+                catalog: None,
+                sha256: Some(digest),
+                error: Some(err),
+            },
+        };
+    }
+
+    // 3. Fallback to bundled default grammar catalog
+    // If the project has local profiles (.raw-viewer/profiles or data/instruments)
+    // without an explicit grammar file or config.grammar, do not inject default grammar
+    // so existing local profiles with filename_contains_all run untouched.
+    let has_local_profiles = project_root.join(".raw-viewer/profiles").is_dir()
+        || project_root.join("data/instruments").is_dir();
+    if has_local_profiles {
         return GrammarContext {
             catalog: None,
             sha256: None,
-            error: Some(format!(
-                "grammar catalog not found (searched {})",
-                GRAMMAR_READ_ORDER.join(", ")
-            )),
+            error: Some("workspace with local profiles and no grammar file".into()),
         };
-    };
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(_) => {
-            return GrammarContext {
-                catalog: None,
-                sha256: None,
-                error: Some(format!("grammar catalog {relative} could not be read")),
-            };
-        }
-    };
-    let digest = sha256_hex(&bytes);
-    match parse_catalog_text(std::str::from_utf8(&bytes).unwrap_or("")) {
-        Ok(catalog) => GrammarContext {
-            catalog: Some(catalog),
-            sha256: Some(digest),
-            error: None,
-        },
-        Err(err) => GrammarContext {
-            catalog: None,
-            sha256: Some(digest),
-            error: Some(err),
-        },
     }
+
+    let default_cat = default_grammar_catalog();
+    let digest = sha256_hex(DEFAULT_CONFIG_YAML.as_bytes());
+    GrammarContext {
+        catalog: Some(default_cat),
+        sha256: Some(digest),
+        error: None,
+    }
+}
+
+pub fn parse_single_grammar_node(node: &crate::yaml::YamlNode) -> Result<FilenameGrammar, String> {
+    let entries = node
+        .map_entries()
+        .ok_or_else(|| "grammar must be a YAML mapping".to_string())?;
+    let mut id: Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut template: Option<String> = None;
+    let mut fields: Vec<GrammarField> = Vec::new();
+
+    for (k, v) in entries {
+        match k.as_str() {
+            "id" => {
+                id = v.scalar_value().map(str::to_string);
+            }
+            "name" => {
+                name = v.scalar_value().map(str::to_string);
+            }
+            "template" => {
+                template = v.scalar_value().map(str::to_string);
+            }
+            "fields" => {
+                let items = v
+                    .list_items()
+                    .ok_or_else(|| "fields must be a YAML list".to_string())?;
+                for f_node in items {
+                    let f_entries = f_node
+                        .map_entries()
+                        .ok_or_else(|| "each field must be a YAML mapping".to_string())?;
+                    let mut f_name: Option<String> = None;
+                    let mut f_role: Option<String> = None;
+                    let mut f_type: Option<GrammarFieldType> = None;
+                    let mut f_format = String::new();
+                    let mut f_optional = false;
+                    for (fk, fv) in f_entries {
+                        match fk.as_str() {
+                            "name" => f_name = fv.scalar_value().map(str::to_string),
+                            "role" => f_role = fv.scalar_value().map(str::to_string),
+                            "type" => {
+                                let raw = fv
+                                    .scalar_value()
+                                    .ok_or_else(|| "field type is required".to_string())?;
+                                f_type = Some(
+                                    GrammarFieldType::parse(raw)
+                                        .ok_or_else(|| format!("unknown field type '{raw}'"))?,
+                                );
+                            }
+                            "format" => f_format = fv.scalar_value().unwrap_or("").to_string(),
+                            "optional" => {
+                                f_optional = fv
+                                    .scalar_value()
+                                    .map(|s| s.eq_ignore_ascii_case("true"))
+                                    .unwrap_or(false);
+                            }
+                            other => return Err(format!("unknown key '{other}' in grammar field")),
+                        }
+                    }
+                    let f_name = f_name.ok_or_else(|| "field name is required".to_string())?;
+                    let f_type = f_type.ok_or_else(|| "field type is required".to_string())?;
+                    fields.push(GrammarField {
+                        name: f_name,
+                        role: f_role,
+                        field_type: f_type,
+                        format_hint: f_format,
+                        is_optional: f_optional,
+                    });
+                }
+            }
+            other => return Err(format!("unknown key '{other}' in grammar")),
+        }
+    }
+    let id = id.ok_or_else(|| "grammar id is required".to_string())?;
+    let name = name.ok_or_else(|| "grammar name is required".to_string())?;
+    let template = template.ok_or_else(|| "grammar template is required".to_string())?;
+    Ok(FilenameGrammar {
+        id,
+        name,
+        template,
+        fields,
+    })
 }
 
 fn parse_catalog_text(text: &str) -> Result<FilenameGrammarCatalog, String> {

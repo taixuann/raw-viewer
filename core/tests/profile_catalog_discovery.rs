@@ -59,16 +59,19 @@ fn raw_viewer_profiles_directory_loads_and_takes_precedence() {
     write_keysight_v4(&tmp, ".raw-viewer/profiles/priority.yaml");
     write_keysight_v4(&tmp, "data/instruments/legacy.yaml");
     let catalog = load_catalog(&tmp);
-    assert_eq!(catalog.profiles.len(), 1, "{}", catalog.issues.join("; "));
+    let project_profile = catalog
+        .profiles
+        .iter()
+        .find(|p| p.profile_id == "usth/keysight-b1500a")
+        .expect("keysight profile");
     assert!(
-        catalog.profiles[0]
+        project_profile
             .relative_path
             .replace('\\', "/")
             .starts_with(".raw-viewer/profiles/"),
         "expected .raw-viewer/profiles precedence, got {}",
-        catalog.profiles[0].relative_path
+        project_profile.relative_path
     );
-    assert_eq!(catalog.profiles[0].profile_id, "usth/keysight-b1500a");
 }
 
 #[test]
@@ -76,8 +79,12 @@ fn legacy_profile_directories_still_load_when_raw_viewer_profiles_absent() {
     let tmp = temp_project();
     write_keysight_v4(&tmp, "data/.rawview/instrument/legacy.yaml");
     let catalog = load_catalog(&tmp);
-    assert_eq!(catalog.profiles.len(), 1);
-    assert!(catalog.profiles[0]
+    let project_profile = catalog
+        .profiles
+        .iter()
+        .find(|p| p.profile_id == "usth/keysight-b1500a")
+        .expect("keysight profile");
+    assert!(project_profile
         .relative_path
         .replace('\\', "/")
         .starts_with("data/.rawview/instrument/"));

@@ -12,6 +12,96 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub const BUILTIN_PROFILES: &[(&str, &str)] = &[
+    (
+        "assets/profiles/usth/keithley-2400.yaml",
+        include_str!("../../../assets/profiles/usth/keithley-2400.yaml"),
+    ),
+    (
+        "assets/profiles/usth/autolab-usth.yaml",
+        include_str!("../../../assets/profiles/usth/autolab-usth.yaml"),
+    ),
+    (
+        "assets/profiles/usth/horiba-labram.yaml",
+        include_str!("../../../assets/profiles/usth/horiba-labram.yaml"),
+    ),
+    (
+        "assets/profiles/usth/iop-hanoi.yaml",
+        include_str!("../../../assets/profiles/usth/iop-hanoi.yaml"),
+    ),
+];
+
+pub fn merge_builtin_profiles(
+    catalog: &mut ProfileCatalog,
+    project: &ProjectContext,
+) {
+    if catalog
+        .issues
+        .iter()
+        .any(|i| i.to_lowercase().contains("no profiles were loaded"))
+    {
+        return;
+    }
+
+    let companion = project.root.join("data/instruments/rawview");
+    if fs::symlink_metadata(&companion).is_ok() {
+        return;
+    }
+
+    let has_raw_viewer_dir = project.root.join(".raw-viewer").is_dir();
+    if !has_raw_viewer_dir {
+        let has_legacy_profiles = project.root.join("data/instruments").is_dir()
+            || project.root.join("data/.rawview/instrument").is_dir()
+            || project.root.join(".rawviewer/instrument").is_dir();
+        if has_legacy_profiles {
+            return;
+        }
+    }
+
+    let config = &project.config;
+    for (rel_path, text) in BUILTIN_PROFILES {
+        let digest = sha256_hex(text.as_bytes());
+        let outcome = schema::load_document(text, rel_path, &digest);
+        if let Some(builtin_profile) = outcome.profile {
+            let id = &builtin_profile.profile_id;
+            // If in disabled, skip
+            if config.profiles.disabled.iter().any(|d| d == id) {
+                continue;
+            }
+            // If enabled is specified, must be in enabled
+            if let Some(ref enabled) = config.profiles.enabled {
+                if !enabled.iter().any(|e| e == id) {
+                    continue;
+                }
+            }
+            // If overridden by project profile with same ID:
+            if let Some(project_profile) = catalog.profiles.iter().find(|p| &p.profile_id == id) {
+                let proj_rev = project_profile
+                    .revision
+                    .as_deref()
+                    .and_then(|r| r.parse::<u64>().ok())
+                    .unwrap_or(0);
+                let built_rev = builtin_profile
+                    .revision
+                    .as_deref()
+                    .and_then(|r| r.parse::<u64>().ok())
+                    .unwrap_or(0);
+                if proj_rev < built_rev {
+                    catalog.issues.push(format!(
+                        "warning: project profile '{id}' (revision {}) is older than built-in revision {}",
+                        project_profile.revision.as_deref().unwrap_or("none"),
+                        builtin_profile.revision.as_deref().unwrap_or("none")
+                    ));
+                }
+                continue;
+            }
+            catalog.profiles.push(builtin_profile);
+        } else if let Some(v3) = outcome.v3_document {
+            catalog.v3_documents.push(v3);
+        }
+    }
+}
+
 pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
     let project = match ProjectContext::open(project_root) {
         Ok(p) => p,
@@ -25,21 +115,27 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
         }
     };
 
+    let mut catalog = load_raw_catalog(&project);
+    merge_builtin_profiles(&mut catalog, &project);
+    catalog
+}
+
+fn load_raw_catalog(project: &ProjectContext) -> ProfileCatalog {
     // Precedence: `.raw-viewer/profiles/` → `.rawviewer/instrument/` →
     // `data/.rawview/instrument/` → `data/instruments/` (companion `rawview/` when present).
     let raw_viewer_profiles = project.root.join(".raw-viewer/profiles");
     if is_directory_with_yamls(&raw_viewer_profiles, &project.root) {
-        return load_profiles(&raw_viewer_profiles, ".raw-viewer/profiles", &project);
+        return load_profiles(&raw_viewer_profiles, ".raw-viewer/profiles", project);
     }
 
     let rawviewer = project.root.join(".rawviewer/instrument");
     if is_directory_with_yamls(&rawviewer, &project.root) {
-        return load_profiles(&rawviewer, ".rawviewer/instrument", &project);
+        return load_profiles(&rawviewer, ".rawviewer/instrument", project);
     }
 
     let legacy = project.root.join("data/.rawview/instrument");
     if is_directory_with_yamls(&legacy, &project.root) {
-        return load_profiles(&legacy, "data/.rawview/instrument", &project);
+        return load_profiles(&legacy, "data/.rawview/instrument", project);
     }
 
     let instruments = project.root.join("data/instruments");
@@ -96,10 +192,10 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
                     v3_documents: vec![],
                 };
             }
-            load_profiles(&companion, "data/instruments/rawview", &project)
+            load_profiles(&companion, "data/instruments/rawview", project)
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            load_profiles(&instruments, "data/instruments", &project)
+            load_profiles(&instruments, "data/instruments", project)
         }
         Err(err) => ProfileCatalog {
             profiles: vec![],
