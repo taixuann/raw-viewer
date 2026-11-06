@@ -521,12 +521,19 @@ fn usth_lab_discovery_skips_intake_log_and_quarantine() {
 }
 
 #[test]
-#[ignore = "pending #18 reader disposition for header-only LabVIEW exports"]
 fn usth_lab_header_only_keithley_reports_no_data_rows() {
     let root = workspace_root();
     let relative = Path::new(
         "data/raw/2026-10-07/SYNTHETIC_keithley-2400.dual-sweep_header-only_no-data-rows.txt",
     );
-    let _ = load_measurement(&root, relative).expect_err("header-only fixture");
-    panic!("assert explicit no-data-rows disposition once #18 profiles ship");
+    let err = load_measurement(&root, relative).expect_err("header-only fixture");
+    match err {
+        ReaderError::InvalidSource(msg) => {
+            assert!(
+                msg.contains("no data rows were found after the header"),
+                "expected header-only no data rows error message, got {msg}"
+            );
+        }
+        other => panic!("expected InvalidSource with no data rows message, got {other:?}"),
+    }
 }
