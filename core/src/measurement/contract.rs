@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,13 +18,13 @@ impl std::fmt::Display for ContractError {
 
 impl std::error::Error for ContractError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SourceIdentity {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InstrumentIdentity {
     pub id: String,
     pub name: String,
@@ -32,7 +32,7 @@ pub struct InstrumentIdentity {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct MeasurementView {
     pub kind: String,
     pub x: Option<String>,
@@ -41,7 +41,7 @@ pub struct MeasurementView {
     pub preserve_order: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GapReason {
     Blank,
@@ -74,7 +74,7 @@ impl GapReason {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct MeasurementChannel {
     pub name: String,
     pub label: String,
@@ -94,7 +94,8 @@ impl MeasurementChannel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(untagged)]
 pub enum JSONValue {
     String(String),
     Number(f64),
@@ -102,7 +103,7 @@ pub enum JSONValue {
     Null,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct MetadataField {
     pub key: String,
     pub label: String,
@@ -111,13 +112,13 @@ pub struct MetadataField {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct MetadataSection {
     pub title: String,
     pub fields: Vec<MetadataField>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct NormalizedMeasurement {
     pub source: SourceIdentity,
     pub instrument: InstrumentIdentity,

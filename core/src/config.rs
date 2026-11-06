@@ -14,15 +14,17 @@ use crate::paths::{
     PROJECT_CONFIG_FILE, VIEWER_METADATA_NAMESPACES,
 };
 
+use serde::{Deserialize, Serialize};
+
 /// Settings for enabled/disabled built-in profiles.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ProfilesConfig {
     pub enabled: Option<Vec<String>>,
     pub disabled: Vec<String>,
 }
 
 /// Settings from a project's `.raw-viewer` directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectConfig {
     /// Present when loaded from a file (`1` only). Absent when defaults apply.
     pub schema_version: Option<u32>,
