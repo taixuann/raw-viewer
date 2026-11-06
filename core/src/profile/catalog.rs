@@ -41,7 +41,7 @@ pub fn merge_builtin_profiles(catalog: &mut ProfileCatalog, project: &ProjectCon
     }
 
     let companion = project.root.join("data/instruments/rawview");
-    if is_directory_with_yamls(&companion, &project.root) {
+    if fs::symlink_metadata(&companion).is_ok() {
         return;
     }
 

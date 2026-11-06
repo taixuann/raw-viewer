@@ -312,7 +312,8 @@ struct ProfileCatalog: Sendable {
 
         let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
         let companionEntry = instrumentsRoot.appendingPathComponent("rawview", isDirectory: true)
-        if isDirectoryWithYAMLs(companionEntry, within: project.root) {
+        var companionStat = stat()
+        if lstat(companionEntry.path, &companionStat) == 0 {
             return catalog
         }
 
