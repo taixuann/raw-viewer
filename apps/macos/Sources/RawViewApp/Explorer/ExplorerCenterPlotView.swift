@@ -45,28 +45,31 @@ struct DraggableLegendView: View {
 
     @ViewBuilder
     private func legendGlyph(for item: (color: Color, label: String, markType: PlotMarkType)) -> some View {
-        let strokeH = max(1.0, min(3.0, lineWidth))
-        let dotD = max(4.0, min(8.0, markerSize))
-        switch item.markType {
-        case .line:
-            Rectangle()
-                .fill(item.color)
-                .frame(width: 18, height: strokeH)
-        case .dots:
-            Circle()
-                .fill(item.color)
-                .frame(width: dotD, height: dotD)
-        case .lineAndDots:
-            ZStack {
+        let strokeH = max(1.2, min(3.0, lineWidth))
+        let dotD = max(5.0, min(8.0, markerSize))
+        let lineW: CGFloat = 20.0
+        Group {
+            switch item.markType {
+            case .line:
                 Rectangle()
                     .fill(item.color)
-                    .frame(width: 18, height: strokeH)
+                    .frame(width: lineW, height: strokeH)
+            case .dots:
                 Circle()
                     .fill(item.color)
                     .frame(width: dotD, height: dotD)
+            case .lineAndDots:
+                ZStack {
+                    Rectangle()
+                        .fill(item.color)
+                        .frame(width: lineW, height: strokeH)
+                    Circle()
+                        .fill(item.color)
+                        .frame(width: dotD, height: dotD)
+                }
             }
-            .frame(width: 18, height: dotD)
         }
+        .frame(width: lineW, height: max(strokeH, dotD))
     }
 }
 
@@ -507,7 +510,7 @@ struct OverlayPlot: View {
                     }
                     DraggableLegendView(
                         items: legendItems,
-                        fontSize: max(8.5, CGFloat(preset.legendPt) * 1.35 * headerFontScale),
+                        fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
                         lineWidth: CGFloat(lineWidth),
                         markerSize: CGFloat(markerSize),
                         preset: preset,
