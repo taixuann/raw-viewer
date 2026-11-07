@@ -7,6 +7,7 @@ struct DraggableLegendView: View {
     var fontSize: CGFloat = 10.0
     var lineWidth: CGFloat = 1.4
     var markerSize: CGFloat = 4.5
+    var legendScale: Double = 1.0
     var preset: ScientificPreset = .natureSingle
     @Binding var offset: CGSize
     @State private var dragStart: CGSize = .zero
@@ -45,9 +46,10 @@ struct DraggableLegendView: View {
 
     @ViewBuilder
     private func legendGlyph(for item: (color: Color, label: String, markType: PlotMarkType)) -> some View {
-        let strokeH = max(1.2, min(3.0, lineWidth))
-        let dotD = max(5.0, min(8.0, markerSize))
-        let lineW: CGFloat = 20.0
+        let scale = CGFloat(max(0.6, min(2.5, legendScale)))
+        let strokeH = max(1.2, min(4.0, lineWidth * scale))
+        let dotD = max(4.0, min(12.0, markerSize * scale))
+        let lineW: CGFloat = 20.0 * scale
         Group {
             switch item.markType {
             case .line:
@@ -94,6 +96,7 @@ struct NativePlot: View {
     var resetTrigger: Int = 0
     var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
+    var legendScale: Double = 1.0
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
     @State private var zoom = 1.0
@@ -162,9 +165,10 @@ struct NativePlot: View {
                         }
                         DraggableLegendView(
                             items: legendItems,
-                            fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
+                            fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale, legendScale: legendScale),
                             lineWidth: CGFloat(lineWidth),
                             markerSize: CGFloat(markerSize),
+                            legendScale: legendScale,
                             preset: preset,
                             offset: $legendOffset
                         )
@@ -386,6 +390,7 @@ struct OverlayPlot: View {
     var comparisonTitle: String = ""
     var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
+    var legendScale: Double = 1.0
     var customSeriesLabels: [String: String] = [:]
     var resetTrigger: Int = 0
     @Binding var legendOffset: CGSize
@@ -473,6 +478,7 @@ struct OverlayPlot: View {
                                    colorBySweepProgress: colorBySweepProgress,
                                    resetTrigger: resetTrigger,
                                    showLegend: showLegend,
+                                   legendScale: legendScale,
                                    customSeriesLabels: customSeriesLabels,
                                    legendOffset: $legendOffset)
                     }
@@ -510,9 +516,10 @@ struct OverlayPlot: View {
                     }
                     DraggableLegendView(
                         items: legendItems,
-                        fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
+                        fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale, legendScale: legendScale),
                         lineWidth: CGFloat(lineWidth),
                         markerSize: CGFloat(markerSize),
+                        legendScale: legendScale,
                         preset: preset,
                         offset: $legendOffset
                     )
@@ -852,9 +859,11 @@ struct ProjectGallery: View {
     var availablePresets: [ScientificPreset] = ScientificPreset.allCases
     @Binding var selectedPreset: ScientificPreset
     @Binding var showLegend: Bool
+    @Binding var legendScale: Double
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
     @State private var plotResetTrigger: Int = 0
+    @ObservedObject private var updateChecker = AppUpdateChecker.shared
 
     var customProjectPresets: [ScientificPreset] {
         availablePresets.filter { p in
@@ -874,173 +883,7 @@ struct ProjectGallery: View {
 
                 Divider().frame(height: 16)
 
-                Menu {
-                    if !customProjectPresets.isEmpty {
-                        Section("Project Presets (.rawviewer/preset)") {
-                            ForEach(customProjectPresets) { p in
-                                Button {
-                                    selectedPreset = p
-                                } label: {
-                                    if selectedPreset.id == p.id {
-                                        Label(p.displayName, systemImage: "checkmark")
-                                    } else {
-                                        Text(p.displayName)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Section("Standard Journals (Closed 4-Box)") {
-                        ForEach(ScientificPreset.standardPresets) { p in
-                            Button {
-                                selectedPreset = p
-                            } label: {
-                                if selectedPreset.id == p.id {
-                                    Label(p.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(p.displayName)
-                                }
-                            }
-                        }
-                    }
-
-                    Section("Open L-Frames (2-Axis)") {
-                        ForEach(ScientificPreset.openFramePresets) { p in
-                            Button {
-                                selectedPreset = p
-                            } label: {
-                                if selectedPreset.id == p.id {
-                                    Label(p.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(p.displayName)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Label(selectedPreset.displayName, systemImage: "doc.richtext")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .menuStyle(.borderlessButton)
-                .help("Select scientific publication preset")
-
-                Divider().frame(height: 16)
-
-                Menu {
-                    Button {
-                        onSaveSnapshot?()
-                    } label: {
-                        Label("Save Current View as Memory Snapshot", systemImage: "camera.badge.ellipsis")
-                    }
-                    .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
-
-                    Button {
-                        onSaveSnapshotPackage?()
-                    } label: {
-                        Label("Save Snapshot Package (data/snapshot/…)", systemImage: "shippingbox")
-                    }
-                    .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
-
-                    if !snapshots.isEmpty {
-                        Divider()
-                        ForEach(snapshots) { snap in
-                            let isActive = activeSnapshotID == snap.id
-                            Button {
-                                if isActive {
-                                    onToggleSnapshot?(snap)
-                                } else {
-                                    onSelectSnapshot?(snap)
-                                }
-                            } label: {
-                                if isActive {
-                                    Label("\(snap.name) (Active — click to toggle off)", systemImage: "checkmark.circle.fill")
-                                } else {
-                                    Label(snap.name, systemImage: "photo")
-                                }
-                            }
-                        }
-
-                        Divider()
-                        Menu("Delete Snapshot") {
-                            ForEach(snapshots) { snap in
-                                Button(role: .destructive) {
-                                    onDeleteSnapshot?(snap)
-                                } label: {
-                                    Text(snap.name)
-                                }
-                            }
-                        }
-                    }
-
-                    if !projectSnapshotPackages.isEmpty {
-                        Divider()
-                        Section("Project Packages (data/snapshot/)") {
-                            ForEach(projectSnapshotPackages) { pkg in
-                                Button {
-                                    onSelectSnapshotPackage?(pkg)
-                                } label: {
-                                    Label(pkg.name, systemImage: "shippingbox.fill")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    let activeSnap = snapshots.first(where: { $0.id == activeSnapshotID })
-                    Label(
-                        activeSnap != nil ? activeSnap!.name : (snapshots.isEmpty ? "Snapshot" : "Snapshots (\(snapshots.count))"),
-                        systemImage: activeSnapshotID != nil ? "camera.fill" : "camera"
-                    )
-                    .font(.system(size: 11, weight: activeSnapshotID != nil ? .semibold : .medium))
-                    .foregroundStyle(activeSnapshotID != nil ? Color.accentColor : Color.primary)
-                }
-                .menuStyle(.borderedButton)
-                .controlSize(.small)
-                .help("Manage plot snapshots and comparisons")
-
-                Menu {
-                    let isOverlay = selectedIDs.count >= 2
-                    Section(isOverlay ? "OVERLAY FIGURE (\(selectedIDs.count) SOURCES)" : "SINGLE FIGURE") {
-                        Button {
-                            onExportFigure?()
-                        } label: {
-                            HStack {
-                                Label(isOverlay ? "Export Overlay Figure (PNG / PDF)…" : "Export Single Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
-                                Spacer()
-                                ShortcutBadge("exportFigure")
-                            }
-                        }
-                    }
-
-                    Section("DATA TABLE") {
-                        Button {
-                            onExportData?()
-                        } label: {
-                            HStack {
-                                Label("Export Data Table (CSV)…", systemImage: "tablecells")
-                                Spacer()
-                                ShortcutBadge("exportData")
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Section("SNAPSHOT PACKAGE") {
-                        Button {
-                            onSaveSnapshotPackage?()
-                        } label: {
-                            Label("Save Snapshot Package (data/snapshot/…)", systemImage: "shippingbox")
-                        }
-                        .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
-                    }
-                } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .menuStyle(.borderedButton)
-                .controlSize(.small)
-                .help("Export figure, data table, or snapshot package")
+                presetMenu
 
                 if isLoading {
                     HStack(spacing: 6) {
@@ -1052,12 +895,49 @@ struct ProjectGallery: View {
                         }
                     }
                 }
-                Spacer()
+
                 if selectedIDs.count >= 2 {
                     Text("\(selectedIDs.count) selected\(overlayLabel)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         .accessibilityLabel("Selection comparison status")
                 }
+
+                Spacer()
+
+                // Actions Group (Right Side)
+                if updateChecker.updateAvailable {
+                    Button {
+                        Task {
+                            await updateChecker.applyUpdateAndRestart()
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                            Text("Update & Restart (\(updateChecker.latestVersion))")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Download \(updateChecker.latestVersion) and restart RawView automatically")
+                }
+
+                snapshotMenu
+
+                exportMenu
+
+                Button {
+                    plotResetTrigger += 1
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help("Reset plot zoom and pan")
+
                 Button {
                     showInspector.toggle()
                 } label: {
@@ -1104,6 +984,180 @@ struct ProjectGallery: View {
         let names = group.excluded.map { URL(fileURLWithPath: $0.path).lastPathComponent }.joined(separator: ", ")
         let prefix = (group.manifestPath.isEmpty || group.manifestPath == "Comparison") ? "Compatible cohort" : "Shared \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
         return "\(prefix): plotting the focused cohort (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)); excluded \(names). See the inspector for reasons. Selection unchanged."
+    }
+
+    // MARK: - Top Bar Menus
+
+    private var presetMenu: some View {
+        Menu {
+            if !customProjectPresets.isEmpty {
+                Section("Project Presets (.rawviewer/preset)") {
+                    ForEach(customProjectPresets) { p in
+                        Button {
+                            selectedPreset = p
+                        } label: {
+                            if selectedPreset.id == p.id {
+                                Label(p.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(p.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section("Standard Journals (Closed 4-Box)") {
+                ForEach(ScientificPreset.standardPresets) { p in
+                    Button {
+                        selectedPreset = p
+                    } label: {
+                        if selectedPreset.id == p.id {
+                            Label(p.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(p.displayName)
+                        }
+                    }
+                }
+            }
+
+            Section("Open L-Frames (2-Axis)") {
+                ForEach(ScientificPreset.openFramePresets) { p in
+                    Button {
+                        selectedPreset = p
+                    } label: {
+                        if selectedPreset.id == p.id {
+                            Label(p.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(p.displayName)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(selectedPreset.displayName, systemImage: "doc.richtext")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Select scientific publication preset")
+    }
+
+    private var snapshotMenu: some View {
+        Menu {
+            Button {
+                onSaveSnapshot?()
+            } label: {
+                Label("Save Current View as Memory Snapshot", systemImage: "camera.badge.ellipsis")
+            }
+            .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+
+            Button {
+                onSaveSnapshotPackage?()
+            } label: {
+                Label("Save Snapshot Package (data/snapshot/…)", systemImage: "shippingbox")
+            }
+            .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+
+            if !snapshots.isEmpty {
+                Divider()
+                ForEach(snapshots) { snap in
+                    let isActive = activeSnapshotID == snap.id
+                    Button {
+                        if isActive {
+                            onToggleSnapshot?(snap)
+                        } else {
+                            onSelectSnapshot?(snap)
+                        }
+                    } label: {
+                        if isActive {
+                            Label("\(snap.name) (Active — click to toggle off)", systemImage: "checkmark.circle.fill")
+                        } else {
+                            Label(snap.name, systemImage: "photo")
+                        }
+                    }
+                }
+
+                Divider()
+                Menu("Delete Snapshot") {
+                    ForEach(snapshots) { snap in
+                        Button(role: .destructive) {
+                            onDeleteSnapshot?(snap)
+                        } label: {
+                            Text(snap.name)
+                        }
+                    }
+                }
+            }
+
+            if !projectSnapshotPackages.isEmpty {
+                Divider()
+                Section("Project Packages (data/snapshot/)") {
+                    ForEach(projectSnapshotPackages) { pkg in
+                        Button {
+                            onSelectSnapshotPackage?(pkg)
+                        } label: {
+                            Label(pkg.name, systemImage: "shippingbox.fill")
+                        }
+                    }
+                }
+            }
+        } label: {
+            let activeSnap = snapshots.first(where: { $0.id == activeSnapshotID })
+            Label(
+                activeSnap != nil ? activeSnap!.name : (snapshots.isEmpty ? "Snapshot" : "Snapshots (\(snapshots.count))"),
+                systemImage: activeSnapshotID != nil ? "camera.fill" : "camera"
+            )
+            .font(.system(size: 11, weight: activeSnapshotID != nil ? .semibold : .medium))
+            .foregroundStyle(activeSnapshotID != nil ? Color.accentColor : Color.primary)
+        }
+        .menuStyle(.borderedButton)
+        .controlSize(.small)
+        .help("Manage plot snapshots and comparisons")
+    }
+
+    private var exportMenu: some View {
+        Menu {
+            let isOverlay = selectedIDs.count >= 2
+            Section(isOverlay ? "OVERLAY FIGURE (\(selectedIDs.count) SOURCES)" : "SINGLE FIGURE") {
+                Button {
+                    onExportFigure?()
+                } label: {
+                    HStack {
+                        Label(isOverlay ? "Export Overlay Figure (PNG / PDF)…" : "Export Single Figure (PNG / PDF)…", systemImage: "arrow.down.doc")
+                        Spacer()
+                        ShortcutBadge("exportFigure")
+                    }
+                }
+            }
+
+            Section("DATA TABLE") {
+                Button {
+                    onExportData?()
+                } label: {
+                    HStack {
+                        Label("Export Data Table (CSV)…", systemImage: "tablecells")
+                        Spacer()
+                        ShortcutBadge("exportData")
+                    }
+                }
+            }
+
+            Divider()
+
+            Section("SNAPSHOT PACKAGE") {
+                Button {
+                    onSaveSnapshotPackage?()
+                } label: {
+                    Label("Save Snapshot Package (data/snapshot/…)", systemImage: "shippingbox")
+                }
+                .disabled(selectedIDs.isEmpty && focusedSourceID == nil)
+            }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .menuStyle(.borderedButton)
+        .controlSize(.small)
+        .help("Export figure, data table, or snapshot package")
     }
 
     @ViewBuilder
@@ -1170,6 +1224,7 @@ struct ProjectGallery: View {
                                 comparisonTitle: comparisonTitle,
                                 preset: selectedPreset,
                                 showLegend: showLegend,
+                                legendScale: legendScale,
                                 customSeriesLabels: customSeriesLabels,
                                 resetTrigger: plotResetTrigger,
                                 legendOffset: $legendOffset)
@@ -1219,6 +1274,7 @@ struct ProjectGallery: View {
                                     comparisonTitle: comparisonTitle,
                                     preset: selectedPreset,
                                     showLegend: showLegend,
+                                    legendScale: legendScale,
                                     customSeriesLabels: customSeriesLabels,
                                     resetTrigger: plotResetTrigger,
                                     legendOffset: $legendOffset)
@@ -1259,6 +1315,7 @@ struct ProjectGallery: View {
                                resetTrigger: plotResetTrigger,
                                preset: selectedPreset,
                                showLegend: showLegend,
+                               legendScale: legendScale,
                                customSeriesLabels: customSeriesLabels,
                                legendOffset: $legendOffset)
                 }

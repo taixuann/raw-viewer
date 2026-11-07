@@ -57,4 +57,15 @@ struct ScientificPresetTests {
             #expect(preset.tickLabelPt > 0)
         }
     }
+
+    @Test func legendScaleMultipliesFontSizeAndClampsToMinimum() {
+        let preset = ScientificPreset.natureSingle
+        let baseSize = preset.legendFontSize(fontScale: 1.0, legendScale: 1.0)
+        let scaledSize = preset.legendFontSize(fontScale: 1.0, legendScale: 1.5)
+        #expect(scaledSize > baseSize)
+        #expect(abs(scaledSize - (baseSize * 1.5)) < 0.01)
+
+        let clampedSize = preset.legendFontSize(fontScale: 0.1, legendScale: 0.1)
+        #expect(clampedSize == 9.0)
+    }
 }

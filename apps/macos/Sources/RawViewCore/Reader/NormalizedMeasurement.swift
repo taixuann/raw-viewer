@@ -83,6 +83,12 @@ public struct MeasurementChannel: Decodable, Identifiable, Sendable {
     public var rowCount: Int { values.count }
     /// Number of gap cells in this channel.
     public var gapCount: Int { values.filter({ $0 == nil }).count }
+    /// Whether this channel represents numeric measurement data eligible for plotting
+    /// (excluding auxiliary metadata, sample indices, and text status columns).
+    public var isPlottable: Bool {
+        guard let q = quantity?.lowercased() else { return true }
+        return q != "metadata" && q != "index" && q != "text"
+    }
 
     /// Ordered-table cell text: the formatted number, or the gap marker for
     /// the recorded reason.
@@ -211,6 +217,11 @@ public struct NormalizedMeasurement: Sendable {
 
     public func channel(named name: String) -> MeasurementChannel? {
         channels.first { $0.name == name }
+    }
+
+    /// All numeric measurement channels eligible for plotting.
+    public var plottableChannels: [MeasurementChannel] {
+        channels.filter { $0.isPlottable }
     }
 
     public static func decode(_ data: Data) throws -> Self {

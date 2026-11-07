@@ -39,3 +39,32 @@ import Testing
         try NormalizedMeasurement.decode(Data(json.utf8))
     }
 }
+
+@Test func plottableChannelsExcludeMetadataIndexAndText() throws {
+    let json = """
+    {
+      "contract_version": 1,
+      "source": {"path": "data/raw/keithley.csv", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+      "instrument": {"id": "keithley-2400", "name": "Keithley 2400"},
+      "application_mode": "iv-sweep",
+      "view": {"kind": "xy", "x": "voltage", "y": ["current"], "preserve_order": true},
+      "channels": [
+        {"name": "voltage", "label": "Voltage", "unit": "V", "quantity": "voltage", "values": [0.0, 1.0]},
+        {"name": "current", "label": "Current", "unit": "A", "quantity": "current", "values": [1e-6, 2e-6]},
+        {"name": "timestamp", "label": "Timestamp", "unit": "s", "quantity": "metadata", "values": [0.1, 0.2]},
+        {"name": "point", "label": "Point", "unit": "", "quantity": "index", "values": [1.0, 2.0]},
+        {"name": "status", "label": "Status", "unit": "", "quantity": "text", "values": [0.0, 0.0]},
+        {"name": "raw_signal", "label": "Signal", "unit": "arb", "values": [10.0, 20.0]}
+      ],
+      "metadata_sections": [],
+      "warnings": [],
+      "support_status": "supported",
+      "provenance": {}
+    }
+    """
+    let measurement = try NormalizedMeasurement.decode(Data(json.utf8))
+    let plottable = measurement.plottableChannels
+    #expect(plottable.map(\.name) == ["voltage", "current", "raw_signal"])
+    #expect(plottable.count == 3)
+    #expect(measurement.channels.count == 6)
+}

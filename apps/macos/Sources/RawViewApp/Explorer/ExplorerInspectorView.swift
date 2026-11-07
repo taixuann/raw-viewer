@@ -18,7 +18,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     }
 }
 
-struct InspectorCard<Content: View>: View {
+struct InspectorSection<Content: View>: View {
     let title: String
     var badge: String? = nil
     @ViewBuilder let content: () -> Content
@@ -27,31 +27,26 @@ struct InspectorCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(.primary.opacity(0.85))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
                 if let badge {
                     Text(badge)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(Color.accentColor)
                         .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
+                        .padding(.vertical, 1)
                         .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                 }
                 Spacer()
             }
+            .padding(.bottom, 2)
 
             content()
+
+            Divider()
+                .padding(.top, 4)
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-        )
     }
 }
 
@@ -82,6 +77,7 @@ struct InspectorPane: View {
     let overlay: OverlayEligibility?
     let onRetry: () -> Void
     @Binding var showLegend: Bool
+    @Binding var legendScale: Double
     @Binding var customSeriesLabels: [String: String]
     @Binding var legendOffset: CGSize
     @Binding var comparisonTitle: String
@@ -207,7 +203,7 @@ struct InspectorPane: View {
     @ViewBuilder
     private var dataTabContent: some View {
         if !selectedIDs.isEmpty {
-            InspectorCard(title: "SERIES", badge: "\(selectedIDs.count)") {
+            InspectorSection(title: "SERIES", badge: "\(selectedIDs.count)") {
                 VStack(alignment: .leading, spacing: 8) {
                     if selectedIDs.count >= 2 || activeSnapshotID != nil {
                         VStack(alignment: .leading, spacing: 4) {
@@ -255,30 +251,33 @@ struct InspectorPane: View {
         }
 
         if measurement?.instrument.id == "generic-table" {
-            genericTableCard
+            genericTableSection
         }
 
-        axesCard
+        axesSection
+
+        progressionSection
     }
 
     @ViewBuilder
-    private var genericTableCard: some View {
+    private var genericTableSection: some View {
         if let measurement, measurement.instrument.id == "generic-table" {
             let channels = measurement.channels
             let xCurrent = channels.firstIndex(where: { $0.name == measurement.view.x }) ?? 0
             let yCurrent = channels.firstIndex(where: { $0.name == measurement.view.y?.first }) ?? min(1, max(0, channels.count - 1))
 
-            InspectorCard(title: "DATA MAPPING", badge: "Generic Table") {
-                VStack(alignment: .leading, spacing: 10) {
+            InspectorSection(title: "DATA MAPPING", badge: "Generic Table") {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Auto-detected Delimited Table")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
                     if channels.count >= 2 {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("X AXIS COLUMN")
-                                .font(.system(size: 9.5, weight: .bold))
+                        HStack {
+                            Text("X Column")
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                            Spacer()
                             Picker("X Column", selection: Binding(
                                 get: { xCurrent },
                                 set: { newX in onSelectGenericColumns?(newX, yCurrent) }
@@ -291,10 +290,11 @@ struct InspectorPane: View {
                             .pickerStyle(.menu)
                         }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Y AXIS COLUMN")
-                                .font(.system(size: 9.5, weight: .bold))
+                        HStack {
+                            Text("Y Column")
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                            Spacer()
                             Picker("Y Column", selection: Binding(
                                 get: { yCurrent },
                                 set: { newY in onSelectGenericColumns?(xCurrent, newY) }
@@ -312,14 +312,15 @@ struct InspectorPane: View {
         }
     }
 
-    private var axesCard: some View {
-        InspectorCard(title: "AXES & SCALES") {
-            VStack(alignment: .leading, spacing: 8) {
-                if effectiveEligibleX.count >= 2 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("X CHANNEL")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundStyle(.secondary)
+    private var axesSection: some View {
+        InspectorSection(title: "AXES & SCALES") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("X Axis")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if effectiveEligibleX.count >= 2 {
                         Picker("X Channel", selection: Binding(
                             get: { selectedX ?? measurement?.view.x ?? "" },
                             set: { onSelectX?($0) }
@@ -330,13 +331,22 @@ struct InspectorPane: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                    } else {
+                        Text(channelOptionLabel(selectedX ?? measurement?.view.x ?? ""))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .controlBackgroundColor)))
                     }
                 }
-                if effectiveEligibleY.count >= 2 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Y CHANNEL")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("Y Axis")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if effectiveEligibleY.count >= 2 {
                         Picker("Y Channel", selection: Binding(
                             get: { selectedY?.first ?? "default" },
                             set: { key in onSelectY?(key == "default" ? nil : [key]) }
@@ -348,13 +358,20 @@ struct InspectorPane: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                    } else {
+                        Text(channelOptionLabel(selectedY?.first ?? measurement?.view.y?.first ?? "Default"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .controlBackgroundColor)))
                     }
                 }
 
                 axisControl("X", absolute: $xAbsolute, scale: $xScale)
                 axisControl("Y", absolute: $yAbsolute, scale: $yScale)
 
-                Text("Absolute applies before the scale; log needs positive values.")
+                Text("Absolute applies before scale; log requires positive values.")
                     .font(.caption2).foregroundStyle(.secondary)
 
                 if let axisNote {
@@ -374,12 +391,13 @@ struct InspectorPane: View {
 
     @ViewBuilder
     private var styleTabContent: some View {
-        InspectorCard(title: "MARKS & CURVES") {
+        InspectorSection(title: "LINES & MARKS") {
             VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
+                HStack {
                     Text("Mark Type")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
                     Picker("Mark Type", selection: $markType) {
                         ForEach(PlotMarkType.allCases) { mark in
                             Text(mark.rawValue).tag(mark)
@@ -387,13 +405,15 @@ struct InspectorPane: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    .frame(width: 140)
                 }
 
                 if markType != .dots {
-                    VStack(alignment: .leading, spacing: 4) {
+                    HStack {
                         Text("Connection")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.primary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
                         Picker("Connection", selection: $interpolation) {
                             ForEach(PlotInterpolation.allCases) { interp in
                                 Text(interp.rawValue).tag(interp)
@@ -401,70 +421,101 @@ struct InspectorPane: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
+                        .frame(width: 140)
                     }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text("Line width")
-                                .font(.system(size: 11, weight: .medium))
+                    HStack {
+                        Text("Line Width")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text(String(format: "%.1f pt", lineWidth))
+                                .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(.primary)
-                            Spacer()
-                            TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11).monospacedDigit())
-                                .frame(width: 44)
-                                .multilineTextAlignment(.trailing)
+                                .frame(width: 48, alignment: .trailing)
                             Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
                                 .labelsHidden()
                                 .controlSize(.small)
-                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
                         }
-                        Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
-                            .controlSize(.small)
                     }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
                 }
 
                 if markType != .line {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text("Dot size")
-                                .font(.system(size: 11, weight: .medium))
+                    HStack {
+                        Text("Marker Size")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text(String(format: "%.1f pt", markerSize))
+                                .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(.primary)
-                            Spacer()
-                            TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11).monospacedDigit())
-                                .frame(width: 44)
-                                .multilineTextAlignment(.trailing)
+                                .frame(width: 48, alignment: .trailing)
                             Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
                                 .labelsHidden()
                                 .controlSize(.small)
-                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
                         }
-                        Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
-                            .controlSize(.small)
                     }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
                 }
 
                 Toggle(isOn: $colorBySweepProgress) {
                     Text("Color by Sweep Progress")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11))
                         .foregroundStyle(.primary)
                 }
             }
         }
 
-        progressionCard
+        legendSection
+    }
+
+    private var legendSection: some View {
+        InspectorSection(title: "LEGEND") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: $showLegend) {
+                    Text("Show Legend")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
+
+                if showLegend {
+                    HStack {
+                        Text("Legend Scale")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text(String(format: "%.1fx", legendScale))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.primary)
+                                .frame(width: 44, alignment: .trailing)
+                            Stepper("", value: $legendScale, in: 0.6...2.5, step: 0.1)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Text("Legends are automatically omitted for single-series plots with matching axis title.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Spacer()
+                        Button("Reset Position") {
+                            legendOffset = .zero
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderless)
+                        .disabled(legendOffset == .zero)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
-    private var progressionCard: some View {
+    private var progressionSection: some View {
         if let measurement {
             let progChannel = measurement.progressionChannel
             let candidateChannels = measurement.channels.filter { ch in
@@ -476,7 +527,7 @@ struct InspectorPane: View {
                 let activeChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? progChannel
                 let allCycles = ProgressionPlotReader.extractDiscreteKeys(from: activeChannel?.values)
 
-                InspectorCard(title: "PROGRESSION & CYCLES", badge: activeChannel?.label) {
+                InspectorSection(title: "PROGRESSION & CYCLES", badge: activeChannel?.label) {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle(isOn: $progressionFilterEnabled) {
                             Text("Enable Cycle / Progression Segmentation")
@@ -486,10 +537,11 @@ struct InspectorPane: View {
 
                         if progressionFilterEnabled {
                             if candidateChannels.count > 1 {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("PROGRESSION CHANNEL")
-                                        .font(.system(size: 9.5, weight: .bold))
+                                HStack {
+                                    Text("Channel")
+                                        .font(.system(size: 11))
                                         .foregroundStyle(.secondary)
+                                    Spacer()
                                     Picker("Progression Channel", selection: Binding(
                                         get: { activeChannel?.name ?? "" },
                                         set: { selectedProgressionChannel = $0 }
@@ -589,34 +641,20 @@ struct InspectorPane: View {
         }
     }
 
-    // MARK: - Tab 3: Canvas & Legend
+    // MARK: - Tab 3: Canvas
 
     private var canvasTabContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            InspectorCard(title: "LEGEND") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(isOn: $showLegend) {
-                        Text("Show Legend")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.primary)
-                    }
-
-                    Text("Legends are automatically omitted for single-series plots with matching axis title. Custom labels or multi-series plots display authentic scientific glyphs.")
+            InspectorSection(title: "PUBLICATION PRESET") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Publication presets specify exact column widths, font typography, and spine thicknesses matching journal guidelines (Nature, Science, ACS, IEEE).")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-
-                    Button("Reset Legend Position") {
-                        legendOffset = .zero
-                    }
-                    .font(.caption2)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(!showLegend || legendOffset == .zero)
                 }
             }
 
             if let onSaveSnapshot {
-                InspectorCard(title: "SNAPSHOT") {
+                InspectorSection(title: "SNAPSHOT") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Save the current plot state, axis transforms, and styling into the project snapshot history.")
                             .font(.caption2)
@@ -640,12 +678,18 @@ struct InspectorPane: View {
 
     private var effectiveEligibleX: [String] {
         if !eligibleX.isEmpty { return eligibleX }
-        return measurement?.channels.map(\.name) ?? []
+        guard let channels = measurement?.channels else { return [] }
+        return channels.filter { ch in
+            ch.quantity != "metadata" && ch.quantity != "index" && ch.quantity != "text"
+        }.map(\.name)
     }
 
     private var effectiveEligibleY: [String] {
         if !eligibleY.isEmpty { return eligibleY }
-        return measurement?.channels.map(\.name) ?? []
+        guard let channels = measurement?.channels else { return [] }
+        return channels.filter { ch in
+            ch.quantity != "metadata" && ch.quantity != "index" && ch.quantity != "text"
+        }.map(\.name)
     }
 
     private func seriesRow(_ id: String) -> some View {
