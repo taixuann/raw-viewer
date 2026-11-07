@@ -34,11 +34,6 @@ struct ExplorerToolbarCommands: Commands {
                 model.toggleInspector()
             }
             .keyboardShortcut("i", modifiers: [.command])
-
-            Button("Toggle AI Assistant") {
-                model.toggleAIAssistant()
-            }
-            .keyboardShortcut("a", modifiers: [.command, .option])
         }
 
         CommandMenu("Project") {

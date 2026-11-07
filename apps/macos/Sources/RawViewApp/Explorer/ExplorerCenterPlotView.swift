@@ -23,15 +23,7 @@ struct DraggableLegendView: View {
                     }
                 }
             }
-            .padding(6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(.ultraThinMaterial.opacity(0.85))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-            )
+            .padding(4)
             .contentShape(Rectangle())
             .offset(offset)
             .gesture(
@@ -69,6 +61,7 @@ struct NativePlot: View {
     var selectedProgressionChannel: String? = nil
     var selectedCycles: Set<String> = []
     var colorByCycle: Bool = true
+    var resetTrigger: Int = 0
     var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
@@ -108,62 +101,42 @@ struct NativePlot: View {
 
     var body: some View {
         let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500, uiFontSize: uiFontSize)
-        let defaultTitle = measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? "")
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                Text(defaultTitle)
-                    .font(plotFont(size: PlotRenderingEngine.titleFontSize(preset: preset, fontScale: headerFontScale), bold: true))
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Button {
-                    zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
-                } label: {
-                    Label("Reset plot", systemImage: "arrow.counterclockwise")
-                        .font(.caption2)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Reset plot zoom and pan")
-            }
-            switch transformed {
-            case .failure(let failure):
-                if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
-            case .success(let data):
-                ZStack(alignment: .topTrailing) {
-                    Canvas { context, size in draw(data, in: &context, size: size) }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                        .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
-                        .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
+        switch transformed {
+        case .failure(let failure):
+            if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
+        case .success(let data):
+            ZStack(alignment: .topTrailing) {
+                Canvas { context, size in draw(data, in: &context, size: size) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
+                    .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
 
-                    if colorBySweepProgress {
-                        SweepColorbarView()
-                            .padding(.leading, 64)
-                            .padding(.top, 24)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-
-                    if showLegend {
-                        let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
-                            let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
-                            return (palette(index), name)
-                        }
-                        DraggableLegendView(
-                            items: legendItems,
-                            fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
-                            lineWidth: CGFloat(lineWidth),
-                            offset: $legendOffset
-                        )
-                        .padding(.trailing, 28)
+                if colorBySweepProgress {
+                    SweepColorbarView()
+                        .padding(.leading, 64)
                         .padding(.top, 24)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+
+                if showLegend {
+                    let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
+                        let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
+                        return (palette(index), name)
                     }
+                    DraggableLegendView(
+                        items: legendItems,
+                        fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
+                        lineWidth: CGFloat(lineWidth),
+                        offset: $legendOffset
+                    )
+                    .padding(.trailing, 28)
+                    .padding(.top, 24)
                 }
-                HStack(spacing: 14) {
-                    Spacer()
-                    Text("Drag to pan · Pinch to zoom · \(data.0.count) rows")
-                        .font(plotFont(size: 10.5 * headerFontScale)).foregroundStyle(.secondary)
-                }
+            }
+            .onChange(of: resetTrigger) { _, _ in
+                zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
             }
         }
     }
@@ -362,6 +335,7 @@ struct OverlayPlot: View {
     var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
+    var resetTrigger: Int = 0
     @Binding var legendOffset: CGSize
     @State private var zoom = 1.0
     @State private var gestureZoomStart = 1.0
@@ -429,91 +403,71 @@ struct OverlayPlot: View {
 
     var body: some View {
         let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500, uiFontSize: uiFontSize)
-        let defaultTitle = "\(measurements.count) sources · overlay in acquisition order"
-        let displayTitle = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultTitle : comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                Text(displayTitle)
-                    .font(plotFont(size: 14.0 * headerFontScale, bold: true))
-                    .lineLimit(1).truncationMode(.middle)
-                    .accessibilityLabel(displayTitle)
-                Spacer()
-                Button {
-                    zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
-                } label: {
-                    Label("Reset plot", systemImage: "arrow.counterclockwise")
-                        .font(.caption2)
+        switch transformed {
+        case .failure(let failure):
+            if case .message(let message) = failure {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Comparison blocked", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                    Text("\(message) The focused source remains shown.")
+                        .font(.caption).textSelection(.enabled)
+                    if let focused {
+                        NativePlot(measurement: focused, xAbsolute: xAbsolute,
+                                   yAbsolute: yAbsolute, xScale: xScale,
+                                   yScale: yScale, lineWidth: lineWidth,
+                                   renderStyle: renderStyle,
+                                   markType: markType, interpolation: interpolation,
+                                   markerSize: markerSize,
+                                   colorBySweepProgress: colorBySweepProgress,
+                                   resetTrigger: resetTrigger,
+                                   showLegend: showLegend,
+                                   customSeriesLabels: customSeriesLabels,
+                                   legendOffset: $legendOffset)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Reset plot zoom and pan")
             }
-            switch transformed {
-            case .failure(let failure):
-                if case .message(let message) = failure {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Comparison blocked", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption).foregroundStyle(.orange)
-                        Text("\(message) The focused source remains shown.")
-                            .font(.caption).textSelection(.enabled)
-                        if let focused {
-                            NativePlot(measurement: focused, xAbsolute: xAbsolute,
-                                       yAbsolute: yAbsolute, xScale: xScale,
-                                       yScale: yScale, lineWidth: lineWidth,
-                                       renderStyle: renderStyle,
-                                       markType: markType, interpolation: interpolation,
-                                       markerSize: markerSize,
-                                       colorBySweepProgress: colorBySweepProgress,
-                                       showLegend: showLegend,
-                                       customSeriesLabels: customSeriesLabels,
-                                       legendOffset: $legendOffset)
-                        }
-                    }
+        case .success(let data):
+            let sourceOrder = selectedSourceIDs.sorted()
+            let accessibleSummary = data.series.map {
+                "\($0.label): \($0.x.count) points, \(gapCount($0)) gaps"
+            }.joined(separator: ". ")
+            ZStack(alignment: .topTrailing) {
+                Canvas { context, size in
+                    draw(data.series, xLabel: data.xChannel.label, xUnit: data.xChannel.unit, yLabel: data.yChannel.label, yUnit: data.yChannel.unit, in: &context, size: size)
                 }
-            case .success(let data):
-                let sourceOrder = selectedSourceIDs.sorted()
-                let accessibleSummary = data.series.map {
-                    "\($0.label): \($0.x.count) points, \(gapCount($0)) gaps"
-                }.joined(separator: ". ")
-                ZStack(alignment: .topTrailing) {
-                    Canvas { context, size in
-                        draw(data.series, xLabel: data.xChannel.label, xUnit: data.xChannel.unit, yLabel: data.yChannel.label, yUnit: data.yChannel.unit, in: &context, size: size)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
-                    .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Overlay plot with \(data.series.count) series")
-                    .accessibilityValue(accessibleSummary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
+                .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Overlay plot with \(data.series.count) series")
+                .accessibilityValue(accessibleSummary)
 
-                    if colorBySweepProgress {
-                        SweepColorbarView()
-                            .padding(.leading, 64)
-                            .padding(.top, 24)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-
-                    if showLegend {
-                        let legendItems: [(color: Color, label: String)] = data.series.map { item in
-                            let custom = customSeriesLabels[item.sourcePath]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let name = (custom != nil && !custom!.isEmpty) ? custom! : item.label
-                            return (palette(item.sourcePath, order: sourceOrder), name)
-                        }
-                        DraggableLegendView(
-                            items: legendItems,
-                            fontSize: max(8.5, CGFloat(preset.legendPt) * 1.35 * headerFontScale),
-                            lineWidth: CGFloat(lineWidth),
-                            offset: $legendOffset
-                        )
-                        .padding(.trailing, 28)
+                if colorBySweepProgress {
+                    SweepColorbarView()
+                        .padding(.leading, 64)
                         .padding(.top, 24)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+
+                if showLegend {
+                    let legendItems: [(color: Color, label: String)] = data.series.map { item in
+                        let custom = customSeriesLabels[item.sourcePath]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let name = (custom != nil && !custom!.isEmpty) ? custom! : item.label
+                        return (palette(item.sourcePath, order: sourceOrder), name)
                     }
+                    DraggableLegendView(
+                        items: legendItems,
+                        fontSize: max(8.5, CGFloat(preset.legendPt) * 1.35 * headerFontScale),
+                        lineWidth: CGFloat(lineWidth),
+                        offset: $legendOffset
+                    )
+                    .padding(.trailing, 28)
+                    .padding(.top, 24)
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(pointCount(data.series)) points across visible series · \(gapCount(data.series)) gaps")
-                        .font(plotFont(size: 10.5 * headerFontScale)).foregroundStyle(.secondary)
-                }
+            }
+            .onChange(of: resetTrigger) { _, _ in
+                zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
             }
         }
     }
@@ -832,6 +786,7 @@ struct ProjectGallery: View {
     @Binding var showLegend: Bool
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
+    @State private var plotResetTrigger: Int = 0
 
     var customProjectPresets: [ScientificPreset] {
         availablePresets.filter { p in
@@ -1132,7 +1087,9 @@ struct ProjectGallery: View {
                     description: Text("Every selected series is hidden. Show at least one series in the inspector."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio)) {
+                let defaultTitle = "\(visible.count) sources · overlay in acquisition order"
+                let displayTitle = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultTitle : comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio), title: displayTitle, onResetPlot: { plotResetTrigger += 1 }) {
                     OverlayPlot(measurements: visible, selectedSourceIDs: selectedIDs,
                                 focused: states[focused.id]?.measurement,
                                 lineWidth: lineWidth,
@@ -1146,6 +1103,7 @@ struct ProjectGallery: View {
                                 preset: selectedPreset,
                                 showLegend: showLegend,
                                 customSeriesLabels: customSeriesLabels,
+                                resetTrigger: plotResetTrigger,
                                 legendOffset: $legendOffset)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1178,7 +1136,9 @@ struct ProjectGallery: View {
                         description: Text("Every selected series is hidden. Show at least one series in the inspector."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio)) {
+                    let defaultTitle = "\(visible.count) sources · overlay in acquisition order"
+                    let displayTitle = comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultTitle : comparisonTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio), title: displayTitle, onResetPlot: { plotResetTrigger += 1 }) {
                         OverlayPlot(measurements: visible, selectedSourceIDs: plottedIDs,
                                     focused: visible.first(where: { $0.source.path == focused.id }),
                                     lineWidth: lineWidth,
@@ -1192,6 +1152,7 @@ struct ProjectGallery: View {
                                     preset: selectedPreset,
                                     showLegend: showLegend,
                                     customSeriesLabels: customSeriesLabels,
+                                    resetTrigger: plotResetTrigger,
                                     legendOffset: $legendOffset)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1214,7 +1175,8 @@ struct ProjectGallery: View {
                     description: Text("The profile reports metadata only; its data remains available in the Data tab."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio)) {
+                let defaultTitle = measurement.instrument.name + (measurement.applicationMode.map { " · \($0)" } ?? "")
+                CenteredFigureView(targetRatio: CGFloat(selectedPreset.aspectRatio), title: defaultTitle, onResetPlot: { plotResetTrigger += 1 }) {
                     NativePlot(measurement: measurement, xAbsolute: xAbsolute,
                                yAbsolute: yAbsolute, xScale: xScale,
                                yScale: yScale, lineWidth: lineWidth,
@@ -1226,6 +1188,7 @@ struct ProjectGallery: View {
                                selectedProgressionChannel: selectedProgressionChannel,
                                selectedCycles: selectedCycles,
                                colorByCycle: colorByCycle,
+                               resetTrigger: plotResetTrigger,
                                preset: selectedPreset,
                                showLegend: showLegend,
                                customSeriesLabels: customSeriesLabels,
@@ -1241,6 +1204,8 @@ struct ProjectGallery: View {
 
     private struct CenteredFigureView<Content: View>: View {
         var targetRatio: CGFloat = 59.1 / 50.0
+        var title: String? = nil
+        var onResetPlot: (() -> Void)? = nil
         @ViewBuilder let content: () -> Content
 
         private func cardSize(in geoSize: CGSize) -> CGSize {
@@ -1262,7 +1227,30 @@ struct ProjectGallery: View {
         var body: some View {
             GeometryReader { geo in
                 let size = cardSize(in: geo.size)
-                ZStack(alignment: .center) {
+                VStack(spacing: 8) {
+                    if let title {
+                        HStack(alignment: .center) {
+                            Text(title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            if let onResetPlot {
+                                Button {
+                                    onResetPlot()
+                                } label: {
+                                    Label("Reset plot", systemImage: "arrow.counterclockwise")
+                                        .font(.caption2)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Reset plot zoom and pan")
+                            }
+                        }
+                        .frame(width: size.width)
+                    }
+
                     floatingCard {
                         content()
                     }

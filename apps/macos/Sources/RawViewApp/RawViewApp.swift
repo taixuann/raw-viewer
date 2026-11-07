@@ -26,7 +26,6 @@ struct RawViewApp: App {
                 }
                 .task {
                     _ = await NodeBackend.shared.ensureRunning()
-                    await AIProviderCatalog.shared.refresh()
                 }
         }
         .defaultSize(width: 1320, height: 820)
@@ -209,10 +208,6 @@ final class RawViewModel: ObservableObject {
             self.error = "Failed to save Developer Mode: \(error.localizedDescription)"
         }
     }
-    @Published var showAIAssistant = false
-    @Published var aiChatSessionId: UUID = UUID()
-    @Published var aiChatTurns: [ChatTurn] = []
-    func toggleAIAssistant() { showAIAssistant.toggle() }
     @Published var showInspector = true
     func toggleInspector() { showInspector.toggle() }
 
@@ -1634,32 +1629,8 @@ struct RawViewShell: View {
                         }
                 }
             }
-
-            if model.showAIAssistant {
-                AIAssistantPane(model: model)
-                    .frame(width: 360)
-                    .frame(maxHeight: .infinity)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
-                    }
-                    .transition(.move(edge: .trailing))
-            }
         }
         .frame(minWidth: 900, minHeight: 600)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        model.showAIAssistant.toggle()
-                    }
-                }) {
-                    Label("Chat", systemImage: "bubble.left.and.bubble.right")
-                        .foregroundStyle(model.showAIAssistant ? Color.accentColor : Color.primary)
-                }
-                .help("Toggle AI Assistant (⌘⌥A)")
-                .keyboardShortcut("a", modifiers: [.command, .option])
-            }
-        }
         .sheet(isPresented: $model.isProjectSetupPresented) {
             if let rootURL = model.pendingSetupProjectURL {
                 ProjectSetupView(
