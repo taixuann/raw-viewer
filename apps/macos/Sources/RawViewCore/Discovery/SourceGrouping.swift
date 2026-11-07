@@ -213,6 +213,19 @@ extension NormalizedMeasurement {
     public var eligibleXIDs: [String] { Self.splitIDs(provenance["eligible_x"]) }
     public var eligibleYIDs: [String] { Self.splitIDs(provenance["eligible_y"]) }
 
+    /// Candidate progression channel for multi-cycle or time-window segmentation.
+    public var progressionChannel: MeasurementChannel? {
+        if let declared = provenance["progression"], !declared.isEmpty,
+           let ch = channel(named: declared) {
+            return ch
+        }
+        return channels.first { ch in
+            let lower = ch.name.lowercased()
+            return ch.quantity == "index" || lower == "scan" || lower == "cycle" || lower == "step"
+                || ch.quantity == "time" || lower == "time" || lower == "timestamp" || lower == "elapsed"
+        }
+    }
+
     private static func splitIDs(_ raw: String?) -> [String] {
         guard let raw, !raw.isEmpty else { return [] }
         return raw.split(separator: ",").map(String.init).filter { !$0.isEmpty }

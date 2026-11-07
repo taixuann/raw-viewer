@@ -65,6 +65,10 @@ struct NativePlot: View {
     var interpolation: PlotInterpolation = .linear
     var markerSize: Double = 4.5
     var colorBySweepProgress: Bool = false
+    var progressionFilterEnabled: Bool = false
+    var selectedProgressionChannel: String? = nil
+    var selectedCycles: Set<String> = []
+    var colorByCycle: Bool = true
     var preset: ScientificPreset = .natureSingle
     var showLegend: Bool = true
     var customSeriesLabels: [String: String] = [:]
@@ -242,25 +246,67 @@ struct NativePlot: View {
         for (seriesIndex, item) in data.1.enumerated() {
             guard item.1.count == data.0.count else { continue }
             let color = palette(seriesIndex)
-            // Gap segmentation: a nil x or y breaks the line; rows stay in order.
-            for run in AxisTransform.segments(x: data.0, y: item.1) {
-                var runPoints: [CGPoint] = []
-                for index in run {
-                    guard let xv = data.0[index], let yv = item.1[index] else { continue }
-                    let tx = (xv - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
-                    let ty = (yv - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
-                    runPoints.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
+
+            let progChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? measurement.progressionChannel
+            let isContinuous = progChannel?.quantity == "time" && !(progChannel?.name.lowercased().contains("scan") ?? false)
+            let progSegments = (progressionFilterEnabled && progChannel != nil)
+                ? ProgressionPlotReader.segments(
+                    x: data.0,
+                    y: item.1,
+                    progression: progChannel?.values,
+                    isContinuous: isContinuous,
+                    selectedDiscreteKeys: selectedCycles
+                  )
+                : []
+
+            if !progSegments.isEmpty {
+                for (segIndex, seg) in progSegments.enumerated() {
+                    var runPoints: [CGPoint] = []
+                    for pt in seg.points {
+                        let tx = (pt.0 - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
+                        let ty = (pt.1 - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
+                        runPoints.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
+                    }
+                    let segColor: Color = {
+                        if colorByCycle && progSegments.count > 1 {
+                            let t = Double(segIndex) / Double(max(1, progSegments.count - 1))
+                            return PlotRenderingEngine.sweepColor(at: t)
+                        } else {
+                            return color
+                        }
+                    }()
+                    PlotRenderingEngine.renderRun(
+                        points: runPoints,
+                        mark: markType,
+                        interpolation: interpolation,
+                        color: segColor,
+                        lineWidth: lineWidth,
+                        markerSize: markerSize,
+                        colorBySweepProgress: false,
+                        in: &plotContext
+                    )
                 }
-                PlotRenderingEngine.renderRun(
-                    points: runPoints,
-                    mark: markType,
-                    interpolation: interpolation,
-                    color: color,
-                    lineWidth: lineWidth,
-                    markerSize: markerSize,
-                    colorBySweepProgress: colorBySweepProgress,
-                    in: &plotContext
-                )
+            } else {
+                // Gap segmentation: a nil x or y breaks the line; rows stay in order.
+                for run in AxisTransform.segments(x: data.0, y: item.1) {
+                    var runPoints: [CGPoint] = []
+                    for index in run {
+                        guard let xv = data.0[index], let yv = item.1[index] else { continue }
+                        let tx = (xv - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
+                        let ty = (yv - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
+                        runPoints.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
+                    }
+                    PlotRenderingEngine.renderRun(
+                        points: runPoints,
+                        mark: markType,
+                        interpolation: interpolation,
+                        color: color,
+                        lineWidth: lineWidth,
+                        markerSize: markerSize,
+                        colorBySweepProgress: colorBySweepProgress,
+                        in: &plotContext
+                    )
+                }
             }
         }
     }
@@ -755,6 +801,10 @@ struct ProjectGallery: View {
     var interpolation: PlotInterpolation = .linear
     var markerSize: Double = 4.5
     var colorBySweepProgress: Bool = false
+    var progressionFilterEnabled: Bool = false
+    var selectedProgressionChannel: String? = nil
+    var selectedCycles: Set<String> = []
+    var colorByCycle: Bool = true
     let overlay: OverlayEligibility?
     @Binding var tab: String
     @Binding var xAbsolute: Bool
@@ -1172,6 +1222,10 @@ struct ProjectGallery: View {
                                markType: markType, interpolation: interpolation,
                                markerSize: markerSize,
                                colorBySweepProgress: colorBySweepProgress,
+                               progressionFilterEnabled: progressionFilterEnabled,
+                               selectedProgressionChannel: selectedProgressionChannel,
+                               selectedCycles: selectedCycles,
+                               colorByCycle: colorByCycle,
                                preset: selectedPreset,
                                showLegend: showLegend,
                                customSeriesLabels: customSeriesLabels,

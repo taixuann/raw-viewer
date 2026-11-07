@@ -61,14 +61,29 @@ public enum ProgressionPlotReader {
         return normalized.isEmpty ? "1" : normalized
     }
 
-    /// Builds plot segments for aligned x, y, and progression channel arrays.
-    /// Nil x or y at a row skips that row. For continuous behavior, optional
-    /// `timeStart`/`timeStop` filter on progression numeric values.
+    /// Extracts all unique discrete keys from a progression array in encounter order.
+    public static func extractDiscreteKeys(from progression: [Double?]?) -> [String] {
+        guard let progression else { return [] }
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        for val in progression {
+            guard let val, val.isFinite else { continue }
+            let key = discreteKey(from: val)
+            if !seen.contains(key) {
+                seen.insert(key)
+                ordered.append(key)
+            }
+        }
+        return ordered
+    }
+
+    /// Builds plot segments for aligned x, y, and progression channel arrays
+    /// using an explicit continuous flag.
     public static func segments(
         x: [Double?],
         y: [Double?],
         progression: [Double?]?,
-        column: ProfileColumnV3,
+        isContinuous: Bool,
         selectedDiscreteKeys: Set<String> = [],
         timeStart: Double? = nil,
         timeStop: Double? = nil
@@ -96,10 +111,7 @@ public enum ProgressionPlotReader {
             }
         }
 
-        let distinctKeys = Set(progStrings.filter { $0 != "default" })
-        let continuous = isContinuousBehavior(column: column, distinctDiscreteKeys: distinctKeys.count)
-
-        if continuous {
+        if isContinuous {
             let startLimit = timeStart ?? continuousValues.min() ?? 0
             let stopLimit = timeStop ?? continuousValues.max() ?? 1
             var slice: [(Double, Double)] = []
@@ -134,5 +146,40 @@ public enum ProgressionPlotReader {
             segments.append(ProgressionPlotSegment(name: label, points: pts))
         }
         return segments
+    }
+
+    /// Builds plot segments for aligned x, y, and progression channel arrays.
+    /// Nil x or y at a row skips that row. For continuous behavior, optional
+    /// `timeStart`/`timeStop` filter on progression numeric values.
+    public static func segments(
+        x: [Double?],
+        y: [Double?],
+        progression: [Double?]?,
+        column: ProfileColumnV3,
+        selectedDiscreteKeys: Set<String> = [],
+        timeStart: Double? = nil,
+        timeStop: Double? = nil
+    ) -> [ProgressionPlotSegment] {
+        let count = min(x.count, y.count)
+        guard count > 0 else { return [] }
+
+        var distinctKeys = Set<String>()
+        if let progression {
+            for index in 0..<count {
+                if index < progression.count, let raw = progression[index], raw.isFinite {
+                    distinctKeys.insert(discreteKey(from: raw))
+                }
+            }
+        }
+        let continuous = isContinuousBehavior(column: column, distinctDiscreteKeys: distinctKeys.count)
+        return segments(
+            x: x,
+            y: y,
+            progression: progression,
+            isContinuous: continuous,
+            selectedDiscreteKeys: selectedDiscreteKeys,
+            timeStart: timeStart,
+            timeStop: timeStop
+        )
     }
 }

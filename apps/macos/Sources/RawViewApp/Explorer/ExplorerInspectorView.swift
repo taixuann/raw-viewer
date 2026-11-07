@@ -18,6 +18,10 @@ struct InspectorPane: View {
     @Binding var interpolation: PlotInterpolation
     @Binding var markerSize: Double
     @Binding var colorBySweepProgress: Bool
+    @Binding var progressionFilterEnabled: Bool
+    @Binding var selectedProgressionChannel: String?
+    @Binding var selectedCycles: Set<String>
+    @Binding var colorByCycle: Bool
     @Binding var xAbsolute: Bool
     @Binding var yAbsolute: Bool
     @Binding var xScale: AxisScale
@@ -48,7 +52,8 @@ struct InspectorPane: View {
     @State private var isSeriesExpanded = true
     @State private var isDataMappingExpanded = true
     @State private var isStyleExpanded = true
-    @State private var isAxesExpanded = false
+    @State private var isAxesExpanded = true
+    @State private var isProgressionExpanded = true
     @State private var isMetadataExpanded = false
 
     var body: some View {
@@ -80,8 +85,9 @@ struct InspectorPane: View {
                         if measurement?.instrument.id == "generic-table" {
                             dataMappingSection
                         }
-                        styleSection
                         axesSection
+                        progressionSection
+                        styleSection
                         metadataSection
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -418,10 +424,20 @@ struct InspectorPane: View {
         }
     }
 
+    private var effectiveEligibleX: [String] {
+        if !eligibleX.isEmpty { return eligibleX }
+        return measurement?.channels.map(\.name) ?? []
+    }
+
+    private var effectiveEligibleY: [String] {
+        if !eligibleY.isEmpty { return eligibleY }
+        return measurement?.channels.map(\.name) ?? []
+    }
+
     private var axesSection: some View {
         DisclosureGroup(isExpanded: $isAxesExpanded) {
             VStack(alignment: .leading, spacing: 8) {
-                if eligibleX.count >= 2 {
+                if effectiveEligibleX.count >= 2 {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("X CHANNEL")
                             .font(.system(size: 9.5, weight: .bold))
@@ -430,7 +446,7 @@ struct InspectorPane: View {
                             get: { selectedX ?? measurement?.view.x ?? "" },
                             set: { onSelectX?($0) }
                         )) {
-                            ForEach(eligibleX, id: \.self) { id in
+                            ForEach(effectiveEligibleX, id: \.self) { id in
                                 Text(channelOptionLabel(id)).tag(id)
                             }
                         }
@@ -438,7 +454,7 @@ struct InspectorPane: View {
                         .pickerStyle(.menu)
                     }
                 }
-                if eligibleY.count >= 2 {
+                if effectiveEligibleY.count >= 2 {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Y CHANNEL")
                             .font(.system(size: 9.5, weight: .bold))
@@ -448,7 +464,7 @@ struct InspectorPane: View {
                             set: { key in onSelectY?(key == "default" ? nil : [key]) }
                         )) {
                             Text(defaultSeriesLabel).tag("default")
-                            ForEach(eligibleY, id: \.self) { id in
+                            ForEach(effectiveEligibleY, id: \.self) { id in
                                 Text(channelOptionLabel(id)).tag(id)
                             }
                         }
@@ -478,12 +494,154 @@ struct InspectorPane: View {
         }
     }
 
+    private var progressionSection: some View {
+        guard let measurement else { return AnyView(EmptyView()) }
+        let progChannel = measurement.progressionChannel
+        let candidateChannels = measurement.channels.filter { ch in
+            ch.quantity == "index" || ch.quantity == "time" ||
+            ch.name.lowercased().contains("scan") || ch.name.lowercased().contains("cycle") ||
+            ch.name.lowercased().contains("step") || ch.name.lowercased().contains("time")
+        }
+        guard !candidateChannels.isEmpty || selectedProgressionChannel != nil else {
+            return AnyView(EmptyView())
+        }
+        let activeChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? progChannel
+        let allCycles = ProgressionPlotReader.extractDiscreteKeys(from: activeChannel?.values)
+
+        return AnyView(
+            DisclosureGroup(isExpanded: $isProgressionExpanded) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $progressionFilterEnabled) {
+                        Text("Enable Cycle / Progression Segmentation")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+
+                    if progressionFilterEnabled {
+                        if candidateChannels.count > 1 {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("PROGRESSION CHANNEL")
+                                    .font(.system(size: 9.5, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                                Picker("Progression Channel", selection: Binding(
+                                    get: { activeChannel?.name ?? "" },
+                                    set: { selectedProgressionChannel = $0 }
+                                )) {
+                                    ForEach(candidateChannels, id: \.name) { ch in
+                                        Text("\(ch.label) (\(ch.name))").tag(ch.name)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                            }
+                        }
+
+                        Toggle(isOn: $colorByCycle) {
+                            Text("Color Segments by Cycle (Colormap)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.primary)
+                        }
+
+                        if !allCycles.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("CYCLES (\(selectedCycles.isEmpty ? allCycles.count : selectedCycles.count)/\(allCycles.count))")
+                                        .font(.system(size: 9.5, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button("All") {
+                                        selectedCycles.removeAll()
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.accentColor)
+
+                                    if allCycles.count > 1 {
+                                        Button("First") {
+                                            if let first = allCycles.first { selectedCycles = [first] }
+                                        }
+                                        .buttonStyle(.plain)
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.accentColor)
+
+                                        Button("Last") {
+                                            if let last = allCycles.last { selectedCycles = [last] }
+                                        }
+                                        .buttonStyle(.plain)
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.accentColor)
+
+                                        if allCycles.count >= 5 {
+                                            Button("Every 5th") {
+                                                selectedCycles = Set(stride(from: 0, to: allCycles.count, by: 5).map { allCycles[$0] })
+                                            }
+                                            .buttonStyle(.plain)
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.accentColor)
+                                        }
+                                    }
+                                }
+
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 4) {
+                                        ForEach(allCycles, id: \.self) { cycleKey in
+                                            let isSelected = selectedCycles.isEmpty || selectedCycles.contains(cycleKey)
+                                            Button {
+                                                if selectedCycles.isEmpty {
+                                                    selectedCycles = [cycleKey]
+                                                } else if selectedCycles.contains(cycleKey) {
+                                                    selectedCycles.remove(cycleKey)
+                                                } else {
+                                                    selectedCycles.insert(cycleKey)
+                                                }
+                                            } label: {
+                                                Text(cycleKey)
+                                                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 3)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 4)
+                                                            .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
+                                                    )
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 4)
+                                                            .stroke(isSelected ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: 0.5)
+                                                    )
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                HStack {
+                    Text("PROGRESSION & CYCLES")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.primary.opacity(0.85))
+                    Spacer()
+                    if let activeChannel {
+                        Text(activeChannel.label)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+            }
+        )
+    }
+
     /// Channel menu label. Stable duplicate labels (same text, distinct IDs)
     /// stay selectable via the ID qualifier.
     private func channelOptionLabel(_ id: String) -> String {
         guard let channel = measurement?.channel(named: id) else { return id }
+        let unitSuffix = channel.unit.isEmpty ? "" : " (\(channel.unit))"
         let collisions = measurement?.channels.filter { $0.label == channel.label }.count ?? 0
-        return collisions > 1 ? "\(channel.label) (\(id))" : channel.label
+        let baseLabel = collisions > 1 ? "\(channel.label) (\(id))" : channel.label
+        return "\(baseLabel)\(unitSuffix)"
     }
 
     /// The preserved multi-Y defaults, shown as one Default-series choice.
