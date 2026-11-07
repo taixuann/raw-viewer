@@ -478,6 +478,7 @@ struct OverlayPlot: View {
                                    colorBySweepProgress: colorBySweepProgress,
                                    resetTrigger: resetTrigger,
                                    showLegend: showLegend,
+                                   legendScale: legendScale,
                                    customSeriesLabels: customSeriesLabels,
                                    legendOffset: $legendOffset)
                     }

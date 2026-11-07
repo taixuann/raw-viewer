@@ -20,6 +20,11 @@ public struct ScientificPreset: Identifiable, Sendable, Hashable, CaseIterable {
         widthMM / heightMM
     }
 
+    /// Legend font size calibrated to viewport and preset, matching tick label proportions and custom scale.
+    public func legendFontSize(fontScale: Double = 1.0, legendScale: Double = 1.0) -> Double {
+        max(9.0, Double(max(legendPt, tickLabelPt)) * 1.35 * fontScale * legendScale)
+    }
+
     public init(
         id: String,
         displayName: String,

@@ -550,6 +550,7 @@ final class RawViewModel: ObservableObject {
                 comparisonTitle: comparisonTitle,
                 preset: selectedPreset,
                 showLegend: showLegend,
+                legendScale: legendScale,
                 customSeriesLabels: customSeriesLabels,
                 legendOffset: .constant(.zero)
             )
@@ -573,6 +574,7 @@ final class RawViewModel: ObservableObject {
                 colorByCycle: colorByCycle,
                 preset: selectedPreset,
                 showLegend: showLegend,
+                legendScale: legendScale,
                 customSeriesLabels: customSeriesLabels,
                 legendOffset: .constant(.zero)
             )
@@ -654,6 +656,7 @@ final class RawViewModel: ObservableObject {
                     comparisonTitle: comparisonTitle,
                     preset: selectedPreset,
                     showLegend: showLegend,
+                    legendScale: legendScale,
                     customSeriesLabels: customSeriesLabels,
                     legendOffset: .constant(.zero)
                 )
@@ -685,6 +688,7 @@ final class RawViewModel: ObservableObject {
                     colorByCycle: colorByCycle,
                     preset: selectedPreset,
                     showLegend: showLegend,
+                    legendScale: legendScale,
                     customSeriesLabels: customSeriesLabels,
                     legendOffset: .constant(.zero)
                 )
@@ -1964,9 +1968,7 @@ struct RawViewShell: View {
         }
         let baseMeasurement = focusedID.flatMap { model.sourceStates[$0]?.measurement }
         let override = focusedID.flatMap { model.activeAxisOverride(for: $0) }
-        let plottableChannelNames = currentState?.measurement?.channels.filter { ch in
-            ch.quantity != "metadata" && ch.quantity != "index" && ch.quantity != "text"
-        }.map(\.name) ?? []
+        let plottableChannelNames = currentState?.measurement?.plottableChannels.map(\.name) ?? []
         let effectiveEligibleX = !(currentState?.measurement?.eligibleXIDs.isEmpty ?? true)
             ? (currentState?.measurement?.eligibleXIDs ?? [])
             : plottableChannelNames
