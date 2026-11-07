@@ -21,6 +21,9 @@ struct RawViewApp: App {
         WindowGroup("RawView") {
             RawViewShell(model: model)
                 .preferredColorScheme(preferredScheme)
+                .onOpenURL { url in
+                    model.openRecentProject(url: url)
+                }
                 .task {
                     _ = await NodeBackend.shared.ensureRunning()
                     await AIProviderCatalog.shared.refresh()
@@ -137,6 +140,10 @@ final class RawViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(interpolation.rawValue, forKey: "defaultInterpolation") }
     }
     @Published var colorBySweepProgress: Bool = false
+    @Published var progressionFilterEnabled: Bool = false
+    @Published var selectedProgressionChannel: String? = nil
+    @Published var selectedCycles: Set<String> = []
+    @Published var colorByCycle: Bool = true
     @Published var markerSize: Double = 4.5 {
         didSet {
             let clamped = min(max(markerSize, 1.0), 20.0)
@@ -563,6 +570,10 @@ final class RawViewModel: ObservableObject {
                 interpolation: interpolation,
                 markerSize: markerSize,
                 colorBySweepProgress: colorBySweepProgress,
+                progressionFilterEnabled: progressionFilterEnabled,
+                selectedProgressionChannel: selectedProgressionChannel,
+                selectedCycles: selectedCycles,
+                colorByCycle: colorByCycle,
                 preset: selectedPreset,
                 showLegend: showLegend,
                 customSeriesLabels: customSeriesLabels,
@@ -671,6 +682,10 @@ final class RawViewModel: ObservableObject {
                     interpolation: interpolation,
                     markerSize: markerSize,
                     colorBySweepProgress: colorBySweepProgress,
+                    progressionFilterEnabled: progressionFilterEnabled,
+                    selectedProgressionChannel: selectedProgressionChannel,
+                    selectedCycles: selectedCycles,
+                    colorByCycle: colorByCycle,
                     preset: selectedPreset,
                     showLegend: showLegend,
                     customSeriesLabels: customSeriesLabels,
@@ -1381,10 +1396,18 @@ final class RawViewModel: ObservableObject {
                 let finalCached = cachedCount
                 await MainActor.run {
                     guard requestID == self.inspectionID else { return }
-                    self.sourceStates = finalStates
-                    self.inspections = finalStates.compactMapValues(\.inspection)
+                    for (id, state) in finalStates {
+                        var existing = self.sourceStates[id] ?? GallerySourceState()
+                        if existing.inspection == nil { existing.inspection = state.inspection }
+                        if existing.error == nil { existing.error = state.error }
+                        self.sourceStates[id] = existing
+                    }
+                    self.inspections = self.sourceStates.compactMapValues(\.inspection)
                     self.inspectedSources = finalCached
                     self.refreshLoading()
+                    if let focused = self.focusedSourceID, self.sourceStates[focused]?.measurement == nil, self.sourceStates[focused]?.isLoading != true {
+                        self.loadFocused()
+                    }
                 }
             }
             return
@@ -1425,8 +1448,13 @@ final class RawViewModel: ObservableObject {
 
             await MainActor.run {
                 guard requestID == self.inspectionID else { return }
-                self.sourceStates = finalStates
-                self.inspections = finalStates.compactMapValues(\.inspection)
+                for (id, state) in finalStates {
+                    var existing = self.sourceStates[id] ?? GallerySourceState()
+                    if existing.inspection == nil { existing.inspection = state.inspection }
+                    if existing.error == nil { existing.error = state.error }
+                    self.sourceStates[id] = existing
+                }
+                self.inspections = self.sourceStates.compactMapValues(\.inspection)
                 self.inspectedSources = finalCached
 
                 if finalUninspected.isEmpty {
@@ -1434,6 +1462,9 @@ final class RawViewModel: ObservableObject {
                     self.isLoading = false
                     self.loadingPhase = "Idle"
                     self.refreshLoading()
+                    if let focused = self.focusedSourceID, self.sourceStates[focused]?.measurement == nil, self.sourceStates[focused]?.isLoading != true {
+                        self.loadFocused()
+                    }
                     return
                 }
 
@@ -1674,6 +1705,10 @@ struct RawViewShell: View {
                        interpolation: model.interpolation,
                        markerSize: model.markerSize,
                        colorBySweepProgress: model.colorBySweepProgress,
+                       progressionFilterEnabled: model.progressionFilterEnabled,
+                       selectedProgressionChannel: model.selectedProgressionChannel,
+                       selectedCycles: model.selectedCycles,
+                       colorByCycle: model.colorByCycle,
                        overlay: model.overlayResult(),
                        tab: $model.tab,
                        xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
@@ -1955,6 +1990,13 @@ struct RawViewShell: View {
         }
         let baseMeasurement = focusedID.flatMap { model.sourceStates[$0]?.measurement }
         let override = focusedID.flatMap { model.activeAxisOverride(for: $0) }
+        let allChannelNames = currentState?.measurement?.channels.map(\.name) ?? []
+        let effectiveEligibleX = !(currentState?.measurement?.eligibleXIDs.isEmpty ?? true)
+            ? (currentState?.measurement?.eligibleXIDs ?? [])
+            : allChannelNames
+        let effectiveEligibleY = !(currentState?.measurement?.eligibleYIDs.isEmpty ?? true)
+            ? (currentState?.measurement?.eligibleYIDs ?? [])
+            : allChannelNames
         return InspectorPane(measurement: currentState?.measurement, inspection: currentState?.inspection,
                              source: currentSource?.url, sourceID: currentSource?.id, error: currentState?.error ?? model.error,
                              states: model.displayStates,
@@ -1965,6 +2007,10 @@ struct RawViewShell: View {
                              interpolation: $model.interpolation,
                              markerSize: $model.markerSize,
                              colorBySweepProgress: $model.colorBySweepProgress,
+                             progressionFilterEnabled: $model.progressionFilterEnabled,
+                             selectedProgressionChannel: $model.selectedProgressionChannel,
+                             selectedCycles: $model.selectedCycles,
+                             colorByCycle: $model.colorByCycle,
                              xAbsolute: $model.xAbsolute, yAbsolute: $model.yAbsolute,
                              xScale: $model.xScale, yScale: $model.yScale,
                              overlay: model.overlayResult(),
@@ -1980,8 +2026,8 @@ struct RawViewShell: View {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)
                                  }
                              },
-                             eligibleX: currentState?.measurement?.eligibleXIDs ?? [],
-                             eligibleY: currentState?.measurement?.eligibleYIDs ?? [],
+                             eligibleX: effectiveEligibleX,
+                             eligibleY: effectiveEligibleY,
                              defaultY: baseMeasurement?.view.y ?? [],
                              selectedX: override?.x,
                              selectedY: override?.y,

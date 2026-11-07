@@ -132,4 +132,27 @@ struct ProgressionPlotReaderTests {
         #expect(window[0].points.count == 2)
         #expect(window[0].points.map(\.0) == [1, 2])
     }
+
+    @Test func extractDiscreteKeysPreservesEncounterOrderAndUniqueness() {
+        let prog: [Double?] = [1, 1, 2, 3, 2, 4, nil, Double.nan]
+        let keys = ProgressionPlotReader.extractDiscreteKeys(from: prog)
+        #expect(keys == ["1", "2", "3", "4"])
+    }
+
+    @Test func segmentsWithExplicitContinuousFlag() {
+        let x: [Double?] = [0, 1, 2, 3]
+        let y: [Double?] = [10, 11, 20, 21]
+        let prog: [Double?] = [1, 1, 2, 2]
+        let discreteSegments = ProgressionPlotReader.segments(
+            x: x, y: y, progression: prog, isContinuous: false, selectedDiscreteKeys: ["1"])
+        #expect(discreteSegments.count == 1)
+        #expect(discreteSegments[0].name == "1")
+        #expect(discreteSegments[0].points.count == 2)
+
+        let continuousSegments = ProgressionPlotReader.segments(
+            x: x, y: y, progression: prog, isContinuous: true, timeStart: 1.5, timeStop: 2.5)
+        #expect(continuousSegments.count == 1)
+        #expect(continuousSegments[0].name == "Time Window")
+        #expect(continuousSegments[0].points.count == 2)
+    }
 }
