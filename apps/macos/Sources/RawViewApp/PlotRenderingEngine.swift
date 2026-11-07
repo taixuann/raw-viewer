@@ -10,12 +10,12 @@ enum PlotRenderingEngine {
 
     /// Outward tick length scaled to viewport readability on Retina monitors
     static func tickLength(fontScale: CGFloat, preset: ScientificPreset = .natureSingle) -> CGFloat {
-        max(4.5, CGFloat(preset.tickLengthPt) * fontScale)
+        max(5.5, CGFloat(preset.tickLengthPt) * 1.35 * fontScale)
     }
 
     /// Spine and tick thickness in pt for a given scientific preset
     static func spineThickness(preset: ScientificPreset = .natureSingle) -> CGFloat {
-        max(1.1, CGFloat(preset.spineThicknessPt) * 1.35)
+        max(1.2, CGFloat(preset.spineThicknessPt) * 1.5)
     }
 
     /// Resolve Font for scientific plots based on preset specification
@@ -30,22 +30,22 @@ enum PlotRenderingEngine {
 
     /// Title font size calibrated to viewport and preset
     static func titleFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
-        max(10.0, CGFloat(preset.titlePt) * 1.4 * fontScale)
+        max(14.0, CGFloat(preset.titlePt) * 1.75 * fontScale)
     }
 
     /// Axis label font size calibrated to viewport and preset
     static func axisLabelFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
-        max(8.5, CGFloat(preset.axisLabelPt) * 1.35 * fontScale)
+        max(13.0, CGFloat(preset.axisLabelPt) * 1.65 * fontScale)
     }
 
     /// Tick label font size calibrated to viewport and preset
     static func tickLabelFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
-        max(8.0, CGFloat(preset.tickLabelPt) * 1.35 * fontScale)
+        max(11.5, CGFloat(preset.tickLabelPt) * 1.55 * fontScale)
     }
 
     /// Legend font size calibrated to viewport and preset
     static func legendFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
-        max(8.5, CGFloat(preset.legendPt) * 1.35 * fontScale)
+        max(12.0, CGFloat(preset.legendPt) * 1.7 * fontScale)
     }
 
     /// Draw spine frame (closed 4-sided rectangular box or open 2-sided L-frame)
