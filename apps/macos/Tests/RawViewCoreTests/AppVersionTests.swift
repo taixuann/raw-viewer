@@ -34,5 +34,10 @@ struct AppVersionTests {
         // Older remote version (local is ahead or development build)
         #expect(!SemanticVersion.isNewer(latest: "0.2.0", current: "0.3.2"))
         #expect(!SemanticVersion.isNewer(latest: "v0.3.1", current: "0.3.2"))
+
+        // Prerelease precedence: stable version is newer than its prerelease
+        #expect(SemanticVersion.isNewer(latest: "0.4.0", current: "0.4.0-rc.1"))
+        #expect(SemanticVersion.isNewer(latest: "0.4.0-rc.2", current: "0.4.0-rc.1"))
+        #expect(!SemanticVersion.isNewer(latest: "0.4.0-rc.1", current: "0.4.0"))
     }
 }
