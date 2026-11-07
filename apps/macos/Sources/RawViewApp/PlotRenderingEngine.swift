@@ -43,9 +43,9 @@ enum PlotRenderingEngine {
         max(8.0, CGFloat(preset.tickLabelPt) * 1.35 * fontScale)
     }
 
-    /// Legend font size calibrated to viewport and preset
+    /// Legend font size calibrated to viewport and preset, matching tick label proportions
     static func legendFontSize(preset: ScientificPreset, fontScale: CGFloat) -> CGFloat {
-        max(8.5, CGFloat(preset.legendPt) * 1.35 * fontScale)
+        max(9.0, CGFloat(max(preset.legendPt, preset.tickLabelPt)) * 1.35 * fontScale)
     }
 
     /// Draw spine frame (closed 4-sided rectangular box or open 2-sided L-frame)

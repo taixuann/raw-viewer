@@ -48,4 +48,13 @@ struct ScientificPresetTests {
         #expect(ScientificPreset.standardPresets.allSatisfy { !$0.isOpenFrame })
         #expect(ScientificPreset.openFramePresets.allSatisfy { $0.isOpenFrame })
     }
+
+    @Test func typographySpecificationsArePositiveAndProportional() {
+        for preset in ScientificPreset.allCases {
+            #expect(preset.titlePt >= preset.axisLabelPt)
+            #expect(preset.axisLabelPt >= preset.tickLabelPt)
+            #expect(preset.legendPt > 0)
+            #expect(preset.tickLabelPt > 0)
+        }
+    }
 }
