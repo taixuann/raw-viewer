@@ -2,6 +2,59 @@ import AppKit
 import SwiftUI
 import RawViewCore
 
+enum InspectorTab: String, CaseIterable, Identifiable {
+    case data = "Data"
+    case style = "Style"
+    case canvas = "Canvas"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .data: return "chart.xyaxis.line"
+        case .style: return "paintpalette"
+        case .canvas: return "aspectratio"
+        }
+    }
+}
+
+struct InspectorCard<Content: View>: View {
+    let title: String
+    var badge: String? = nil
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(.primary.opacity(0.85))
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                }
+                Spacer()
+            }
+
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+}
+
 struct InspectorPane: View {
     let measurement: NormalizedMeasurement?
     let inspection: SourceInspection?
@@ -35,10 +88,6 @@ struct InspectorPane: View {
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
-    /// Task 7: variant-declared axis choices for the focused source. Menus
-    /// appear only when multiple choices exist; a nil selectedY means the
-    /// Default series (variant multi-Y defaults). Missing IDs surface via
-    /// axisNote with an explicit reset; never substituted.
     var eligibleX: [String] = []
     var eligibleY: [String] = []
     var defaultY: [String] = []
@@ -49,24 +98,33 @@ struct InspectorPane: View {
     var onSelectY: (([String]?) -> Void)? = nil
     var onResetAxes: (() -> Void)? = nil
 
-    @State private var isSeriesExpanded = true
-    @State private var isDataMappingExpanded = true
-    @State private var isAxesExpanded = true
-    @State private var isLinesShapesExpanded = true
-    @State private var isProgressionExpanded = true
-    @State private var isCanvasLegendExpanded = true
+    @State private var selectedTab: InspectorTab = .data
 
     var body: some View {
         VStack(spacing: 0) {
+            // Inspector Header
             HStack {
                 Text("INSPECTOR")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
+                if let measurement {
+                    Text(measurement.instrument.id)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, 14)
-            .frame(height: 44)
+            .frame(height: 38)
+
+            // SwiftPieces TrackingTabs Segmented Switcher
+            tabSwitcher
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+
+            Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -79,16 +137,14 @@ struct InspectorPane: View {
                         }
                         .frame(maxWidth: .infinity)
                     } else {
-                        if !selectedIDs.isEmpty {
-                            seriesSection
+                        switch selectedTab {
+                        case .data:
+                            dataTabContent
+                        case .style:
+                            styleTabContent
+                        case .canvas:
+                            canvasTabContent
                         }
-                        if measurement?.instrument.id == "generic-table" {
-                            dataMappingSection
-                        }
-                        axesSection
-                        linesShapesSection
-                        progressionSection
-                        canvasLegendSection
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 }
@@ -99,16 +155,120 @@ struct InspectorPane: View {
         .background(.background)
     }
 
-    private var dataMappingSection: some View {
-        guard let measurement, measurement.instrument.id == "generic-table" else {
-            return AnyView(EmptyView())
-        }
-        let channels = measurement.channels
-        let xCurrent = channels.firstIndex(where: { $0.name == measurement.view.x }) ?? 0
-        let yCurrent = channels.firstIndex(where: { $0.name == measurement.view.y?.first }) ?? min(1, max(0, channels.count - 1))
+    // MARK: - SwiftPieces TrackingTabs Switcher
 
-        return AnyView(
-            DisclosureGroup(isExpanded: $isDataMappingExpanded) {
+    private var tabSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach(InspectorTab.allCases) { tab in
+                let isSelected = selectedTab == tab
+                Button {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                        Text(tab.rawValue)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                            .shadow(color: .black.opacity(0.06), radius: 2, x: 0, y: 1)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                            )
+                    }
+                }
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+
+    // MARK: - Tab 1: Data & Axes
+
+    @ViewBuilder
+    private var dataTabContent: some View {
+        if !selectedIDs.isEmpty {
+            InspectorCard(title: "SERIES", badge: "\(selectedIDs.count)") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if selectedIDs.count >= 2 || activeSnapshotID != nil {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("SNAPSHOT / COMPARISON TITLE")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                TextField("Comparison Title…", text: $comparisonTitle)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 11))
+                                if let onSaveSnapshot {
+                                    Button {
+                                        onSaveSnapshot()
+                                    } label: {
+                                        Image(systemName: "camera")
+                                            .font(.system(size: 11))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .help("Save snapshot with this title")
+                                }
+                            }
+                        }
+                        .padding(.bottom, 2)
+                    }
+
+                    ForEach(selectedIDs.sorted(), id: \.self) { id in
+                        seriesRow(id)
+                    }
+
+                    if case .blocked(let reason) = overlay {
+                        Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+                    } else if case .eligible(let path) = overlay {
+                        let label = (path == "Comparison" || path.isEmpty) ? "Multi-source comparison" : "Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)"
+                        Text(label).font(.caption2).foregroundStyle(.secondary)
+                    } else if case .partial(let group) = overlay {
+                        let label = (group.manifestPath == "Comparison" || group.manifestPath.isEmpty) ? "Plotting compatible cohort" : "Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
+                        Text("\(label) (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
+                        ForEach(group.excluded, id: \.path) { exclusion in
+                            Text("Excluded \(URL(fileURLWithPath: exclusion.path).lastPathComponent): \(exclusion.reason)").font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+
+        if measurement?.instrument.id == "generic-table" {
+            genericTableCard
+        }
+
+        axesCard
+    }
+
+    @ViewBuilder
+    private var genericTableCard: some View {
+        if let measurement, measurement.instrument.id == "generic-table" {
+            let channels = measurement.channels
+            let xCurrent = channels.firstIndex(where: { $0.name == measurement.view.x }) ?? 0
+            let yCurrent = channels.firstIndex(where: { $0.name == measurement.view.y?.first }) ?? min(1, max(0, channels.count - 1))
+
+            InspectorCard(title: "DATA MAPPING", badge: "Generic Table") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Auto-detected Delimited Table")
                         .font(.caption2)
@@ -148,82 +308,344 @@ struct InspectorPane: View {
                         }
                     }
                 }
-                .padding(.top, 4)
-            } label: {
-                HStack {
-                    Text("DATA MAPPING")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("Generic Table")
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
-                }
             }
-        )
+        }
     }
 
-    private var seriesSection: some View {
-        DisclosureGroup(isExpanded: $isSeriesExpanded) {
+    private var axesCard: some View {
+        InspectorCard(title: "AXES & SCALES") {
             VStack(alignment: .leading, spacing: 8) {
-                if selectedIDs.count >= 2 || activeSnapshotID != nil {
+                if effectiveEligibleX.count >= 2 {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("SNAPSHOT / COMPARISON TITLE")
+                        Text("X CHANNEL")
                             .font(.system(size: 9.5, weight: .bold))
                             .foregroundStyle(.secondary)
+                        Picker("X Channel", selection: Binding(
+                            get: { selectedX ?? measurement?.view.x ?? "" },
+                            set: { onSelectX?($0) }
+                        )) {
+                            ForEach(effectiveEligibleX, id: \.self) { id in
+                                Text(channelOptionLabel(id)).tag(id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                }
+                if effectiveEligibleY.count >= 2 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Y CHANNEL")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        Picker("Y Channel", selection: Binding(
+                            get: { selectedY?.first ?? "default" },
+                            set: { key in onSelectY?(key == "default" ? nil : [key]) }
+                        )) {
+                            Text(defaultSeriesLabel).tag("default")
+                            ForEach(effectiveEligibleY, id: \.self) { id in
+                                Text(channelOptionLabel(id)).tag(id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                }
+
+                axisControl("X", absolute: $xAbsolute, scale: $xScale)
+                axisControl("Y", absolute: $yAbsolute, scale: $yScale)
+
+                Text("Absolute applies before the scale; log needs positive values.")
+                    .font(.caption2).foregroundStyle(.secondary)
+
+                if let axisNote {
+                    Text(axisNote)
+                        .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    Button("Reset to Variant Defaults") { onResetAxes?() }
+                        .font(.caption2).buttonStyle(.bordered).controlSize(.small)
+                } else if selectedX != nil || selectedY != nil {
+                    Button("Reset to Variant Defaults") { onResetAxes?() }
+                        .font(.caption2).buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+        }
+    }
+
+    // MARK: - Tab 2: Style & Curves
+
+    @ViewBuilder
+    private var styleTabContent: some View {
+        InspectorCard(title: "MARKS & CURVES") {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mark Type")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Picker("Mark Type", selection: $markType) {
+                        ForEach(PlotMarkType.allCases) { mark in
+                            Text(mark.rawValue).tag(mark)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                if markType != .dots {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connection")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Picker("Connection", selection: $interpolation) {
+                            ForEach(PlotInterpolation.allCases) { interp in
+                                Text(interp.rawValue).tag(interp)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            TextField("Comparison Title…", text: $comparisonTitle)
+                            Text("Line width")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
                                 .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11))
-                            if let onSaveSnapshot {
-                                Button {
-                                    onSaveSnapshot()
-                                } label: {
-                                    Image(systemName: "camera")
-                                        .font(.system(size: 11))
-                                }
-                                .buttonStyle(.bordered)
+                                .font(.system(size: 11).monospacedDigit())
+                                .frame(width: 44)
+                                .multilineTextAlignment(.trailing)
+                            Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
+                                .labelsHidden()
                                 .controlSize(.small)
-                                .help("Save snapshot with this title")
+                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
+                            .controlSize(.small)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
+                }
+
+                if markType != .line {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text("Dot size")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11).monospacedDigit())
+                                .frame(width: 44)
+                                .multilineTextAlignment(.trailing)
+                            Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
+                                .labelsHidden()
+                                .controlSize(.small)
+                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
+                            .controlSize(.small)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
+                }
+
+                Toggle(isOn: $colorBySweepProgress) {
+                    Text("Color by Sweep Progress")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
+            }
+        }
+
+        progressionCard
+    }
+
+    @ViewBuilder
+    private var progressionCard: some View {
+        if let measurement {
+            let progChannel = measurement.progressionChannel
+            let candidateChannels = measurement.channels.filter { ch in
+                ch.quantity == "index" || ch.quantity == "time" ||
+                ch.name.lowercased().contains("scan") || ch.name.lowercased().contains("cycle") ||
+                ch.name.lowercased().contains("step") || ch.name.lowercased().contains("time")
+            }
+            if !candidateChannels.isEmpty || selectedProgressionChannel != nil {
+                let activeChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? progChannel
+                let allCycles = ProgressionPlotReader.extractDiscreteKeys(from: activeChannel?.values)
+
+                InspectorCard(title: "PROGRESSION & CYCLES", badge: activeChannel?.label) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle(isOn: $progressionFilterEnabled) {
+                            Text("Enable Cycle / Progression Segmentation")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.primary)
+                        }
+
+                        if progressionFilterEnabled {
+                            if candidateChannels.count > 1 {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("PROGRESSION CHANNEL")
+                                        .font(.system(size: 9.5, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                    Picker("Progression Channel", selection: Binding(
+                                        get: { activeChannel?.name ?? "" },
+                                        set: { selectedProgressionChannel = $0 }
+                                    )) {
+                                        ForEach(candidateChannels, id: \.name) { ch in
+                                            Text("\(ch.label) (\(ch.name))").tag(ch.name)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .pickerStyle(.menu)
+                                }
+                            }
+
+                            Toggle(isOn: $colorByCycle) {
+                                Text("Color Segments by Cycle (Colormap)")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.primary)
+                            }
+
+                            if !allCycles.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("CYCLES (\(selectedCycles.isEmpty ? allCycles.count : selectedCycles.count)/\(allCycles.count))")
+                                            .font(.system(size: 9.5, weight: .bold))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Button("All") {
+                                            selectedCycles.removeAll()
+                                        }
+                                        .buttonStyle(.plain)
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.accentColor)
+
+                                        if allCycles.count > 1 {
+                                            Button("First") {
+                                                if let first = allCycles.first { selectedCycles = [first] }
+                                            }
+                                            .buttonStyle(.plain)
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.accentColor)
+
+                                            Button("Last") {
+                                                if let last = allCycles.last { selectedCycles = [last] }
+                                            }
+                                            .buttonStyle(.plain)
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.accentColor)
+
+                                            if allCycles.count >= 5 {
+                                                Button("Every 5th") {
+                                                    selectedCycles = Set(stride(from: 0, to: allCycles.count, by: 5).map { allCycles[$0] })
+                                                }
+                                                .buttonStyle(.plain)
+                                                .font(.caption2)
+                                                .foregroundStyle(Color.accentColor)
+                                            }
+                                        }
+                                    }
+
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 4) {
+                                            ForEach(allCycles, id: \.self) { cycleKey in
+                                                let isSelected = selectedCycles.isEmpty || selectedCycles.contains(cycleKey)
+                                                Button {
+                                                    if selectedCycles.isEmpty {
+                                                        selectedCycles = [cycleKey]
+                                                    } else if selectedCycles.contains(cycleKey) {
+                                                        selectedCycles.remove(cycleKey)
+                                                    } else {
+                                                        selectedCycles.insert(cycleKey)
+                                                    }
+                                                } label: {
+                                                    Text(cycleKey)
+                                                        .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 3)
+                                                        .background(
+                                                            RoundedRectangle(cornerRadius: 4)
+                                                                .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
+                                                        )
+                                                        .overlay(
+                                                            RoundedRectangle(cornerRadius: 4)
+                                                                .stroke(isSelected ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: 0.5)
+                                                        )
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                        .padding(.vertical, 2)
+                                    }
+                                }
                             }
                         }
                     }
-                    .padding(.bottom, 2)
                 }
-
-                if selectedIDs.isEmpty {
-                    Text("No sources selected.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    ForEach(selectedIDs.sorted(), id: \.self) { id in
-                        seriesRow(id)
-                    }
-                }
-                if case .blocked(let reason) = overlay {
-                    Text(reason).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
-                } else if case .eligible(let path) = overlay {
-                    let label = (path == "Comparison" || path.isEmpty) ? "Multi-source comparison" : "Shared manifest \(URL(fileURLWithPath: path).lastPathComponent)"
-                    Text(label).font(.caption2).foregroundStyle(.secondary)
-                } else if case .partial(let group) = overlay {
-                    let label = (group.manifestPath == "Comparison" || group.manifestPath.isEmpty) ? "Plotting compatible cohort" : "Shared manifest \(URL(fileURLWithPath: group.manifestPath).lastPathComponent)"
-                    Text("\(label) (\(group.plottedPaths.count) of \(group.plottedPaths.count + group.excluded.count)). Selection unchanged.").font(.caption2).foregroundStyle(.secondary)
-                    ForEach(group.excluded, id: \.path) { exclusion in
-                        Text("Excluded \(URL(fileURLWithPath: exclusion.path).lastPathComponent): \(exclusion.reason)").font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
-                    }
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            HStack(spacing: 6) {
-                Text("SERIES")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.primary.opacity(0.85))
-                Text("\(selectedIDs.count)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Capsule().fill(.quaternary))
             }
         }
+    }
+
+    // MARK: - Tab 3: Canvas & Legend
+
+    private var canvasTabContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            InspectorCard(title: "LEGEND") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $showLegend) {
+                        Text("Show Legend")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+
+                    Text("Legends are automatically omitted for single-series plots with matching axis title. Custom labels or multi-series plots display authentic scientific glyphs.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Button("Reset Legend Position") {
+                        legendOffset = .zero
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!showLegend || legendOffset == .zero)
+                }
+            }
+
+            if let onSaveSnapshot {
+                InspectorCard(title: "SNAPSHOT") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Save the current plot state, axis transforms, and styling into the project snapshot history.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            onSaveSnapshot()
+                        } label: {
+                            Label("Save Plot Snapshot", systemImage: "camera")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Helper Views & Methods
+
+    private var effectiveEligibleX: [String] {
+        if !eligibleX.isEmpty { return eligibleX }
+        return measurement?.channels.map(\.name) ?? []
+    }
+
+    private var effectiveEligibleY: [String] {
+        if !eligibleY.isEmpty { return eligibleY }
+        return measurement?.channels.map(\.name) ?? []
     }
 
     private func seriesRow(_ id: String) -> some View {
@@ -317,336 +739,6 @@ struct InspectorPane: View {
         .padding(.vertical, 2)
     }
 
-    private var linesShapesSection: some View {
-        DisclosureGroup(isExpanded: $isLinesShapesExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Mark Type")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Picker("Mark Type", selection: $markType) {
-                        ForEach(PlotMarkType.allCases) { mark in
-                            Text(mark.rawValue).tag(mark)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
-                if markType != .dots {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Connection")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        Picker("Connection", selection: $interpolation) {
-                            ForEach(PlotInterpolation.allCases) { interp in
-                                Text(interp.rawValue).tag(interp)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text("Line width")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            TextField("1.4", value: $lineWidth, format: .number.precision(.fractionLength(1)))
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11).monospacedDigit())
-                                .frame(width: 44)
-                                .multilineTextAlignment(.trailing)
-                            Stepper("", value: $lineWidth, in: 0.2...5.0, step: 0.1)
-                                .labelsHidden()
-                                .controlSize(.small)
-                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                        Slider(value: $lineWidth, in: 0.2...5.0, step: 0.1)
-                            .controlSize(.small)
-                    }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
-                }
-
-                if markType != .line {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text("Dot size")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            TextField("4.5", value: $markerSize, format: .number.precision(.fractionLength(1)))
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11).monospacedDigit())
-                                .frame(width: 44)
-                                .multilineTextAlignment(.trailing)
-                            Stepper("", value: $markerSize, in: 2.0...10.0, step: 0.5)
-                                .labelsHidden()
-                                .controlSize(.small)
-                            Text("pt").font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                        Slider(value: $markerSize, in: 2.0...10.0, step: 0.5)
-                            .controlSize(.small)
-                    }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.6)))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
-                }
-
-                Toggle(isOn: $colorBySweepProgress) {
-                    Text("Color by Sweep Progress")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.primary)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("LINES & SHAPES")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.85))
-        }
-    }
-
-    private var canvasLegendSection: some View {
-        DisclosureGroup(isExpanded: $isCanvasLegendExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: $showLegend) {
-                    Text("Show Legend")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.primary)
-                }
-
-                Button("Reset Legend Position") {
-                    legendOffset = .zero
-                }
-                .font(.caption2)
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .disabled(!showLegend || legendOffset == .zero)
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("CANVAS & LEGEND")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.85))
-        }
-    }
-
-    private var effectiveEligibleX: [String] {
-        if !eligibleX.isEmpty { return eligibleX }
-        return measurement?.channels.map(\.name) ?? []
-    }
-
-    private var effectiveEligibleY: [String] {
-        if !eligibleY.isEmpty { return eligibleY }
-        return measurement?.channels.map(\.name) ?? []
-    }
-
-    private var axesSection: some View {
-        DisclosureGroup(isExpanded: $isAxesExpanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                if effectiveEligibleX.count >= 2 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("X CHANNEL")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundStyle(.secondary)
-                        Picker("X Channel", selection: Binding(
-                            get: { selectedX ?? measurement?.view.x ?? "" },
-                            set: { onSelectX?($0) }
-                        )) {
-                            ForEach(effectiveEligibleX, id: \.self) { id in
-                                Text(channelOptionLabel(id)).tag(id)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-                }
-                if effectiveEligibleY.count >= 2 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Y CHANNEL")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundStyle(.secondary)
-                        Picker("Y Channel", selection: Binding(
-                            get: { selectedY?.first ?? "default" },
-                            set: { key in onSelectY?(key == "default" ? nil : [key]) }
-                        )) {
-                            Text(defaultSeriesLabel).tag("default")
-                            ForEach(effectiveEligibleY, id: \.self) { id in
-                                Text(channelOptionLabel(id)).tag(id)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-                }
-                axisControl("X", absolute: $xAbsolute, scale: $xScale)
-                axisControl("Y", absolute: $yAbsolute, scale: $yScale)
-                Text("Absolute applies before the scale; log needs positive values.")
-                    .font(.caption2).foregroundStyle(.secondary)
-                if let axisNote {
-                    Text(axisNote)
-                        .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-                    Button("Reset to Variant Defaults") { onResetAxes?() }
-                        .font(.caption2).buttonStyle(.bordered).controlSize(.small)
-                } else if selectedX != nil || selectedY != nil {
-                    Button("Reset to Variant Defaults") { onResetAxes?() }
-                        .font(.caption2).buttonStyle(.bordered).controlSize(.small)
-                }
-            }
-            .padding(.top, 4)
-        } label: {
-            Text("AXES")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.85))
-        }
-    }
-
-    private var progressionSection: some View {
-        guard let measurement else { return AnyView(EmptyView()) }
-        let progChannel = measurement.progressionChannel
-        let candidateChannels = measurement.channels.filter { ch in
-            ch.quantity == "index" || ch.quantity == "time" ||
-            ch.name.lowercased().contains("scan") || ch.name.lowercased().contains("cycle") ||
-            ch.name.lowercased().contains("step") || ch.name.lowercased().contains("time")
-        }
-        guard !candidateChannels.isEmpty || selectedProgressionChannel != nil else {
-            return AnyView(EmptyView())
-        }
-        let activeChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? progChannel
-        let allCycles = ProgressionPlotReader.extractDiscreteKeys(from: activeChannel?.values)
-
-        return AnyView(
-            DisclosureGroup(isExpanded: $isProgressionExpanded) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(isOn: $progressionFilterEnabled) {
-                        Text("Enable Cycle / Progression Segmentation")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.primary)
-                    }
-
-                    if progressionFilterEnabled {
-                        if candidateChannels.count > 1 {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("PROGRESSION CHANNEL")
-                                    .font(.system(size: 9.5, weight: .bold))
-                                    .foregroundStyle(.secondary)
-                                Picker("Progression Channel", selection: Binding(
-                                    get: { activeChannel?.name ?? "" },
-                                    set: { selectedProgressionChannel = $0 }
-                                )) {
-                                    ForEach(candidateChannels, id: \.name) { ch in
-                                        Text("\(ch.label) (\(ch.name))").tag(ch.name)
-                                    }
-                                }
-                                .labelsHidden()
-                                .pickerStyle(.menu)
-                            }
-                        }
-
-                        Toggle(isOn: $colorByCycle) {
-                            Text("Color Segments by Cycle (Colormap)")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.primary)
-                        }
-
-                        if !allCycles.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("CYCLES (\(selectedCycles.isEmpty ? allCycles.count : selectedCycles.count)/\(allCycles.count))")
-                                        .font(.system(size: 9.5, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button("All") {
-                                        selectedCycles.removeAll()
-                                    }
-                                    .buttonStyle(.plain)
-                                    .font(.caption2)
-                                    .foregroundStyle(Color.accentColor)
-
-                                    if allCycles.count > 1 {
-                                        Button("First") {
-                                            if let first = allCycles.first { selectedCycles = [first] }
-                                        }
-                                        .buttonStyle(.plain)
-                                        .font(.caption2)
-                                        .foregroundStyle(Color.accentColor)
-
-                                        Button("Last") {
-                                            if let last = allCycles.last { selectedCycles = [last] }
-                                        }
-                                        .buttonStyle(.plain)
-                                        .font(.caption2)
-                                        .foregroundStyle(Color.accentColor)
-
-                                        if allCycles.count >= 5 {
-                                            Button("Every 5th") {
-                                                selectedCycles = Set(stride(from: 0, to: allCycles.count, by: 5).map { allCycles[$0] })
-                                            }
-                                            .buttonStyle(.plain)
-                                            .font(.caption2)
-                                            .foregroundStyle(Color.accentColor)
-                                        }
-                                    }
-                                }
-
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 4) {
-                                        ForEach(allCycles, id: \.self) { cycleKey in
-                                            let isSelected = selectedCycles.isEmpty || selectedCycles.contains(cycleKey)
-                                            Button {
-                                                if selectedCycles.isEmpty {
-                                                    selectedCycles = [cycleKey]
-                                                } else if selectedCycles.contains(cycleKey) {
-                                                    selectedCycles.remove(cycleKey)
-                                                } else {
-                                                    selectedCycles.insert(cycleKey)
-                                                }
-                                            } label: {
-                                                Text(cycleKey)
-                                                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 3)
-                                                    .background(
-                                                        RoundedRectangle(cornerRadius: 4)
-                                                            .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
-                                                    )
-                                                    .overlay(
-                                                        RoundedRectangle(cornerRadius: 4)
-                                                            .stroke(isSelected ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: 0.5)
-                                                    )
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
-                                    }
-                                    .padding(.vertical, 2)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 4)
-            } label: {
-                HStack {
-                    Text("PROGRESSION & CYCLES")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.primary.opacity(0.85))
-                    Spacer()
-                    if let activeChannel {
-                        Text(activeChannel.label)
-                            .font(.system(size: 9.5, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
-            }
-        )
-    }
-
-    /// Channel menu label. Stable duplicate labels (same text, distinct IDs)
-    /// stay selectable via the ID qualifier.
     private func channelOptionLabel(_ id: String) -> String {
         guard let channel = measurement?.channel(named: id) else { return id }
         let unitSuffix = channel.unit.isEmpty ? "" : " (\(channel.unit))"
@@ -655,7 +747,6 @@ struct InspectorPane: View {
         return "\(baseLabel)\(unitSuffix)"
     }
 
-    /// The preserved multi-Y defaults, shown as one Default-series choice.
     private var defaultSeriesLabel: String {
         let ids = defaultY.isEmpty ? (measurement?.view.y ?? []) : defaultY
         let labels = ids.map { measurement?.channel(named: $0)?.label ?? $0 }

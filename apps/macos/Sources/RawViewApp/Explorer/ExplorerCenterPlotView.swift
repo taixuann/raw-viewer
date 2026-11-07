@@ -3,27 +3,28 @@ import SwiftUI
 import RawViewCore
 
 struct DraggableLegendView: View {
-    let items: [(color: Color, label: String)]
+    let items: [(color: Color, label: String, markType: PlotMarkType)]
     var fontSize: CGFloat = 10.0
     var lineWidth: CGFloat = 1.4
+    var markerSize: CGFloat = 4.5
+    var preset: ScientificPreset = .natureSingle
     @Binding var offset: CGSize
     @State private var dragStart: CGSize = .zero
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(spacing: 6) {
-                        Capsule()
-                            .fill(item.color)
-                            .frame(width: 14, height: max(1.5, min(3.0, lineWidth)))
+                    HStack(spacing: 8) {
+                        legendGlyph(for: item)
                         Text(item.label)
-                            .font(.system(size: fontSize, weight: .regular))
+                            .font(PlotRenderingEngine.plotFont(preset: preset, size: fontSize))
                             .foregroundStyle(.primary)
                     }
                 }
             }
-            .padding(4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
             .offset(offset)
             .gesture(
@@ -39,6 +40,32 @@ struct DraggableLegendView: View {
                     }
             )
             .help("Drag to reposition legend")
+        }
+    }
+
+    @ViewBuilder
+    private func legendGlyph(for item: (color: Color, label: String, markType: PlotMarkType)) -> some View {
+        let strokeH = max(1.0, min(3.0, lineWidth))
+        let dotD = max(4.0, min(8.0, markerSize))
+        switch item.markType {
+        case .line:
+            Rectangle()
+                .fill(item.color)
+                .frame(width: 18, height: strokeH)
+        case .dots:
+            Circle()
+                .fill(item.color)
+                .frame(width: dotD, height: dotD)
+        case .lineAndDots:
+            ZStack {
+                Rectangle()
+                    .fill(item.color)
+                    .frame(width: 18, height: strokeH)
+                Circle()
+                    .fill(item.color)
+                    .frame(width: dotD, height: dotD)
+            }
+            .frame(width: 18, height: dotD)
         }
     }
 }
@@ -120,19 +147,27 @@ struct NativePlot: View {
                 }
 
                 if showLegend {
-                    let legendItems: [(color: Color, label: String)] = data.1.enumerated().map { index, item in
-                        let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
-                        return (palette(index), name)
+                    let hasCustomLabel = data.1.first.flatMap { customSeriesLabels[$0.0] }?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    let hasProgressionSegmentation = progressionFilterEnabled && !selectedCycles.isEmpty
+                    let isMultiSeries = data.1.count > 1
+
+                    if isMultiSeries || hasCustomLabel || hasProgressionSegmentation {
+                        let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = data.1.enumerated().map { index, item in
+                            let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
+                            return (palette(index), name, markType)
+                        }
+                        DraggableLegendView(
+                            items: legendItems,
+                            fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
+                            lineWidth: CGFloat(lineWidth),
+                            markerSize: CGFloat(markerSize),
+                            preset: preset,
+                            offset: $legendOffset
+                        )
+                        .padding(.trailing, 28)
+                        .padding(.top, 24)
                     }
-                    DraggableLegendView(
-                        items: legendItems,
-                        fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale),
-                        lineWidth: CGFloat(lineWidth),
-                        offset: $legendOffset
-                    )
-                    .padding(.trailing, 28)
-                    .padding(.top, 24)
                 }
             }
             .onChange(of: resetTrigger) { _, _ in
@@ -153,10 +188,11 @@ struct NativePlot: View {
         let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
 
         let yRangeTemp = viewport(expanded(finiteY), pan: pan.height, dimension: size.height, vertical: true)
+        let ySpan = yRangeTemp.upperBound - yRangeTemp.lowerBound
         let yLabels: [String] = (0...4).map { index in
             let t = Double(index) / 4
-            let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
-            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
+            let y = yRangeTemp.lowerBound + t * ySpan
+            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo, span: ySpan)
         }
         let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
@@ -188,10 +224,11 @@ struct NativePlot: View {
         let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
         let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
         let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
+        let xSpan = xRange.upperBound - xRange.lowerBound
 
         for index in 0...4 {
             let t = Double(index) / 4
-            let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
+            let x = xRange.lowerBound + t * xSpan
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
 
@@ -200,7 +237,7 @@ struct NativePlot: View {
             context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
             context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo, span: xSpan)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
             context.draw(Text(yLabels[index]).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
@@ -304,8 +341,20 @@ struct NativePlot: View {
         let magnitude = absolute ? "|\(physical)|" : physical
         return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
     }
-    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo) -> String {
-        scale == .logarithmic ? "10^\(AxisFormatter.formatTick(value, factor: 1.0))" : AxisFormatter.formatTick(value, factor: scaleInfo.factor)
+    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, span: Double = 1.0) -> String {
+        if scale == .logarithmic {
+            return "10^\(AxisFormatter.formatTick(value, factor: 1.0))"
+        }
+        let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
+        let precision: Int
+        if scaledSpan < 0.05 {
+            precision = 3
+        } else if scaledSpan < 0.5 {
+            precision = 2
+        } else {
+            precision = 1
+        }
+        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: precision)
     }
     private func palette(_ index: Int) -> Color {
         NativeOverlayPalette.color(index)
@@ -451,15 +500,17 @@ struct OverlayPlot: View {
                 }
 
                 if showLegend {
-                    let legendItems: [(color: Color, label: String)] = data.series.map { item in
+                    let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = data.series.map { item in
                         let custom = customSeriesLabels[item.sourcePath]?.trimmingCharacters(in: .whitespacesAndNewlines)
                         let name = (custom != nil && !custom!.isEmpty) ? custom! : item.label
-                        return (palette(item.sourcePath, order: sourceOrder), name)
+                        return (palette(item.sourcePath, order: sourceOrder), name, markType)
                     }
                     DraggableLegendView(
                         items: legendItems,
                         fontSize: max(8.5, CGFloat(preset.legendPt) * 1.35 * headerFontScale),
                         lineWidth: CGFloat(lineWidth),
+                        markerSize: CGFloat(markerSize),
+                        preset: preset,
                         offset: $legendOffset
                     )
                     .padding(.trailing, 28)
@@ -481,10 +532,11 @@ struct OverlayPlot: View {
         let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
 
         let yRangeTemp = viewport(expanded(yBounds), pan: pan.height, dimension: size.height, vertical: true)
+        let ySpan = yRangeTemp.upperBound - yRangeTemp.lowerBound
         let yLabels: [String] = (0...4).map { index in
             let t = Double(index) / 4
-            let y = yRangeTemp.lowerBound + t * (yRangeTemp.upperBound - yRangeTemp.lowerBound)
-            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo)
+            let y = yRangeTemp.lowerBound + t * ySpan
+            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo, span: ySpan)
         }
         let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
@@ -516,10 +568,11 @@ struct OverlayPlot: View {
         let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
         let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
         let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
+        let xSpan = xRange.upperBound - xRange.lowerBound
 
         for index in 0...4 {
             let t = Double(index) / 4
-            let x = xRange.lowerBound + t * (xRange.upperBound - xRange.lowerBound)
+            let x = xRange.lowerBound + t * xSpan
             let px = plot.minX + t * plot.width
             let py = plot.maxY - t * plot.height
 
@@ -528,7 +581,7 @@ struct OverlayPlot: View {
             context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
             context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo, span: xSpan)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
             context.draw(Text(yLabels[index]).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
@@ -638,8 +691,20 @@ struct OverlayPlot: View {
         let magnitude = absolute ? "|\(physical)|" : physical
         return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
     }
-    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo) -> String {
-        scale == .logarithmic ? "10^\(AxisFormatter.formatTick(value, factor: 1.0))" : AxisFormatter.formatTick(value, factor: scaleInfo.factor)
+    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, span: Double = 1.0) -> String {
+        if scale == .logarithmic {
+            return "10^\(AxisFormatter.formatTick(value, factor: 1.0))"
+        }
+        let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
+        let precision: Int
+        if scaledSpan < 0.05 {
+            precision = 3
+        } else if scaledSpan < 0.5 {
+            precision = 2
+        } else {
+            precision = 1
+        }
+        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: precision)
     }
     private func palette(_ sourcePath: String, order: [String]) -> Color {
         NativeOverlayPalette.color(order.firstIndex(of: sourcePath) ?? 0)
@@ -1209,8 +1274,11 @@ struct ProjectGallery: View {
         @ViewBuilder let content: () -> Content
 
         private func cardSize(in geoSize: CGSize) -> CGSize {
-            let availW = max(100, geoSize.width - 48)
-            let availH = max(100, geoSize.height - 48)
+            let titleReserve: CGFloat = title != nil ? 44 : 0
+            let verticalMargin: CGFloat = 40
+            let horizontalMargin: CGFloat = 48
+            let availW = max(100, geoSize.width - horizontalMargin)
+            let availH = max(100, geoSize.height - verticalMargin - titleReserve)
             let maxPlotW = max(100, availW - 145)
             let maxPlotH = max(80, availH - 145)
             var plotW = maxPlotW
@@ -1221,7 +1289,7 @@ struct ProjectGallery: View {
             }
             let cardW = plotW + 145
             let cardH = plotH + 145
-            return CGSize(width: max(280, cardW), height: max(240, cardH))
+            return CGSize(width: max(280, cardW), height: max(240, min(cardH, availH)))
         }
 
         var body: some View {

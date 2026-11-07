@@ -10,12 +10,12 @@ enum PlotRenderingEngine {
 
     /// Outward tick length scaled to viewport readability on Retina monitors
     static func tickLength(fontScale: CGFloat, preset: ScientificPreset = .natureSingle) -> CGFloat {
-        max(3.5, CGFloat(preset.tickLengthPt) * fontScale)
+        max(4.5, CGFloat(preset.tickLengthPt) * fontScale)
     }
 
     /// Spine and tick thickness in pt for a given scientific preset
     static func spineThickness(preset: ScientificPreset = .natureSingle) -> CGFloat {
-        CGFloat(preset.spineThicknessPt)
+        max(1.1, CGFloat(preset.spineThicknessPt) * 1.35)
     }
 
     /// Resolve Font for scientific plots based on preset specification
