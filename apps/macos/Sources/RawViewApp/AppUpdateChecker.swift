@@ -76,9 +76,11 @@ final class AppUpdateChecker: ObservableObject {
                 self.releaseNotes = body
                 self.updateAvailable = true
 
-                showUpdateAlert(
-                    latestTag: tagName, assetURL: appAssetURL, releaseURL: releaseHtmlUrl,
-                    notes: body)
+                if userInitiated {
+                    showUpdateAlert(
+                        latestTag: tagName, assetURL: appAssetURL, releaseURL: releaseHtmlUrl,
+                        notes: body)
+                }
             } else if userInitiated {
                 showAlert(
                     title: "You're Up to Date",
@@ -181,6 +183,16 @@ final class AppUpdateChecker: ObservableObject {
         progressWindow = nil
         progressLabel = nil
         progressSubtitle = nil
+    }
+
+    func applyUpdateAndRestart() async {
+        guard let assetURL = assetDownloadURL else {
+            if let url = releaseURL {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+        await downloadAndInstall(assetURL: assetURL, latestTag: latestVersion)
     }
 
     private func downloadAndInstall(assetURL: URL, latestTag: String) async {

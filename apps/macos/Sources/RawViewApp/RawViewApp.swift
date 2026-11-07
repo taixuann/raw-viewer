@@ -26,6 +26,7 @@ struct RawViewApp: App {
                 }
                 .task {
                     _ = await NodeBackend.shared.ensureRunning()
+                    await AppUpdateChecker.shared.checkForUpdates(userInitiated: false)
                 }
         }
         .defaultSize(width: 1320, height: 820)
@@ -426,6 +427,7 @@ final class RawViewModel: ObservableObject {
         if explorerViewError?.hasPrefix("Explorer view") == true { explorerViewError = nil }
     }
     @Published var showLegend = true
+    @Published var legendScale: Double = 1.0
     @Published var customSeriesLabels: [String: String] = [:]
     @Published var legendOffset: CGSize = .zero
 
@@ -1703,6 +1705,7 @@ struct RawViewShell: View {
                        availablePresets: model.availablePresets,
                        selectedPreset: $model.selectedPreset,
                        showLegend: $model.showLegend,
+                       legendScale: $model.legendScale,
                        customSeriesLabels: model.customSeriesLabels,
                        legendOffset: $model.legendOffset)
             .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
@@ -1961,13 +1964,15 @@ struct RawViewShell: View {
         }
         let baseMeasurement = focusedID.flatMap { model.sourceStates[$0]?.measurement }
         let override = focusedID.flatMap { model.activeAxisOverride(for: $0) }
-        let allChannelNames = currentState?.measurement?.channels.map(\.name) ?? []
+        let plottableChannelNames = currentState?.measurement?.channels.filter { ch in
+            ch.quantity != "metadata" && ch.quantity != "index" && ch.quantity != "text"
+        }.map(\.name) ?? []
         let effectiveEligibleX = !(currentState?.measurement?.eligibleXIDs.isEmpty ?? true)
             ? (currentState?.measurement?.eligibleXIDs ?? [])
-            : allChannelNames
+            : plottableChannelNames
         let effectiveEligibleY = !(currentState?.measurement?.eligibleYIDs.isEmpty ?? true)
             ? (currentState?.measurement?.eligibleYIDs ?? [])
-            : allChannelNames
+            : plottableChannelNames
         return InspectorPane(measurement: currentState?.measurement, inspection: currentState?.inspection,
                              source: currentSource?.url, sourceID: currentSource?.id, error: currentState?.error ?? model.error,
                              states: model.displayStates,
@@ -1987,6 +1992,7 @@ struct RawViewShell: View {
                              overlay: model.overlayResult(),
                              onRetry: model.loadFocused,
                              showLegend: $model.showLegend,
+                             legendScale: $model.legendScale,
                              customSeriesLabels: $model.customSeriesLabels,
                              legendOffset: $model.legendOffset,
                              comparisonTitle: $model.comparisonTitle,
