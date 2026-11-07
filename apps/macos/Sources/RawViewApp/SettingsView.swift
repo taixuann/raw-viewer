@@ -16,7 +16,6 @@ struct SettingsView: View {
     enum SettingsTab: String, Identifiable, CaseIterable {
         case project
         case appearance
-        case ai
         case performance
         case storage
         case hotkeys
@@ -27,7 +26,6 @@ struct SettingsView: View {
             switch self {
             case .project: return "Project"
             case .appearance: return "Appearance"
-            case .ai: return "LLM & AI Models"
             case .performance: return "Performance"
             case .storage: return "Storage"
             case .hotkeys: return "Hotkeys"
@@ -38,7 +36,6 @@ struct SettingsView: View {
             switch self {
             case .project: return "folder"
             case .appearance: return "paintbrush"
-            case .ai: return "sparkles"
             case .performance: return "bolt.fill"
             case .storage: return "internaldrive"
             case .hotkeys: return "keyboard"
@@ -46,7 +43,7 @@ struct SettingsView: View {
         }
     }
 
-    @State private var selectedTab: SettingsTab = .ai
+    @State private var selectedTab: SettingsTab = .project
 
     var body: some View {
         HStack(spacing: 0) {
@@ -55,10 +52,6 @@ struct SettingsView: View {
                     Section("General") {
                         tabRow(.project)
                         tabRow(.appearance)
-                    }
-
-                    Section("Intelligence") {
-                        tabRow(.ai)
                     }
 
                     Section("System") {
@@ -99,8 +92,6 @@ struct SettingsView: View {
             projectTab
         case .appearance:
             appearanceTab
-        case .ai:
-            AISettingsView()
         case .performance:
             performanceTab
         case .storage:
