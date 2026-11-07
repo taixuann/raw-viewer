@@ -99,7 +99,11 @@ pub fn run(check: bool, json_output: bool) -> CliResult {
     }
 
     let target = get_target_triple();
-    let expected_asset = format!("raw-viewer-{target}.tar.gz");
+    let expected_asset = if target.contains("windows") {
+        format!("raw-viewer-{target}.zip")
+    } else {
+        format!("raw-viewer-{target}.tar.gz")
+    };
     let fallback_asset = if target.contains("apple-darwin") {
         Some("raw-viewer-universal-apple-darwin.tar.gz".to_string())
     } else {
@@ -176,9 +180,14 @@ pub fn run(check: bool, json_output: bool) -> CliResult {
         };
     }
 
-    let tar_file = tmp_dir.join("archive.tar.gz");
+    let archive_name = if target.contains("windows") {
+        "archive.zip"
+    } else {
+        "archive.tar.gz"
+    };
+    let archive_file = tmp_dir.join(archive_name);
     let curl_status = Command::new("curl")
-        .args(["-sSfL", "-o", tar_file.to_str().unwrap(), &download_url])
+        .args(["-sSfL", "-o", archive_file.to_str().unwrap(), &download_url])
         .status();
 
     if !curl_status.map(|s| s.success()).unwrap_or(false) {
@@ -193,16 +202,42 @@ pub fn run(check: bool, json_output: bool) -> CliResult {
         };
     }
 
-    let tar_status = Command::new("tar")
-        .args([
-            "-xzf",
-            tar_file.to_str().unwrap(),
-            "-C",
-            tmp_dir.to_str().unwrap(),
-        ])
-        .status();
+    let unpack_status = if target.contains("windows") {
+        let res = Command::new("tar")
+            .args([
+                "-xf",
+                archive_file.to_str().unwrap(),
+                "-C",
+                tmp_dir.to_str().unwrap(),
+            ])
+            .status();
+        if res.as_ref().map(|s| s.success()).unwrap_or(false) {
+            res
+        } else {
+            Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "Expand-Archive -Force -Path '{}' -DestinationPath '{}'",
+                        archive_file.display(),
+                        tmp_dir.display()
+                    ),
+                ])
+                .status()
+        }
+    } else {
+        Command::new("tar")
+            .args([
+                "-xzf",
+                archive_file.to_str().unwrap(),
+                "-C",
+                tmp_dir.to_str().unwrap(),
+            ])
+            .status()
+    };
 
-    if !tar_status.map(|s| s.success()).unwrap_or(false) {
+    if !unpack_status.map(|s| s.success()).unwrap_or(false) {
         let _ = fs::remove_dir_all(&tmp_dir);
         return CliResult {
             exit_code: EXIT_IO,
@@ -214,14 +249,19 @@ pub fn run(check: bool, json_output: bool) -> CliResult {
         };
     }
 
-    let new_binary = tmp_dir.join("raw-viewer");
+    let binary_name = if target.contains("windows") {
+        "raw-viewer.exe"
+    } else {
+        "raw-viewer"
+    };
+    let new_binary = tmp_dir.join(binary_name);
     if !new_binary.exists() {
         let _ = fs::remove_dir_all(&tmp_dir);
         return CliResult {
             exit_code: EXIT_IO,
             output: Err((
                 "not_found".into(),
-                "extracted archive did not contain raw-viewer binary".into(),
+                format!("extracted archive did not contain {binary_name} binary"),
                 json!({}),
             )),
         };
@@ -233,42 +273,75 @@ pub fn run(check: bool, json_output: bool) -> CliResult {
         let _ = fs::set_permissions(&new_binary, fs::Permissions::from_mode(0o755));
     }
 
-    let staging = current_exe.with_extension("tmp-update");
-    if let Err(e) = fs::copy(&new_binary, &staging) {
-        let _ = fs::remove_dir_all(&tmp_dir);
-        return CliResult {
-            exit_code: EXIT_IO,
-            output: Err((
-                "io_error".into(),
-                format!("failed to stage updated binary: {e}"),
-                json!({}),
-            )),
-        };
-    }
-
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&staging, fs::Permissions::from_mode(0o755));
-    }
-
-    if let Err(e) = fs::rename(&staging, &current_exe) {
-        if let Err(copy_err) = fs::copy(&staging, &current_exe) {
-            let _ = fs::remove_file(&staging);
+        let old_exe = current_exe.with_extension("old");
+        let _ = fs::remove_file(&old_exe);
+        if let Err(e) = fs::rename(&current_exe, &old_exe) {
             let _ = fs::remove_dir_all(&tmp_dir);
             return CliResult {
                 exit_code: EXIT_IO,
                 output: Err((
                     "io_error".into(),
-                    format!(
-                        "failed to replace binary at {}: {e} / {copy_err}",
-                        current_exe.display()
-                    ),
+                    format!("failed to stage running binary for update: {e}"),
                     json!({}),
                 )),
             };
         }
-        let _ = fs::remove_file(&staging);
+        if let Err(e) = fs::copy(&new_binary, &current_exe) {
+            let _ = fs::rename(&old_exe, &current_exe);
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return CliResult {
+                exit_code: EXIT_IO,
+                output: Err((
+                    "io_error".into(),
+                    format!("failed to install new binary: {e}"),
+                    json!({}),
+                )),
+            };
+        }
+        let _ = fs::remove_file(&old_exe);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let staging = current_exe.with_extension("tmp-update");
+        if let Err(e) = fs::copy(&new_binary, &staging) {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return CliResult {
+                exit_code: EXIT_IO,
+                output: Err((
+                    "io_error".into(),
+                    format!("failed to stage updated binary: {e}"),
+                    json!({}),
+                )),
+            };
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&staging, fs::Permissions::from_mode(0o755));
+        }
+
+        if let Err(e) = fs::rename(&staging, &current_exe) {
+            if let Err(copy_err) = fs::copy(&staging, &current_exe) {
+                let _ = fs::remove_file(&staging);
+                let _ = fs::remove_dir_all(&tmp_dir);
+                return CliResult {
+                    exit_code: EXIT_IO,
+                    output: Err((
+                        "io_error".into(),
+                        format!(
+                            "failed to replace binary at {}: {e} / {copy_err}",
+                            current_exe.display()
+                        ),
+                        json!({}),
+                    )),
+                };
+            }
+            let _ = fs::remove_file(&staging);
+        }
     }
 
     let _ = fs::remove_dir_all(&tmp_dir);
