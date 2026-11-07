@@ -51,10 +51,10 @@ struct InspectorPane: View {
 
     @State private var isSeriesExpanded = true
     @State private var isDataMappingExpanded = true
-    @State private var isStyleExpanded = true
     @State private var isAxesExpanded = true
+    @State private var isLinesShapesExpanded = true
     @State private var isProgressionExpanded = true
-    @State private var isMetadataExpanded = false
+    @State private var isCanvasLegendExpanded = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -86,9 +86,9 @@ struct InspectorPane: View {
                             dataMappingSection
                         }
                         axesSection
+                        linesShapesSection
                         progressionSection
-                        styleSection
-                        metadataSection
+                        canvasLegendSection
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 }
@@ -317,8 +317,8 @@ struct InspectorPane: View {
         .padding(.vertical, 2)
     }
 
-    private var styleSection: some View {
-        DisclosureGroup(isExpanded: $isStyleExpanded) {
+    private var linesShapesSection: some View {
+        DisclosureGroup(isExpanded: $isLinesShapesExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Mark Type")
@@ -401,7 +401,18 @@ struct InspectorPane: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
                 }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("LINES & SHAPES")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.85))
+        }
+    }
 
+    private var canvasLegendSection: some View {
+        DisclosureGroup(isExpanded: $isCanvasLegendExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
                 Toggle(isOn: $showLegend) {
                     Text("Show Legend")
                         .font(.system(size: 11, weight: .medium))
@@ -418,7 +429,7 @@ struct InspectorPane: View {
             }
             .padding(.top, 4)
         } label: {
-            Text("PLOT STYLING")
+            Text("CANVAS & LEGEND")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.primary.opacity(0.85))
         }
@@ -652,53 +663,39 @@ struct InspectorPane: View {
     }
 
     private func axisControl(_ name: String, absolute: Binding<Bool>, scale: Binding<AxisScale>) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Text(name)
                 .font(.system(size: 11, weight: .bold))
                 .frame(width: 14, alignment: .leading)
-            Toggle("Absolute", isOn: absolute).labelsHidden()
-                .help("Display absolute values before applying the scale")
-                .accessibilityLabel("\(name) absolute values")
+
+            Button {
+                absolute.wrappedValue.toggle()
+            } label: {
+                Text("|\(name.lowercased())|")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(absolute.wrappedValue ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(absolute.wrappedValue ? Color.accentColor : Color.primary.opacity(0.15), lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Display absolute values |\(name.lowercased())| before applying the scale")
+            .accessibilityLabel("\(name) absolute values")
+
             Picker(name + " scale", selection: scale) {
                 Text("Lin").tag(AxisScale.linear)
                 Text("Log").tag(AxisScale.logarithmic)
-            }.labelsHidden().pickerStyle(.segmented).frame(width: 96)
-                .accessibilityLabel("\(name) axis scale")
-        }
-    }
-
-    private var metadataSection: some View {
-        DisclosureGroup(isExpanded: $isMetadataExpanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                if let measurement {
-                    field("Instrument", measurement.instrument.name)
-                    field("Mode", measurement.applicationMode ?? "Unknown")
-                    field("Channels / Points", "\(measurement.channels.count) / \(measurement.channels.first?.values.count ?? 0)")
-                    field("Gaps", "\(measurement.channels.reduce(0) { $0 + $1.gapCount })")
-                    ForEach(measurement.channels) { channel in
-                        Text("\(channel.label) (\(channel.unit)) · \(channel.quantity ?? "no quantity")")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
-                    if !measurement.warnings.isEmpty {
-                        Text("\(measurement.warnings.count) gap warnings").font(.caption).foregroundStyle(.orange)
-                    }
-                    field("Path", measurement.source.path)
-                } else if let inspection {
-                    field("Instrument", inspection.instrumentName ?? inspection.instrumentID ?? "Unknown")
-                    field("Mode", inspection.applicationMode ?? "Unknown")
-                    field("Path", inspection.source)
-                } else if let source {
-                    field("Selected", source.lastPathComponent)
-                    Text("Waiting for source inspection.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Select one source to inspect it.").font(.caption).foregroundStyle(.secondary)
-                }
             }
-            .padding(.top, 4)
-        } label: {
-            Text("SOURCE METADATA")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.85))
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 96)
+            .accessibilityLabel("\(name) axis scale")
         }
     }
 
@@ -706,12 +703,5 @@ struct InspectorPane: View {
         let order = selectedIDs.sorted()
         let index = order.firstIndex(of: id) ?? 0
         return NativeOverlayPalette.color(index)
-    }
-
-    private func field(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 11)).foregroundStyle(.primary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-        }
     }
 }
