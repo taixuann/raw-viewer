@@ -13,9 +13,9 @@ struct DraggableLegendView: View {
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(spacing: 8) {
+                    HStack(spacing: 9) {
                         legendGlyph(for: item)
                         Text(item.label)
                             .font(PlotRenderingEngine.plotFont(preset: preset, size: fontSize))
@@ -45,13 +45,14 @@ struct DraggableLegendView: View {
 
     @ViewBuilder
     private func legendGlyph(for item: (color: Color, label: String, markType: PlotMarkType)) -> some View {
-        let strokeH = max(1.0, min(3.0, lineWidth))
-        let dotD = max(4.0, min(8.0, markerSize))
+        let strokeH = max(2.0, min(4.0, lineWidth * 1.3))
+        let dotD = max(7.0, min(12.0, markerSize * 1.4))
+        let lineW: CGFloat = 24.0
         switch item.markType {
         case .line:
             Rectangle()
                 .fill(item.color)
-                .frame(width: 18, height: strokeH)
+                .frame(width: lineW, height: strokeH)
         case .dots:
             Circle()
                 .fill(item.color)
@@ -60,12 +61,12 @@ struct DraggableLegendView: View {
             ZStack {
                 Rectangle()
                     .fill(item.color)
-                    .frame(width: 18, height: strokeH)
+                    .frame(width: lineW, height: strokeH)
                 Circle()
                     .fill(item.color)
                     .frame(width: dotD, height: dotD)
             }
-            .frame(width: 18, height: dotD)
+            .frame(width: lineW, height: max(strokeH, dotD))
         }
     }
 }
@@ -199,11 +200,11 @@ struct NativePlot: View {
         let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
 
         let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
-        let leftGutter = max(84 * fontScale, maxLabelWidth + 30 * fontScale)
-        let topGutter: CGFloat = 20 * fontScale
-        let bottomGutter: CGFloat = 54 * fontScale
-        let rightGutter: CGFloat = 22 * fontScale
+        let maxLabelWidth = max(38 * fontScale, CGFloat(maxChars) * 8.5 * fontScale)
+        let leftGutter = max(88 * fontScale, maxLabelWidth + 34 * fontScale)
+        let topGutter: CGFloat = 22 * fontScale
+        let bottomGutter: CGFloat = 58 * fontScale
+        let rightGutter: CGFloat = 24 * fontScale
 
         let availWidth = max(10, size.width - leftGutter - rightGutter)
         let availHeight = max(10, size.height - topGutter - bottomGutter)
@@ -543,11 +544,11 @@ struct OverlayPlot: View {
         let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
 
         let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
-        let leftGutter = max(84 * fontScale, maxLabelWidth + 30 * fontScale)
-        let topGutter: CGFloat = 20 * fontScale
-        let bottomGutter: CGFloat = 54 * fontScale
-        let rightGutter: CGFloat = 22 * fontScale
+        let maxLabelWidth = max(38 * fontScale, CGFloat(maxChars) * 8.5 * fontScale)
+        let leftGutter = max(88 * fontScale, maxLabelWidth + 34 * fontScale)
+        let topGutter: CGFloat = 22 * fontScale
+        let bottomGutter: CGFloat = 58 * fontScale
+        let rightGutter: CGFloat = 24 * fontScale
 
         let availWidth = max(10, size.width - leftGutter - rightGutter)
         let availHeight = max(10, size.height - topGutter - bottomGutter)
