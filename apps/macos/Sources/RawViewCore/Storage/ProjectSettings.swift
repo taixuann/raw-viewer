@@ -24,13 +24,16 @@ public struct ProjectSettings: Sendable, Equatable {
     public let profiles: ProfilesConfig
     /// Optional project-level filename grammar.
     public let grammar: FilenameGrammar?
+    /// Optional ordered filename-grammar variables defining the tree grouping hierarchy.
+    public let treeGrouping: [String]?
 
     public init(
         dataRoot: String, defaultView: String = "tree", defaultPreset: String = "nature-single",
         developerMode: Bool = false, explorerViews: [ExplorerViewDefinition] = [],
         sourceLabels: [SourceLabelLayout] = [],
         profiles: ProfilesConfig = ProfilesConfig(),
-        grammar: FilenameGrammar? = nil
+        grammar: FilenameGrammar? = nil,
+        treeGrouping: [String]? = nil
     ) {
         self.dataRoot = dataRoot
         self.defaultView = defaultView
@@ -40,6 +43,7 @@ public struct ProjectSettings: Sendable, Equatable {
         self.sourceLabels = sourceLabels
         self.profiles = profiles
         self.grammar = grammar
+        self.treeGrouping = treeGrouping
     }
 }
 
@@ -393,6 +397,12 @@ public enum ProjectSettingsStore {
                 }
             }
         }
+        if let treeGrouping = settings.treeGrouping, !treeGrouping.isEmpty {
+            text += "tree_grouping:\n"
+            for field in treeGrouping {
+                text += "  - \"\(field)\"\n"
+            }
+        }
         return text
     }
 
@@ -432,7 +442,8 @@ public enum ProjectSettingsStore {
         }
         let allowedKeys: Set<String> = [
             "schema_version", "data_root", "default_view", "default_preset",
-            "developer_mode", "explorer_views", "source_labels", "grammar", "profiles"
+            "developer_mode", "explorer_views", "source_labels", "grammar", "profiles",
+            "tree_grouping"
         ]
         for entry in root.mapEntries ?? [] where !allowedKeys.contains(entry.key) {
             throw ProjectSettingsError(reason: "unknown config key \"\(entry.key)\" for schema_version 1.")
@@ -589,10 +600,25 @@ public enum ProjectSettingsStore {
             }
         }
 
+        var treeGrouping: [String]? = nil
+        if let groupingNode = root.value(for: "tree_grouping") {
+            guard let items = groupingNode.listItems else {
+                throw ProjectSettingsError(reason: "tree_grouping must be a list of grammar field names.")
+            }
+            var fields: [String] = []
+            for item in items {
+                guard let field = item.scalarValue, !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ProjectSettingsError(reason: "tree_grouping entries must be non-empty strings.")
+                }
+                fields.append(field)
+            }
+            treeGrouping = fields
+        }
+
         return ProjectSettings(
             dataRoot: dataRoot, defaultView: defaultView, defaultPreset: defaultPreset,
             developerMode: developerMode, explorerViews: explorerViews, sourceLabels: sourceLabels,
-            profiles: profilesConfig, grammar: parsedGrammar)
+            profiles: profilesConfig, grammar: parsedGrammar, treeGrouping: treeGrouping)
     }
 
     static func parseLegacy(text: String) throws -> ProjectSettings {

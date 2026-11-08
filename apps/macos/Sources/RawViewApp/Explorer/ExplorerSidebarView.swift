@@ -27,14 +27,20 @@ struct ProjectSourcesSidebar: View {
     /// Validated settings save; nil on success, message on failure.
     var onSaveSourceLabels: (([SourceLabelLayout]) -> String?)? = nil
 
+    @Binding var filter: SourceFilter
+    @Binding var treeGroupingMode: String
+    @Binding var treeGroupingFields: [String]
+    var onUpdateGrouping: (() -> Void)? = nil
+    var onSaveGrouping: (([String]) -> Void)? = nil
+
     @State private var search = ""
     @State private var collapsed = Set<String>()
     @State private var showAddView = false
+    @State private var showHierarchyConfig = false
     @State private var showLabelCustomizer = false
     @State private var showGrammarDetails = false
     @State private var addGrammarID = ""
     @State private var addVariable = ""
-    @State private var filter = SourceFilter()
     @State private var groupDisplayLimits: [String: Int] = [:]
     @State private var flatListLimit = 100
     private let defaultPageSize = 100
@@ -57,7 +63,12 @@ struct ProjectSourcesSidebar: View {
         onAddView: ((String, String) -> Void)? = nil,
         onRemoveView: ((ExplorerViewDefinition) -> Void)? = nil,
         sourceLabels: [SourceLabelLayout] = [],
-        onSaveSourceLabels: (([SourceLabelLayout]) -> String?)? = nil
+        onSaveSourceLabels: (([SourceLabelLayout]) -> String?)? = nil,
+        filter: Binding<SourceFilter> = .constant(SourceFilter()),
+        treeGroupingMode: Binding<String> = .constant("grammar"),
+        treeGroupingFields: Binding<[String]> = .constant(["instrument", "mode", "device", "date"]),
+        onUpdateGrouping: (() -> Void)? = nil,
+        onSaveGrouping: (([String]) -> Void)? = nil
     ) {
         self.sources = sources
         self.inspections = inspections
@@ -76,6 +87,11 @@ struct ProjectSourcesSidebar: View {
         self.onRemoveView = onRemoveView
         self.sourceLabels = sourceLabels
         self.onSaveSourceLabels = onSaveSourceLabels
+        self._filter = filter
+        self._treeGroupingMode = treeGroupingMode
+        self._treeGroupingFields = treeGroupingFields
+        self.onUpdateGrouping = onUpdateGrouping
+        self.onSaveGrouping = onSaveGrouping
         var index: [String: RawSource] = [:]
         index.reserveCapacity(sources.count)
         for s in sources { index[s.id] = s }
@@ -252,77 +268,31 @@ struct ProjectSourcesSidebar: View {
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
 
-                if facet != "tree" {
-                    HStack(spacing: 2) {
-                        Menu {
-                            viewMenuButton(key: "")
-                            if !explorerViews.isEmpty {
-                                Divider()
-                                ForEach(Array(explorerViews.enumerated()), id: \.offset) { _, ref in
-                                    let key = RawViewModel.explorerViewKey(grammarID: ref.grammarID, variable: ref.variable)
-                                    viewMenuButton(key: key, unavailable: !viewIsResolvable(ref))
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 11))
-                                Text(viewTitle(facet))
-                                    .font(.system(size: 11, weight: .medium))
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 8))
-                            }
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 6).padding(.vertical, 4.5)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        .help("Group sources by \(viewTitle(facet))")
+                HStack(spacing: 3) {
+                    groupingMenu
+                    filterMenu
 
-                        Button {
-                            beginAddView()
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Add View from Filename…")
-                        .popover(isPresented: $showAddView) { addViewForm }
-
-                        if currentViewReference != nil {
-                            Button {
-                                if let ref = currentViewReference { onRemoveView?(ref) }
-                            } label: {
-                                Image(systemName: "minus")
-                                    .font(.system(size: 10, weight: .semibold))
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Remove this Explorer view")
-                        }
-
-                        Button {
-                            showLabelCustomizer = true
-                        } label: {
-                            Image(systemName: "tag")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Customize source labels…")
-                        .disabled(catalog == nil)
-                        .popover(isPresented: $showLabelCustomizer) {
-                            SourceLabelCustomizerView(
-                                grammars: catalog?.grammars ?? [],
-                                catalog: catalog,
-                                initialLayouts: sourceLabels,
-                                focusedSource: focusedSourceID.flatMap({ sourceIndex[$0] }),
-                                onSave: { onSaveSourceLabels?($0) },
-                                onClose: { showLabelCustomizer = false }
-                            )
-                        }
+                    Button {
+                        showLabelCustomizer = true
+                    } label: {
+                        Image(systemName: "tag")
+                            .font(.system(size: 10, weight: .semibold))
                     }
-                    .fixedSize()
+                    .buttonStyle(.borderless)
+                    .help("Customize source labels…")
+                    .disabled(catalog == nil)
+                    .popover(isPresented: $showLabelCustomizer) {
+                        SourceLabelCustomizerView(
+                            grammars: catalog?.grammars ?? [],
+                            catalog: catalog,
+                            initialLayouts: sourceLabels,
+                            focusedSource: focusedSourceID.flatMap({ sourceIndex[$0] }),
+                            onSave: { onSaveSourceLabels?($0) },
+                            onClose: { showLabelCustomizer = false }
+                        )
+                    }
                 }
+                .fixedSize()
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
 
@@ -477,28 +447,165 @@ struct ProjectSourcesSidebar: View {
 
     private var filterChips: some View {
         let chips = filter.selections
-            .filter { liveFacetKeys.contains($0.key) }
             .sorted { $0.key < $1.key }
             .flatMap { facet, labels in labels.sorted().map { (facet, $0) } }
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
-                    Button {
-                        filter.remove(facet: chip.0, value: chip.1)
-                    } label: {
-                        Text("\(viewTitle(chip.0)): \(chip.1) ✕")
-                            .font(.caption)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Capsule().fill(.quaternary))
+        guard !chips.isEmpty else { return AnyView(EmptyView()) }
+        return AnyView(
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+                        Button {
+                            filter.remove(facet: chip.0, value: chip.1)
+                        } label: {
+                            Text("\(chip.0): \(chip.1) ✕")
+                                .font(.caption)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Capsule().fill(.quaternary))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    Button("Clear filters") { filter.clear() }
+                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                 }
-                Button("Clear filters") { filter.clear() }
-                    .font(.caption)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                .padding(.horizontal, 10).padding(.vertical, 6)
             }
-            .padding(.horizontal, 10).padding(.vertical, 6)
+        )
+    }
+
+    private func distinctValues(for variable: String) -> [String] {
+        guard let grammar = catalog?.activeGrammar ?? catalog?.grammars.first else { return [] }
+        var vals = Set<String>()
+        for source in sources {
+            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
+            if facts.isMatched, let val = facts.extractedFields[variable]?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
+                vals.insert(val)
+            }
+        }
+        return vals.sorted()
+    }
+
+    private var filterMenu: some View {
+        let grammar = catalog?.activeGrammar ?? catalog?.grammars.first
+        let fields = grammar?.fields.map(\.name) ?? ["instrument", "mode", "device", "date"]
+        let activeFacetCount = filter.selections.values.filter { !$0.isEmpty }.count
+        return Menu {
+            Text("Filter by Grammar Variable:").font(.caption)
+            Divider()
+            ForEach(fields, id: \.self) { field in
+                let vals = distinctValues(for: field)
+                if !vals.isEmpty {
+                    Menu(field) {
+                        ForEach(vals, id: \.self) { val in
+                            let isSelected = filter.selections[field]?.contains(val) == true
+                            Button {
+                                filter.toggle(facet: field, value: val)
+                            } label: {
+                                if isSelected {
+                                    Label(val, systemImage: "checkmark")
+                                } else {
+                                    Text(val)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !filter.isEmpty {
+                Divider()
+                Button("Clear All Filters") {
+                    filter.clear()
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: activeFacetCount > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(activeFacetCount > 0 ? Color.accentColor : Color.secondary)
+                if activeFacetCount > 0 {
+                    Text("\(activeFacetCount)")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4.5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Multi-select filters (OR within variable, AND across variables)")
+    }
+
+    private var groupingMenu: some View {
+        Menu {
+            Button {
+                treeGroupingMode = "grammar"
+                onUpdateGrouping?()
+            } label: {
+                if treeGroupingMode == "grammar" {
+                    Label("Grammar Tree (\(treeGroupingFields.joined(separator: " > ")))", systemImage: "checkmark")
+                } else {
+                    Text("Grammar Tree")
+                }
+            }
+
+            Button {
+                treeGroupingMode = "folder"
+                onUpdateGrouping?()
+            } label: {
+                if treeGroupingMode == "folder" {
+                    Label("Physical Folder Tree", systemImage: "checkmark")
+                } else {
+                    Text("Physical Folder Tree")
+                }
+            }
+
+            Button {
+                treeGroupingMode = "flat"
+                onUpdateGrouping?()
+            } label: {
+                if treeGroupingMode == "flat" {
+                    Label("Flat List", systemImage: "checkmark")
+                } else {
+                    Text("Flat List")
+                }
+            }
+
+            Divider()
+
+            Button("Configure Grouping Hierarchy…") {
+                showHierarchyConfig = true
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: treeGroupingMode == "flat" ? "list.bullet" : "folder")
+                    .font(.system(size: 11))
+                Text(treeGroupingMode == "grammar" ? "Grammar" : (treeGroupingMode == "folder" ? "Folder" : "Flat"))
+                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8))
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 6).padding(.vertical, 4.5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Tree grouping: Grammar, Folder, or Flat")
+        .popover(isPresented: $showHierarchyConfig) {
+            let available = catalog?.activeGrammar?.fields.map(\.name) ?? ["instrument", "mode", "device", "date"]
+            HierarchyConfigPopover(
+                availableFields: available,
+                selectedFields: $treeGroupingFields,
+                onSave: { fields in
+                    onSaveGrouping?(fields)
+                    onUpdateGrouping?()
+                },
+                onClose: {
+                    showHierarchyConfig = false
+                }
+            )
         }
     }
 
@@ -647,14 +754,17 @@ struct ProjectSourcesSidebar: View {
     /// narrow the same view's groups, never another view.
     private func matchesFilter(for source: RawSource) -> Bool {
         if filter.isEmpty { return true }
+        guard let grammar = catalog?.activeGrammar ?? catalog?.grammars.first else { return true }
+        let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
         for (facetKey, selected) in filter.selections where !selected.isEmpty {
-            guard let ref = RawViewModel.explorerViewReference(forKey: facetKey),
-                  explorerViews.contains(ref),
-                  let grammar = catalog?.grammars.first(where: { $0.id == ref.grammarID }) else { continue }
-            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
+            let variableName: String = {
+                if let ref = RawViewModel.explorerViewReference(forKey: facetKey) {
+                    return ref.variable
+                }
+                return facetKey
+            }()
             if facts.isMatched {
-                if let value = facts.extractedFields[ref.variable],
-                   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let value = facts.extractedFields[variableName]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
                     guard selected.contains(value) else { return false }
                 } else {
                     guard selected.contains(SourceGrouping.missingValueBucketLabel) else { return false }
@@ -997,5 +1107,64 @@ private struct FlowLayout: Layout {
             width = max(width, x)
         }
         return Arranged(size: CGSize(width: min(width, maxWidth), height: y + lineHeight), points: points)
+    }
+}
+
+/// Popover to configure the ordered filename-grammar variables for tree grouping.
+struct HierarchyConfigPopover: View {
+    let availableFields: [String]
+    @Binding var selectedFields: [String]
+    let onSave: (([String]) -> Void)?
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Tree Grouping Hierarchy")
+                .font(.system(size: 12, weight: .bold))
+            Text("Arrange grammar variables to form the tree hierarchy:")
+                .font(.caption2).foregroundStyle(.secondary)
+
+            ForEach(availableFields, id: \.self) { field in
+                let isIncluded = selectedFields.contains(field)
+                Button {
+                    if isIncluded {
+                        selectedFields.removeAll { $0 == field }
+                    } else {
+                        selectedFields.append(field)
+                    }
+                    onSave?(selectedFields)
+                } label: {
+                    HStack {
+                        Image(systemName: isIncluded ? "checkmark.square.fill" : "square")
+                            .foregroundStyle(isIncluded ? Color.accentColor : .secondary)
+                        Text(field)
+                            .font(.system(size: 11))
+                        Spacer()
+                        if isIncluded, let idx = selectedFields.firstIndex(of: field) {
+                            Text("Level \(idx + 1)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            HStack {
+                Button("Reset Defaults") {
+                    let defaults = ["instrument", "mode", "device", "date"]
+                    let filtered = defaults.filter { availableFields.contains($0) }
+                    selectedFields = filtered.isEmpty ? Array(availableFields.prefix(3)) : filtered
+                    onSave?(selectedFields)
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                Spacer()
+                Button("Done") { onClose() }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
     }
 }

@@ -257,6 +257,12 @@ struct InspectorPane: View {
         axesSection
 
         progressionSection
+
+        if let km = keithleyMetadata {
+            keithleyMetadataSection(km)
+        }
+
+        metadataComparisonSection
     }
 
     @ViewBuilder
@@ -660,6 +666,113 @@ struct InspectorPane: View {
                                 }
                             }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Keithley Programmed Sweep Metadata & Comparison
+
+    private var keithleyMetadata: KeithleyMetadata? {
+        if let source {
+            return KeithleyMetadataParser.extract(from: source)
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func keithleyMetadataSection(_ meta: KeithleyMetadata) -> some View {
+        InspectorSection(title: "PROGRAMMED SWEEP", badge: meta.isValid ? "Keithley 2400" : "Warning") {
+            VStack(alignment: .leading, spacing: 8) {
+                if let warning = meta.warning {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 10))
+                        Text(warning)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                HStack {
+                    Text("Sweep Path")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(meta.sweepPath)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                }
+
+                HStack {
+                    Text("Voltage Step")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(meta.voltageStep)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
+
+                HStack {
+                    Text("Compliance Current")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(meta.compliance)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var metadataComparisonSection: some View {
+        if selectedIDs.count >= 2 {
+            let items: [(id: String, meta: KeithleyMetadata?)] = selectedIDs.sorted().map { id in
+                let url = URL(fileURLWithPath: id)
+                return (id, KeithleyMetadataParser.extract(from: url))
+            }
+            let validMetas = items.compactMap(\.meta)
+            if !validMetas.isEmpty {
+                let allSamePath = Set(validMetas.map(\.sweepPath)).count <= 1
+                let allSameStep = Set(validMetas.map(\.voltageStep)).count <= 1
+                let allSameCompliance = Set(validMetas.map(\.compliance)).count <= 1
+
+                InspectorSection(title: "METADATA COMPARISON", badge: "\(validMetas.count) files") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Sweep Path")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(allSamePath ? (validMetas.first?.sweepPath ?? "—") : "Varies across files")
+                                .font(.system(size: 10.5, weight: allSamePath ? .medium : .bold, design: .monospaced))
+                                .foregroundStyle(allSamePath ? Color.primary : Color.orange)
+                        }
+
+                        HStack {
+                            Text("Voltage Step")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(allSameStep ? (validMetas.first?.voltageStep ?? "—") : "Varies across files")
+                                .font(.system(size: 10.5, weight: allSameStep ? .medium : .bold))
+                                .foregroundStyle(allSameStep ? Color.primary : Color.orange)
+                        }
+
+                        HStack {
+                            Text("Compliance")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(allSameCompliance ? (validMetas.first?.compliance ?? "—") : "Varies across files")
+                                .font(.system(size: 10.5, weight: allSameCompliance ? .medium : .bold))
+                                .foregroundStyle(allSameCompliance ? Color.primary : Color.orange)
                         }
                     }
                 }

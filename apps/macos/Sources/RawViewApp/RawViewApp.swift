@@ -309,6 +309,69 @@ final class RawViewModel: ObservableObject {
     @Published var explorerViewError: String? = nil
     @Published var sourceLabelLayouts: [SourceLabelLayout] = []
 
+    // MARK: - Issue #72: Unified Explorer (grammar tree grouping & multi-select filtering)
+    @Published var treeGroupingMode: String = "grammar" // "grammar", "folder", "flat"
+    @Published var treeGroupingFields: [String] = ["instrument", "mode", "device", "date"]
+    @Published var explorerFilter = SourceFilter()
+
+    func setExplorerFilter(_ newFilter: SourceFilter) {
+        explorerFilter = newFilter
+        saveTemporaryFilter()
+    }
+
+    func saveTemporaryFilter() {
+        guard let project else { return }
+        let key = "rawView.temporaryFilter.\(project.root.path)"
+        if let data = try? JSONEncoder().encode(explorerFilter) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    func restoreTemporaryFilter() {
+        guard let project else { return }
+        let key = "rawView.temporaryFilter.\(project.root.path)"
+        if let data = UserDefaults.standard.data(forKey: key),
+           let restored = try? JSONDecoder().decode(SourceFilter.self, from: data) {
+            explorerFilter = restored
+        } else {
+            explorerFilter = SourceFilter()
+        }
+    }
+
+    func saveTreeGrouping(_ fields: [String]) {
+        treeGroupingFields = fields
+        updateSourceTree()
+        guard let project else { return }
+        do {
+            let current = try ProjectSettingsStore.load(projectRoot: project.root)
+            let updated = ProjectSettings(
+                dataRoot: current?.dataRoot ?? project.dataRootRelativePath,
+                defaultView: current?.defaultView ?? "tree",
+                defaultPreset: current?.defaultPreset ?? selectedPreset.id,
+                developerMode: current?.developerMode ?? developerMode,
+                explorerViews: current?.explorerViews ?? [],
+                sourceLabels: current?.sourceLabels ?? [],
+                profiles: current?.profiles ?? ProfilesConfig(),
+                grammar: current?.grammar,
+                treeGrouping: fields
+            )
+            try ProjectSettingsStore.save(updated, projectRoot: project.root)
+        } catch {
+            self.error = "Failed to save tree grouping: \(error.localizedDescription)"
+        }
+    }
+
+    func updateSourceTree() {
+        guard let context = project, let inv = inventory else { return }
+        if treeGroupingMode == "grammar", let grammar = explorerCatalog?.activeGrammar ?? explorerCatalog?.grammars.first {
+            sourceTree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: treeGroupingFields)
+        } else if treeGroupingMode == "folder" {
+            sourceTree = SourceTree(inventory: inv, project: context)
+        } else {
+            sourceTree = SourceTree(sources: inv.sources, grammar: nil, groupingFields: [])
+        }
+    }
+
     static func explorerViewKey(grammarID: String, variable: String) -> String {
         "view\0\(grammarID)\0\(variable)"
     }
@@ -1286,6 +1349,9 @@ final class RawViewModel: ObservableObject {
         availablePresets = loadedPresets
         if let settings = try? ProjectSettingsStore.load(projectRoot: context.root) {
             developerMode = settings.developerMode
+            if let grouping = settings.treeGrouping, !grouping.isEmpty {
+                treeGroupingFields = grouping
+            }
             if let matched = loadedPresets.first(where: { $0.id == settings.defaultPreset }) {
                 selectedPreset = matched
             } else if let defaultNature = loadedPresets.first(where: { $0.id == "nature-single" }) {
@@ -1297,6 +1363,7 @@ final class RawViewModel: ObservableObject {
                 selectedPreset = defaultNature
             }
         }
+        restoreTemporaryFilter()
         refreshExplorerViews()
         refreshProjectSnapshotPackages()
         // Discovery runs through the cancellable core seam off the main actor so
@@ -1334,7 +1401,7 @@ final class RawViewModel: ObservableObject {
                   await self.discoveryGate.isCurrent(generation) else { return }
             self.inventory = inv
             self.inventoryIssues = inv.issues
-            self.sourceTree = SourceTree(inventory: inv, project: context)
+            self.updateSourceTree()
             let discovered = inv.sources
             self.sources = discovered
             self.sourceStates = Dictionary(uniqueKeysWithValues: discovered.map { ($0.id, GallerySourceState()) })
@@ -1761,9 +1828,6 @@ struct RawViewShell: View {
             Spacer().frame(height: 12)
 
             if let project = model.project {
-                // Section switcher: [ Sources ]  [ Categories ]
-                sectionSwitcher
-
                 if model.isInspecting {
                     VStack(alignment: .leading, spacing: 4) {
                         ProgressView(value: Double(model.inspectedSources), total: Double(max(1, model.inspectionTotal))) {
@@ -1799,9 +1863,17 @@ struct RawViewShell: View {
                     onAddView: { model.addExplorerView(grammarID: $0, variable: $1) },
                     onRemoveView: { model.removeExplorerView($0) },
                     sourceLabels: model.sourceLabelLayouts,
-                    onSaveSourceLabels: { model.saveSourceLabels($0) }
+                    onSaveSourceLabels: { model.saveSourceLabels($0) },
+                    filter: $model.explorerFilter,
+                    treeGroupingMode: $model.treeGroupingMode,
+                    treeGroupingFields: $model.treeGroupingFields,
+                    onUpdateGrouping: { model.updateSourceTree() },
+                    onSaveGrouping: { model.saveTreeGrouping($0) }
                 )
                 .id("\(project.root.path):\(project.dataRootRelativePath)")
+                .onChange(of: model.explorerFilter) { _, _ in
+                    model.saveTemporaryFilter()
+                }
 
                 if !model.profileIssues.isEmpty {
                     profileIssueList
@@ -1817,67 +1889,6 @@ struct RawViewShell: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var sectionSwitcher: some View {
-        HStack(spacing: 2) {
-            let isTree = model.selectedExplorerView == "tree"
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    model.selectedExplorerView = "tree"
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 11))
-                    Text("Tree")
-                        .font(.system(size: 11, weight: isTree ? .semibold : .medium))
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 22)
-                .foregroundStyle(isTree ? .primary : .secondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isTree ? Color(nsColor: .textBackgroundColor) : .clear)
-                        .shadow(color: isTree ? .black.opacity(0.12) : .clear, radius: 2, y: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-
-            let isCategories = model.selectedExplorerView != "tree"
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    if let firstView = model.explorerViews.first {
-                        model.selectedExplorerView = RawViewModel.explorerViewKey(grammarID: firstView.grammarID, variable: firstView.variable)
-                    } else {
-                        model.selectedExplorerView = ""
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "tag")
-                        .font(.system(size: 11))
-                    Text("Categories")
-                        .font(.system(size: 11, weight: isCategories ? .semibold : .medium))
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 22)
-                .foregroundStyle(isCategories ? .primary : .secondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isCategories ? Color(nsColor: .textBackgroundColor) : .clear)
-                        .shadow(color: isCategories ? .black.opacity(0.12) : .clear, radius: 2, y: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 3)
-        .padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
-        .padding(.horizontal, 14)
-        .padding(.bottom, 6)
     }
 
     private var noProjectSidebarContent: some View {
