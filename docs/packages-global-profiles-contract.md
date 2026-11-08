@@ -73,17 +73,55 @@ Repo search at base SHA finds **no** lab-package install lifecycle (`installPack
 
 ### Runtime evidence at base SHA
 
-Verified on cloud builder `64904eecc7499d0c9751dcd92f65452e83c20e78` (binary `raw-viewer 0.3.2`). Full log: builder artifact `rv-u3-source-checks.log`.
+Pin runtime behavior to source tree [`64904eecc7499d0c9751dcd92f65452e83c20e78`](https://github.com/taixuann/raw-viewer/tree/64904eecc7499d0c9751dcd92f65452e83c20e78). Binary label: `raw-viewer 0.3.2` (debug build from that tree).
 
-| Case | Exit | Outcome |
-|------|------|---------|
-| `profiles list` | 0 | Four profiles, `source:"builtin"` |
-| `profiles list --global` | 0 | Same four; envelope `source:"global"` |
-| `files match` (usth-lab Keithley, builtins active) | 0 | `status:"matched"`, `profile_id:"usth/keithley-2400"` |
-| `files match` (project with `profiles.enabled: []`) | 0 | `status:"grammar_matched_no_profile"` |
-| `files inspect` (same empty catalog, Keithley fixture) | **4** | `validation_error`: no instrument profile mode matched **and not a valid table** |
+**Historical (U3 cloud builder, once-only):** The table outcomes below were first recorded on an isolated cloud builder at that SHA (not re-run on every doc revision). The `files inspect` row is from a **single** probe (preflight clarification 8); it is historical evidence only, not a claim that every grammar-matched file without a profile fails inspect the same way.
 
-**Clarification (preflight 8):** The Keithley inspect failure is **file-specific**; it does not establish that every grammar-matched file without a profile fails inspect the same way. Filtered-empty probes (`profiles.enabled: []`) do **not** remove embedded assets from the binary — they only hide profiles from the effective catalog. Do not imply universal generic-table capability or universal inspect failure.
+**Rerunnable reproduction (any reader):**
+
+1. **Build and isolate environment** (read-only fixture data; writable state only under `/tmp`):
+
+```bash
+git checkout 64904eecc7499d0c9751dcd92f65452e83c20e78
+cargo build -p raw-viewer-cli
+export REPO="$PWD"
+export BIN="$REPO/target/debug/raw-viewer"
+export HOME="/tmp/rv-u3-runtime-evidence/home"
+mkdir -p "$HOME"
+```
+
+2. **Constants** (fixture at base SHA: [`fixtures/workspaces/usth-lab`](https://github.com/taixuann/raw-viewer/tree/64904eecc7499d0c9751dcd92f65452e83c20e78/fixtures/workspaces/usth-lab)):
+
+```bash
+export USTH="$REPO/fixtures/workspaces/usth-lab"
+export KEITHLEY='data/raw/2026-10-07/071026-143703_keithley-2400.dual-sweep_[cu-ec-pda.q14-ito.2_r2-c6]_iv.dual-sweep_r.[reproducible]_010.txt'
+```
+
+3. **Empty-catalog scratch projects** (`profiles.enabled: []` hides builtins from the effective catalog; embedded assets remain in the binary):
+
+```bash
+export HYBRID="/tmp/rv-u3-runtime-evidence/hybrid"
+export INSPECT_EMPTY="/tmp/rv-u3-runtime-evidence/inspect-empty"
+mkdir -p "$HYBRID/.raw-viewer" "$HYBRID/data/raw/2026-10-07"
+mkdir -p "$INSPECT_EMPTY/.raw-viewer" "$INSPECT_EMPTY/data/raw/2026-10-07"
+CFG=$'schema_version: 1\ndata_root: data/raw\nprofiles:\n  enabled: []'
+printf '%s' "$CFG" >"$HYBRID/.raw-viewer/config.yaml"
+printf '%s' "$CFG" >"$INSPECT_EMPTY/.raw-viewer/config.yaml"
+cp "$USTH/$KEITHLEY" "$HYBRID/$KEITHLEY"
+cp "$USTH/$KEITHLEY" "$INSPECT_EMPTY/$KEITHLEY"
+```
+
+4. **Bounded probes** (JSON on stdout; append `; echo exit=$?` after each command to record exit status):
+
+| Case | Command | Expected exit | Expected outcome (JSON fields) |
+|------|---------|---------------|--------------------------------|
+| No project list | `"$BIN" --json profiles list` | **0** | Four profiles; each `source:"builtin"`; envelope `data.source:"builtin"` |
+| CLI “global” list | `"$BIN" --json profiles list --global` | **0** | Same four rows; envelope `data.source:"global"`; per-profile `source` still `"builtin"` |
+| Match with builtins | `"$BIN" --json files match --project "$USTH" --file "$KEITHLEY"` | **0** | `data.outcome.status:"matched"`; `profile_id:"usth/keithley-2400"` |
+| Match, empty effective catalog | `"$BIN" --json files match --project "$HYBRID" --file "$KEITHLEY"` | **0** | `data.outcome.status:"grammar_matched_no_profile"`; `data.candidates:[]` |
+| Inspect, empty effective catalog | `"$BIN" --json files inspect --project "$INSPECT_EMPTY" --file "$KEITHLEY"` | **4** | `ok:false`; `error.code:"validation_error"`; message contains `no instrument profile mode matched` and `not a valid table` |
+
+**Clarification (preflight 8):** The Keithley inspect failure is **file-specific**; filtered-empty probes (`profiles.enabled: []`) do **not** remove embedded assets from the binary — they only hide profiles from the effective catalog. Do not imply universal generic-table capability or universal inspect failure.
 
 ---
 
