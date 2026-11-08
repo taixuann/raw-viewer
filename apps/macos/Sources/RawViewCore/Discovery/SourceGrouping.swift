@@ -209,9 +209,26 @@ extension SourceGrouping {
 extension NormalizedMeasurement {
     /// Variant-declared axis-eligible column IDs present in this source,
     /// parsed from the Task 4 eligibility provenance. Skip columns and
-    /// absent optionals are already excluded by the reader.
-    public var eligibleXIDs: [String] { Self.splitIDs(provenance["eligible_x"]) }
-    public var eligibleYIDs: [String] { Self.splitIDs(provenance["eligible_y"]) }
+    /// absent optionals are already excluded by the reader. If not declared
+    /// and the measurement is a known instrument profile (not generic-table),
+    /// falls back to the default view axes.
+    public var eligibleXIDs: [String] {
+        let ids = Self.splitIDs(provenance["eligible_x"])
+        if !ids.isEmpty { return ids }
+        if instrument.id != "generic-table", let x = view.x, !x.isEmpty {
+            return [x]
+        }
+        return []
+    }
+
+    public var eligibleYIDs: [String] {
+        let ids = Self.splitIDs(provenance["eligible_y"])
+        if !ids.isEmpty { return ids }
+        if instrument.id != "generic-table", let y = view.y, !y.isEmpty {
+            return y
+        }
+        return []
+    }
 
     /// Candidate progression channel for multi-cycle or time-window segmentation.
     public var progressionChannel: MeasurementChannel? {

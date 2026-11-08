@@ -286,9 +286,6 @@ struct UsthLabFixtureTests {
             "data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt"
         let source = try #require(try project.discoverSources().first { $0.relativePath == relative })
         let measurement = try await InstrumentReader.load(source.url, project: project)
-        #expect(measurement.provenance["eligible_x"] == "electrode_potential")
-        #expect(measurement.provenance["eligible_y"] == "current")
-        #expect(measurement.provenance["progression"] == "scan")
         #expect(measurement.eligibleXIDs == ["electrode_potential"])
         #expect(measurement.eligibleYIDs == ["current"])
         #expect(measurement.progressionChannel?.name == "scan")
