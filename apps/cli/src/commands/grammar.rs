@@ -31,11 +31,19 @@ fn resolve_grammar(
         };
         Ok((eff.grammar.clone(), src.to_string()))
     } else if global {
-        let dummy = Path::new("/dummy");
-        let resolved = paths::resolve_paths_from_env(dummy).map_err(|e| {
+        let resolved = paths::resolve_global_paths_from_env().map_err(|e| {
             CliResult::io(format!("failed to resolve global config directory: {e}"))
         })?;
-        let cfg_path = Path::new(&resolved.global_config_dir).join("config.yaml");
+        let global_dir = Path::new(&resolved.global_config_dir);
+        let grammar_file = global_dir.join("grammar.yaml");
+        if grammar_file.is_file() {
+            if let Ok(catalog) = raw_viewer_core::grammar::load_file(&grammar_file) {
+                if let Some(first) = catalog.grammars.first() {
+                    return Ok((first.clone(), "global".to_string()));
+                }
+            }
+        }
+        let cfg_path = global_dir.join("config.yaml");
         if cfg_path.exists() {
             if let Ok(text) = fs::read_to_string(&cfg_path) {
                 if let Ok(root) = parse(&text, false) {
@@ -106,8 +114,7 @@ pub fn set(global: bool, project: Option<&Path>, file: &Path, dry_run: bool) -> 
         }
         p.join(".raw-viewer").join("grammar.yaml")
     } else if global {
-        let dummy = Path::new("/dummy");
-        let resolved = match paths::resolve_paths_from_env(dummy) {
+        let resolved = match paths::resolve_global_paths_from_env() {
             Ok(r) => r,
             Err(e) => return CliResult::io(format!("failed to resolve global paths: {e}")),
         };
@@ -125,16 +132,23 @@ pub fn set(global: bool, project: Option<&Path>, file: &Path, dry_run: bool) -> 
         }));
     }
 
-    if let Some(parent) = target_path.parent() {
-        if !parent.exists() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                return CliResult::io(format!("failed to create directory: {e}"));
-            }
+    let parent = match target_path.parent() {
+        Some(p) => p,
+        None => return CliResult::io("target path has no parent directory".to_string()),
+    };
+    if !parent.exists() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            return CliResult::io(format!("failed to create directory: {e}"));
         }
     }
 
-    if let Err(e) = fs::write(&target_path, &text) {
-        return CliResult::io(format!("failed to write grammar: {e}"));
+    let tmp_path = target_path.with_extension(format!("tmp.{}", std::process::id()));
+    if let Err(e) = fs::write(&tmp_path, &text) {
+        return CliResult::io(format!("failed to write grammar staging file: {e}"));
+    }
+    if let Err(e) = fs::rename(&tmp_path, &target_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return CliResult::io(format!("failed to commit grammar: {e}"));
     }
 
     CliResult::ok(json!({

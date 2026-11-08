@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 
 fn get_config_path(global: bool, project: Option<&Path>) -> Result<PathBuf, CliResult> {
     if global {
-        let dummy = Path::new("/dummy");
-        let resolved = paths::resolve_paths_from_env(dummy).map_err(|e| {
+        let resolved = paths::resolve_global_paths_from_env().map_err(|e| {
             CliResult::io(format!("failed to resolve global config directory: {e}"))
         })?;
         Ok(Path::new(&resolved.global_config_dir).join("config.yaml"))
