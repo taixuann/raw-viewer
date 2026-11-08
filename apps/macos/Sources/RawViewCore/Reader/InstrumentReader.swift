@@ -301,7 +301,12 @@ public enum InstrumentReader {
                     "profile_id": match.profile.profileID,
                     "profile_hash": match.profile.sha256,
                     "profile_schema_version": String(match.profile.schemaVersion),
-                    "mode": match.mode.id
+                    "mode": match.mode.id,
+                    "eligible_x": match.mode.x,
+                    "eligible_y": match.mode.y.joined(separator: ","),
+                    "progression": match.format.columns.first {
+                        $0.key.lowercased().contains("scan") || $0.key.lowercased().contains("cycle") || $0.quantity == "index"
+                    }?.key ?? ""
                 ]
             )
             // Cache only the successful, deterministic outcome. Cancellation

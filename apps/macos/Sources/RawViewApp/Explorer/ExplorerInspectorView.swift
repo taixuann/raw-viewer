@@ -338,6 +338,7 @@ struct InspectorPane: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .controlBackgroundColor)))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
 
@@ -365,6 +366,7 @@ struct InspectorPane: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .controlBackgroundColor)))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
 
@@ -458,12 +460,6 @@ struct InspectorPane: View {
                         }
                     }
                 }
-
-                Toggle(isOn: $colorBySweepProgress) {
-                    Text("Color by Sweep Progress")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.primary)
-                }
             }
         }
 
@@ -527,15 +523,36 @@ struct InspectorPane: View {
                 let activeChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? progChannel
                 let allCycles = ProgressionPlotReader.extractDiscreteKeys(from: activeChannel?.values)
 
-                InspectorSection(title: "PROGRESSION & CYCLES", badge: activeChannel?.label) {
+                let isContinuous = activeChannel?.quantity == "time" && !(activeChannel?.name.lowercased().contains("scan") ?? false)
+
+                InspectorSection(title: "PROGRESSION", badge: activeChannel?.label) {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle(isOn: $progressionFilterEnabled) {
-                            Text("Enable Cycle / Progression Segmentation")
+                            Text("Enable Progression Segmentation")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(.primary)
                         }
 
                         if progressionFilterEnabled {
+                            HStack(spacing: 6) {
+                                Text(isContinuous ? "Continuous" : "Discrete")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+
+                                if !isContinuous {
+                                    Text("\(allCycles.count) cycles detected")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                } else if let vals = activeChannel?.values.compactMap({ $0 }), let min = vals.min(), let max = vals.max() {
+                                    Text(String(format: "%.1f – %.1f %@", min, max, activeChannel?.unit ?? ""))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
                             if candidateChannels.count > 1 {
                                 HStack {
                                     Text("Channel")
@@ -547,7 +564,8 @@ struct InspectorPane: View {
                                         set: { selectedProgressionChannel = $0 }
                                     )) {
                                         ForEach(candidateChannels, id: \.name) { ch in
-                                            Text("\(ch.label) (\(ch.name))").tag(ch.name)
+                                            let isCont = ch.quantity == "time" && !ch.name.lowercased().contains("scan")
+                                            Text("\(ch.label) (\(isCont ? "Continuous" : "Discrete"))").tag(ch.name)
                                         }
                                     }
                                     .labelsHidden()
@@ -555,11 +573,18 @@ struct InspectorPane: View {
                                 }
                             }
 
-                            Toggle(isOn: $colorByCycle) {
-                                Text("Color Segments by Cycle (Colormap)")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.primary)
-                            }
+                            if isContinuous {
+                                Toggle(isOn: $colorBySweepProgress) {
+                                    Text("Color by Sweep Progress (Colormap)")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.primary)
+                                }
+                            } else {
+                                Toggle(isOn: $colorByCycle) {
+                                    Text("Color Segments by Cycle")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.primary)
+                                }
 
                             if !allCycles.isEmpty {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -633,6 +658,7 @@ struct InspectorPane: View {
                                         .padding(.vertical, 2)
                                     }
                                 }
+                            }
                             }
                         }
                     }
