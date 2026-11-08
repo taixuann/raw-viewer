@@ -13,6 +13,7 @@ final class AppUpdateChecker: ObservableObject {
     @Published var assetDownloadURL: URL?
     @Published var releaseNotes: String = ""
 
+    private var apiAssetURL: URL?
     private var progressWindow: NSWindow?
     private var progressLabel: NSTextField?
     private var progressSubtitle: NSTextField?
@@ -55,11 +56,15 @@ final class AppUpdateChecker: ObservableObject {
                     (json["body"] as? String) ?? "A new version of RawView is available."
 
                 var appAssetURL: URL? = nil
+                var apiAssetURL: URL? = nil
                 if let assets = json["assets"] as? [[String: Any]] {
                     for asset in assets {
                         if let name = asset["name"] as? String, name == "RawView-macOS.zip" {
                             if let downloadUrlStr = asset["browser_download_url"] as? String {
                                 appAssetURL = URL(string: downloadUrlStr)
+                            }
+                            if let apiUrlStr = asset["url"] as? String {
+                                apiAssetURL = URL(string: apiUrlStr)
                             }
                         }
                     }
@@ -74,6 +79,7 @@ final class AppUpdateChecker: ObservableObject {
                 self.latestVersion = tagName
                 self.releaseURL = releaseHtmlUrl
                 self.assetDownloadURL = appAssetURL
+                self.apiAssetURL = apiAssetURL
                 self.releaseNotes = body
                 self.updateAvailable = true
 
@@ -199,15 +205,39 @@ final class AppUpdateChecker: ObservableObject {
         )
 
         do {
-            let (tempLocalURL, response) = try await URLSession.shared.download(from: assetURL)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200
-            else {
+            var downloadResult: (URL, URLResponse)? = nil
+
+            // 1. Try direct GitHub API asset endpoint with Accept: application/octet-stream
+            // (bypasses GitHub web 504 gateway timeouts on /releases/download)
+            if let apiURL = apiAssetURL {
+                var req = URLRequest(url: apiURL)
+                req.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+                req.setValue("RawView-macOS", forHTTPHeaderField: "User-Agent")
+                if let res = try? await URLSession.shared.download(for: req),
+                   let http = res.1 as? HTTPURLResponse, http.statusCode == 200 {
+                    downloadResult = res
+                }
+            }
+
+            // 2. Fallback to browser_download_url if API endpoint didn't succeed
+            if downloadResult == nil {
+                let res = try await URLSession.shared.download(from: assetURL)
+                if let http = res.1 as? HTTPURLResponse, http.statusCode == 200 {
+                    downloadResult = res
+                } else {
+                    let code = (res.1 as? HTTPURLResponse)?.statusCode ?? 0
+                    closeProgressWindow()
+                    showAlert(
+                        title: "Update Failed",
+                        message: "Could not download update archive (HTTP \(code)). Please check your connection or download directly from GitHub."
+                    )
+                    return
+                }
+            }
+
+            guard let (tempLocalURL, _) = downloadResult else {
                 closeProgressWindow()
-                showAlert(
-                    title: "Update Failed",
-                    message:
-                        "Could not download update archive (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))."
-                )
+                showAlert(title: "Update Failed", message: "Failed to download update package.")
                 return
             }
 
