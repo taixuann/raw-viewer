@@ -54,7 +54,7 @@ public struct StudioActionButton: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .frame(height: 24)
+            .frame(minHeight: max(24, 20 * AppTypography.scale(for: uiFontSize)))
             .background(
                 RoundedRectangle(cornerRadius: 5)
                     .fill(effectiveIllumination ? illuminatedColor.opacity(0.18) : Color.primary.opacity(0.04))
