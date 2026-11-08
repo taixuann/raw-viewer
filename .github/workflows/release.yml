@@ -119,7 +119,7 @@ jobs:
       - name: Build and Package macOS App
         run: |
           mkdir -p dist
-          RAWVIEW_APP_PATH="dist/RawView.app" ./apps/macos/Scripts/package_app.sh
+          RAWVIEW_APP_PATH="dist/RawView.app" RAWVIEW_VERSION="${{ github.event.inputs.tag || github.ref_name }}" ./apps/macos/Scripts/package_app.sh
           cd dist
           zip -r ../RawView-macOS.zip RawView.app
           cd ..

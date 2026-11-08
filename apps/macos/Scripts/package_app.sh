@@ -35,7 +35,15 @@ if [ -x "/Users/tai/oakreader-src/backend/dist/oak-backend" ]; then
   chmod +x "$app/Contents/Resources/oak-backend"
   codesign --force --sign - "$app/Contents/Resources/oak-backend"
 fi
-python3 - "$app/Contents/Info.plist" "$bundle_id" <<'PY'
+
+raw_version="${RAWVIEW_VERSION:-}"
+if [ -z "$raw_version" ]; then
+  raw_version=$(git -C "$root" describe --tags --abbrev=0 2>/dev/null || echo "0.3.2")
+fi
+app_version="${raw_version#[vV]}"
+build_number="${RAWVIEW_BUILD_NUMBER:-$(git -C "$root" rev-list --count HEAD 2>/dev/null || echo "1")}"
+
+python3 - "$app/Contents/Info.plist" "$bundle_id" "$app_version" "$build_number" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], "wb") as stream:
     plistlib.dump({
@@ -43,8 +51,8 @@ with open(sys.argv[1], "wb") as stream:
         "CFBundleIdentifier": sys.argv[2],
         "CFBundleName": "RawView",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.2.0",
-        "CFBundleVersion": "2",
+        "CFBundleShortVersionString": sys.argv[3],
+        "CFBundleVersion": sys.argv[4],
         "CFBundleIconFile": "AppIcon",
         "LSMinimumSystemVersion": "14.0",
         "NSHighResolutionCapable": True,

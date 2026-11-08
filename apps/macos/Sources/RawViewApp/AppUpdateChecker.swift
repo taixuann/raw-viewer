@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import RawViewCore
 import SwiftUI
 
 @MainActor
@@ -46,7 +47,7 @@ final class AppUpdateChecker: ObservableObject {
 
             let latest = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
             let current =
-                (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.3.0"
+                (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.3.2"
 
             if isNewer(latest: latest, current: current) {
                 let releaseHtmlUrl = (json["html_url"] as? String).flatMap(URL.init)
@@ -81,10 +82,13 @@ final class AppUpdateChecker: ObservableObject {
                         latestTag: tagName, assetURL: appAssetURL, releaseURL: releaseHtmlUrl,
                         notes: body)
                 }
-            } else if userInitiated {
-                showAlert(
-                    title: "You're Up to Date",
-                    message: "RawView \(current) is the latest version.")
+            } else {
+                self.updateAvailable = false
+                if userInitiated {
+                    showAlert(
+                        title: "You're Up to Date",
+                        message: "RawView v\(current) is currently the newest version available.")
+                }
             }
         } catch {
             if userInitiated {
@@ -94,19 +98,12 @@ final class AppUpdateChecker: ObservableObject {
     }
 
     func isNewer(latest: String, current: String) -> Bool {
-        let l = parseVersion(latest)
-        let c = parseVersion(current)
-        if l.0 != c.0 { return l.0 > c.0 }
-        if l.1 != c.1 { return l.1 > c.1 }
-        return l.2 > c.2
+        SemanticVersion.isNewer(latest: latest, current: current)
     }
 
     func parseVersion(_ v: String) -> (Int, Int, Int) {
-        let parts = v.split(separator: ".").compactMap { Int($0.prefix(while: { $0.isNumber })) }
-        let major = parts.count > 0 ? parts[0] : 0
-        let minor = parts.count > 1 ? parts[1] : 0
-        let patch = parts.count > 2 ? parts[2] : 0
-        return (major, minor, patch)
+        let ver = SemanticVersion(v)
+        return (ver.major, ver.minor, ver.patch)
     }
 
     private func showUpdateAlert(
