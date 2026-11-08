@@ -30,6 +30,23 @@ fn err(text: &str) -> Vec<raw_viewer_core::package::ManifestDiagnostic> {
     parse_package_manifest(text, LABEL).expect_err("expected validation errors")
 }
 
+/// Deep `nest` maps under `profiles[0]`; `levels` chooses parser nesting depth after the manifest prefix.
+fn manifest_with_profile_nest_levels(levels: usize) -> String {
+    let mut s = String::from(
+        "schema_version: 1\nid: usth\nversion: v\ndisplay_name: n\nprofiles:\n  - id: usth/p\n    path: profiles/p.yaml\n    sha256: ",
+    );
+    s.push_str(DIGEST_A);
+    s.push_str("\n    nest:\n");
+    let base_indent = 6;
+    for i in 0..levels {
+        s.push_str(&"  ".repeat(base_indent + i * 2));
+        s.push_str(&format!("l{i}:\n"));
+    }
+    s.push_str(&"  ".repeat(base_indent + levels * 2));
+    s.push_str("leaf: v\n");
+    s
+}
+
 #[test]
 fn rfc_example_manifest_parses() {
     let yaml = format!(
@@ -131,9 +148,22 @@ fn unknown_top_level_and_profile_hooks_scripts() {
     let yaml = minimal_manifest("hooks: x\n");
     assert!(err(&yaml)
         .iter()
-        .any(|d| d.kind == ManifestErrorKind::UnknownField && d.field == "hooks"));
+        .any(|d| { d.kind == ManifestErrorKind::UnknownField && d.field == "hooks" }));
+
+    let yaml = minimal_manifest("scripts: y\n");
+    assert!(err(&yaml)
+        .iter()
+        .any(|d| { d.kind == ManifestErrorKind::UnknownField && d.field == "scripts" }));
+
     let yaml = minimal_manifest("    hooks: x\n");
-    assert!(err(&yaml).iter().any(|d| d.field.contains("hooks")));
+    assert!(err(&yaml)
+        .iter()
+        .any(|d| { d.kind == ManifestErrorKind::UnknownField && d.field == "profiles[0].hooks" }));
+
+    let yaml = minimal_manifest("    scripts: y\n");
+    assert!(err(&yaml).iter().any(|d| {
+        d.kind == ManifestErrorKind::UnknownField && d.field == "profiles[0].scripts"
+    }));
 }
 
 #[test]
@@ -185,24 +215,33 @@ fn malformed_yaml_syntax() {
 
 #[test]
 fn depth_31_ok_depth_32_error() {
-    let mut inner =
-        String::from("schema_version: 1\nid: usth\nversion: v\ndisplay_name: n\nprofiles:\n");
-    inner.push_str("  - id: usth/p\n    path: profiles/p.yaml\n    sha256: ");
-    inner.push_str(DIGEST_A);
-    inner.push('\n');
-    inner.push_str(&"  x:\n".repeat(29));
-    inner.push_str("    leaf: v\n");
-    let _ = parse_package_manifest(&inner, LABEL); // may be ok or shape error depending depth counting
+    // 28 nested maps: parser accepts (depth < 32); schema rejects unknown `nest` on the profile.
+    const DEPTH_31_NEST_LEVELS: usize = 28;
+    const DEPTH_32_NEST_LEVELS: usize = 29;
 
-    let mut deep =
-        String::from("schema_version: 1\nid: usth\nversion: v\ndisplay_name: n\nprofiles:\n");
-    deep.push_str("  - id: usth/p\n    path: profiles/p.yaml\n    sha256: ");
-    deep.push_str(DIGEST_A);
-    deep.push('\n');
-    deep.push_str(&"  x:\n".repeat(31));
-    deep.push_str("    leaf: v\n");
-    let diags = err(&deep);
-    assert!(diags.iter().any(|d| d.kind == ManifestErrorKind::Syntax));
+    let within_limit = manifest_with_profile_nest_levels(DEPTH_31_NEST_LEVELS);
+    let diags = err(&within_limit);
+    assert!(
+        diags.iter().any(|d| {
+            d.kind == ManifestErrorKind::UnknownField && d.field == "profiles[0].nest"
+        }),
+        "expected schema UnknownField for nest, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| {
+            d.kind == ManifestErrorKind::Syntax && d.detail.contains("profile nesting is too deep")
+        }),
+        "depth-31 case must not fail YAML parse depth limit: {diags:?}"
+    );
+
+    let over_limit = manifest_with_profile_nest_levels(DEPTH_32_NEST_LEVELS);
+    let diags = err(&over_limit);
+    assert!(
+        diags.iter().any(|d| {
+            d.kind == ManifestErrorKind::Syntax && d.detail.contains("profile nesting is too deep")
+        }),
+        "expected parser depth Syntax at 32, got {diags:?}"
+    );
 }
 
 #[test]
