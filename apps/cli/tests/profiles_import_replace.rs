@@ -47,12 +47,13 @@ fn sha256_hex(path: &Path) -> String {
     line.split_whitespace().next().unwrap().to_string()
 }
 
-fn run_import(
+fn run_import_with_env(
     home: &Path,
     project: &Path,
     candidate: &Path,
     replace: bool,
     dry_run: bool,
+    extra_env: &[(&str, &str)],
 ) -> (i32, serde_json::Value) {
     let mut args = vec![
         "--json".to_string(),
@@ -70,12 +71,12 @@ fn run_import(
         args.push("--dry-run".to_string());
     }
 
-    let output = Command::new(cli_bin())
-        .env("HOME", home)
-        .env("USERPROFILE", home)
-        .args(&args)
-        .output()
-        .expect("run profiles import");
+    let mut cmd = Command::new(cli_bin());
+    cmd.env("HOME", home).env("USERPROFILE", home);
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let output = cmd.args(&args).output().expect("run profiles import");
 
     let code = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -85,6 +86,16 @@ fn run_import(
         serde_json::from_str(&stdout).expect("parse json envelope")
     };
     (code, parsed)
+}
+
+fn run_import(
+    home: &Path,
+    project: &Path,
+    candidate: &Path,
+    replace: bool,
+    dry_run: bool,
+) -> (i32, serde_json::Value) {
+    run_import_with_env(home, project, candidate, replace, dry_run, &[])
 }
 
 const MARKER_SUFFIX: &str = "# USER EDIT MARKER — keep during import safety tests\n";
@@ -293,7 +304,7 @@ fn acceptance_slash_vs_hyphen_id_collision_never_clobbers_with_replace() {
 }
 
 #[test]
-fn acceptance_atomic_replace_failure_leaves_destination_unchanged() {
+fn acceptance_post_staging_replace_failure_leaves_destination_unchanged() {
     let home = temp_project("home_atomic_fail");
     let project = temp_project("atomic_fail");
     let profiles_dir = project.join(".raw-viewer/profiles");
@@ -302,34 +313,123 @@ fn acceptance_atomic_replace_failure_leaves_destination_unchanged() {
     let marked = marked_keithley_text();
     fs::write(&dest, &marked).expect("write dest");
     let before_hash = sha256_hex(&dest);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&profiles_dir).expect("meta").permissions();
-        perms.set_mode(0o555);
-        fs::set_permissions(&profiles_dir, perms).expect("chmod profiles ro");
-    }
-
-    let (code, _parsed) = run_import(&home, &project, &keithley_asset(), true, false);
-    assert_ne!(
-        code, 0,
-        "replace must fail when destination directory is not writable"
+    let parent = dest.parent().unwrap();
+    assert!(
+        fs::read_dir(parent)
+            .expect("list profiles dir")
+            .filter_map(Result::ok)
+            .all(|e| !e.file_name().to_string_lossy().contains(".import-tmp")),
+        "staging must not leave temp files before import"
     );
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&profiles_dir).expect("meta").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&profiles_dir, perms).expect("restore chmod");
-    }
-
+    let (code, parsed) = run_import_with_env(
+        &home,
+        &project,
+        &keithley_asset(),
+        true,
+        false,
+        &[("RAW_VIEWER_TEST_COMMIT_REPLACE_FAIL", "1")],
+    );
+    assert_eq!(code, 5, "commit failure after staging must be I/O class");
+    assert_eq!(parsed["error"]["code"], "io_error");
     assert_eq!(
         sha256_hex(&dest),
         before_hash,
         "failed replace must not mutate destination"
     );
+    assert!(
+        fs::read_dir(parent)
+            .expect("list after")
+            .filter_map(Result::ok)
+            .all(|e| !e.file_name().to_string_lossy().contains(".import-tmp")),
+        "failed commit must remove staging temp file"
+    );
+}
+
+#[test]
+fn acceptance_destination_appears_after_staging_without_replace_preserves_bytes() {
+    let home = temp_project("home_race");
+    let project = temp_project("race_dest");
+    let dest = project.join(".raw-viewer/profiles/usth-keithley-2400.yaml");
+    let inject_body = marked_keithley_text();
+
+    let (code, parsed) = run_import_with_env(
+        &home,
+        &project,
+        &keithley_asset(),
+        false,
+        false,
+        &[
+            ("RAW_VIEWER_TEST_IMPORT_INJECT", "post_stage"),
+            ("RAW_VIEWER_TEST_INJECT_KIND", "create_dest"),
+            ("RAW_VIEWER_TEST_INJECT_CONTENT", &inject_body),
+        ],
+    );
+    assert_eq!(code, 4, "must refuse when destination appears at commit");
+    assert!(
+        matches!(
+            parsed["error"]["code"].as_str(),
+            Some("replacement_required") | Some("profile_id_collision")
+        ),
+        "unexpected error: {parsed}"
+    );
+    assert!(dest.is_file(), "adversarial destination must remain");
+    assert_eq!(
+        sha256_hex(&dest),
+        sha256_hex_from_bytes(inject_body.as_bytes())
+    );
+}
+
+#[test]
+fn acceptance_destination_appears_after_staging_with_replace_refuses_different_identity() {
+    let home = temp_project("home_race_diff");
+    let project = temp_project("race_diff");
+    let dest = project.join(".raw-viewer/profiles/a-b.yaml");
+    let hyphen_body = minimal_v4_profile("a-b", "hyphen", "Hyphen");
+
+    let (code, parsed) = run_import_with_env(
+        &home,
+        &project,
+        &{
+            let c = project.join("slash.yaml");
+            fs::write(&c, minimal_v4_profile("a/b", "slash", "Slash")).expect("slash cand");
+            c
+        },
+        true,
+        false,
+        &[
+            ("RAW_VIEWER_TEST_IMPORT_INJECT", "post_stage"),
+            ("RAW_VIEWER_TEST_INJECT_KIND", "create_dest"),
+            ("RAW_VIEWER_TEST_INJECT_CONTENT", &hyphen_body),
+        ],
+    );
+    assert_eq!(code, 4);
+    assert_eq!(parsed["error"]["code"], "profile_id_collision");
+    assert_eq!(
+        sha256_hex(&dest),
+        sha256_hex_from_bytes(hyphen_body.as_bytes())
+    );
+}
+
+fn sha256_hex_from_bytes(data: &[u8]) -> String {
+    use std::io::Write;
+    let mut child = Command::new("sha256sum")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("sha256sum");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(data)
+        .expect("write hash stdin");
+    let out = child.wait_with_output().expect("hash");
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 fn electrochem_v3_fixture() -> &'static str {

@@ -116,7 +116,7 @@ variants:
    - If exit code 3 (`ambiguous_profile`) occurs, refine `when:` tokens or `content_contains_any` until exactly one profile matches.
 
 ### Step 7: Save & Enable Profile
-1. Import the verified profile into the project. If a profile with the **same id** is already installed, the CLI refuses to overwrite user edits unless you pass **`--replace`** (explicit consent). Different profile ids that map to the same destination filename (`a/b` vs `a-b`) are rejected with a collision error even with `--replace`.
+1. Import the verified profile into the project. If a profile with the **same id** is already installed, the CLI refuses to overwrite user edits unless you pass **`--replace`** (explicit consent). Different profile ids that map to the same destination filename (`a/b` vs `a-b`) are rejected with a collision error even with `--replace`. Fresh installs commit with exclusive create (`create_new`) so a destination that appears after staging cannot be clobbered.
    ```sh
    raw-viewer --json profiles import --project <project_path> --file <candidate_profile.yaml>
    ```

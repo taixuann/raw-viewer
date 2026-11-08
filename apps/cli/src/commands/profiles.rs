@@ -4,7 +4,7 @@ use raw_viewer_core::profile::{
     builtin_catalog, parse_profile_v3, parse_profile_v4, BUILTIN_PROFILES,
 };
 use serde_json::json;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -160,6 +160,198 @@ fn replacement_required_result(dest_path: &Path, candidate_id: &str) -> CliResul
     }
 }
 
+fn import_test_adversary_inject(dest_path: &Path) {
+    if std::env::var_os("RAW_VIEWER_TEST_IMPORT_INJECT") != Some("post_stage".into()) {
+        return;
+    }
+    let Ok(kind) = std::env::var("RAW_VIEWER_TEST_INJECT_KIND") else {
+        return;
+    };
+    let content = std::env::var("RAW_VIEWER_TEST_INJECT_CONTENT")
+        .unwrap_or_else(|_| minimal_test_marker_content());
+    match kind.as_str() {
+        "create_dest" if !dest_path.exists() => {
+            let _ = fs::write(dest_path, content);
+        }
+        "create_dest_same_id" => {
+            let _ = fs::write(dest_path, content);
+        }
+        _ => {}
+    }
+}
+
+const MINIMAL_INJECTED_PROFILE: &str = "schema_version: 4\nid: usth/keithley-2400\nrevision: 1\ninstrument:\n  id: k\n  name: K\nvariants:\n  default:\n    format:\n      kind: tabular\n      extensions: [\".txt\"]\n      delimiter: \"\\t\"\n    rows:\n      header: 1\n      data_start: 2\n    columns:\n      x:\n        role: channel\n        header: x\n        quantity: voltage\n        unit: V\n        label: X\n    plot:\n      x: x\n      y: [x]\n# INJECTED MARKER\n";
+
+fn minimal_test_marker_content() -> String {
+    MINIMAL_INJECTED_PROFILE.to_string()
+}
+
+fn commit_error_for_existing_destination(
+    dest_path: &Path,
+    candidate_id: &str,
+    replace: bool,
+) -> CliResult {
+    if !dest_path.exists() {
+        return CliResult::validation("internal error: destination classification without file");
+    }
+
+    let existing_id = match read_installed_profile_id(dest_path) {
+        Ok(id) => id,
+        Err(message) => {
+            return CliResult {
+                exit_code: crate::envelope::EXIT_VALIDATION,
+                output: Err((
+                    "profile_id_collision".to_string(),
+                    message,
+                    json!({
+                        "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                        "candidate_id": candidate_id,
+                    }),
+                )),
+            };
+        }
+    };
+
+    if existing_id != candidate_id {
+        return CliResult {
+            exit_code: crate::envelope::EXIT_VALIDATION,
+            output: Err((
+                "profile_id_collision".to_string(),
+                format!(
+                    "destination path is already used by profile \"{existing_id}\"; \
+                     refusing to overwrite with \"{candidate_id}\""
+                ),
+                json!({
+                    "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                    "existing_id": existing_id,
+                    "candidate_id": candidate_id,
+                }),
+            )),
+        };
+    }
+
+    if !replace {
+        return replacement_required_result(dest_path, candidate_id);
+    }
+
+    CliResult::validation("internal error: replace commit called without consent resolution")
+}
+
+fn commit_staged_import(
+    dest_path: &Path,
+    tmp_path: &Path,
+    text: &str,
+    candidate_id: &str,
+    replace: bool,
+) -> CliResult {
+    import_test_adversary_inject(dest_path);
+
+    if dest_path.exists() {
+        if !replace {
+            let err = commit_error_for_existing_destination(dest_path, candidate_id, replace);
+            return err;
+        }
+
+        let existing_id = match read_installed_profile_id(dest_path) {
+            Ok(id) => id,
+            Err(message) => {
+                return CliResult {
+                    exit_code: crate::envelope::EXIT_VALIDATION,
+                    output: Err((
+                        "profile_id_collision".to_string(),
+                        message,
+                        json!({
+                            "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                            "candidate_id": candidate_id,
+                        }),
+                    )),
+                };
+            }
+        };
+        if existing_id != candidate_id {
+            return CliResult {
+                exit_code: crate::envelope::EXIT_VALIDATION,
+                output: Err((
+                    "profile_id_collision".to_string(),
+                    format!(
+                        "destination path is already used by profile \"{existing_id}\"; \
+                         refusing to overwrite with \"{candidate_id}\""
+                    ),
+                    json!({
+                        "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                        "existing_id": existing_id,
+                        "candidate_id": candidate_id,
+                    }),
+                )),
+            };
+        }
+
+        if std::env::var_os("RAW_VIEWER_TEST_COMMIT_REPLACE_FAIL") == Some("1".into()) {
+            return CliResult::io(
+                "test harness: injected post-staging replace failure before rename",
+            );
+        }
+
+        if let Err(e) = fs::rename(tmp_path, dest_path) {
+            return CliResult::io(format!(
+                "failed to replace profile at {}: {e}",
+                dest_path.display()
+            ));
+        }
+
+        return CliResult::ok(json!({
+            "action": "profiles.import",
+            "dry_run": false,
+            "replaced": true,
+            "id": candidate_id,
+            "destination_path": dest_path.display().to_string().replace('\\', "/"),
+        }));
+    }
+
+    let mut dest_file = match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest_path)
+    {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return commit_error_for_existing_destination(dest_path, candidate_id, replace);
+        }
+        Err(e) => {
+            return CliResult::io(format!(
+                "failed to create profile file at {}: {e}",
+                dest_path.display()
+            ));
+        }
+    };
+
+    if let Err(e) = dest_file.write_all(text.as_bytes()) {
+        let _ = fs::remove_file(dest_path);
+        return CliResult::io(format!(
+            "failed to write profile file at {}: {e}",
+            dest_path.display()
+        ));
+    }
+
+    if let Err(e) = dest_file.sync_all() {
+        let _ = fs::remove_file(dest_path);
+        return CliResult::io(format!(
+            "failed to flush profile file at {}: {e}",
+            dest_path.display()
+        ));
+    }
+    drop(dest_file);
+    let _ = fs::remove_file(tmp_path);
+
+    CliResult::ok(json!({
+        "action": "profiles.import",
+        "dry_run": false,
+        "replaced": false,
+        "id": candidate_id,
+        "destination_path": dest_path.display().to_string().replace('\\', "/"),
+    }))
+}
+
 fn write_profile_atomically(
     dest_path: &Path,
     text: &str,
@@ -198,78 +390,11 @@ fn write_profile_atomically(
     }
     drop(tmp_file);
 
-    let had_existing = dest_path.exists();
-    if had_existing {
-        let existing_id = match read_installed_profile_id(dest_path) {
-            Ok(id) => id,
-            Err(message) => {
-                let _ = fs::remove_file(&tmp_path);
-                return CliResult {
-                    exit_code: crate::envelope::EXIT_VALIDATION,
-                    output: Err((
-                        "profile_id_collision".to_string(),
-                        message,
-                        json!({
-                            "destination_path": dest_path.display().to_string().replace('\\', "/"),
-                            "candidate_id": candidate_id,
-                        }),
-                    )),
-                };
-            }
-        };
-
-        if existing_id != candidate_id {
-            let _ = fs::remove_file(&tmp_path);
-            return CliResult {
-                exit_code: crate::envelope::EXIT_VALIDATION,
-                output: Err((
-                    "profile_id_collision".to_string(),
-                    format!(
-                        "destination path is already used by profile \"{existing_id}\"; \
-                         refusing to overwrite with \"{candidate_id}\""
-                    ),
-                    json!({
-                        "destination_path": dest_path.display().to_string().replace('\\', "/"),
-                        "existing_id": existing_id,
-                        "candidate_id": candidate_id,
-                    }),
-                )),
-            };
-        }
-
-        if !replace {
-            let _ = fs::remove_file(&tmp_path);
-            return CliResult {
-                exit_code: crate::envelope::EXIT_VALIDATION,
-                output: Err((
-                    "replacement_required".to_string(),
-                    format!(
-                        "profile \"{candidate_id}\" already exists; re-import requires --replace"
-                    ),
-                    json!({
-                        "destination_path": dest_path.display().to_string().replace('\\', "/"),
-                        "id": candidate_id,
-                    }),
-                )),
-            };
-        }
-    }
-
-    if let Err(e) = fs::rename(&tmp_path, dest_path) {
+    let result = commit_staged_import(dest_path, &tmp_path, text, candidate_id, replace);
+    if result.exit_code != crate::envelope::EXIT_OK {
         let _ = fs::remove_file(&tmp_path);
-        return CliResult::io(format!(
-            "failed to install profile at {}: {e}",
-            dest_path.display()
-        ));
     }
-
-    CliResult::ok(json!({
-        "action": "profiles.import",
-        "dry_run": false,
-        "replaced": replace && had_existing,
-        "id": candidate_id,
-        "destination_path": dest_path.display().to_string().replace('\\', "/"),
-    }))
+    result
 }
 
 pub fn import_profile(project: &Path, file: &Path, dry_run: bool, replace: bool) -> CliResult {
@@ -409,4 +534,57 @@ pub fn export_profile(_global: bool, project: Option<&Path>, id: &str, out: &str
         "id": id,
         "output": out,
     }))
+}
+
+#[cfg(test)]
+mod import_commit_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let p = std::env::temp_dir().join(format!("rv_import_ut_{label}_{nanos}"));
+        fs::create_dir_all(&p).expect("temp");
+        p
+    }
+
+    #[test]
+    fn commit_create_new_refuses_existing_dest_without_replace() {
+        let root = temp_root("create_new");
+        let parent = root.join(".raw-viewer/profiles");
+        fs::create_dir_all(&parent).expect("parent");
+        let dest = parent.join("usth-keithley-2400.yaml");
+        fs::write(&dest, "# PREEXISTING\n").expect("seed");
+        let tmp = parent.join(".usth-keithley-2400.import-tmp");
+        fs::write(&tmp, "candidate").expect("stage");
+
+        let result = commit_staged_import(&dest, &tmp, "candidate", "usth/keithley-2400", false);
+        assert_eq!(result.exit_code, crate::envelope::EXIT_VALIDATION);
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "# PREEXISTING\n");
+    }
+
+    #[test]
+    fn commit_replace_refuses_different_identity_even_with_replace_flag() {
+        let root = temp_root("diff_id");
+        let parent = root.join(".raw-viewer/profiles");
+        fs::create_dir_all(&parent).expect("parent");
+        let dest = parent.join("a-b.yaml");
+        fs::write(&dest, minimal_v4_profile_id("a-b")).expect("hyphen profile");
+        let tmp = parent.join(".a-b.import-tmp");
+        fs::write(&tmp, minimal_v4_profile_id("a/b")).expect("stage slash");
+
+        let result = commit_staged_import(&dest, &tmp, &minimal_v4_profile_id("a/b"), "a/b", true);
+        assert_eq!(result.exit_code, crate::envelope::EXIT_VALIDATION);
+        let on_disk = fs::read_to_string(&dest).unwrap();
+        assert!(on_disk.contains("id: a-b"), "hyphen identity must remain");
+    }
+
+    fn minimal_v4_profile_id(id: &str) -> String {
+        format!(
+            "schema_version: 4\nid: {id}\nrevision: 1\ninstrument:\n  id: x\n  name: X\nvariants:\n  default:\n    format:\n      kind: tabular\n      extensions: [\".txt\"]\n      delimiter: \"\\t\"\n    rows:\n      header: 1\n      data_start: 2\n    columns:\n      x:\n        role: channel\n        header: x\n        quantity: voltage\n        unit: V\n        label: X\n    plot:\n      x: x\n      y: [x]\n"
+        )
+    }
 }
