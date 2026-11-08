@@ -1,30 +1,40 @@
-use raw_viewer_core::explorer::Explorer;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn cli_bin() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop(); // apps
-    path.pop(); // root
-    path.push("target");
-    path.push("debug");
-    path.push("raw-viewer");
-    path
+    let mut p = std::env::current_exe().expect("current test exe path");
+    p.pop();
+    if p.file_name().map(|n| n == "deps").unwrap_or(false) {
+        p.pop();
+    }
+    p.push(if cfg!(windows) {
+        "raw-viewer.exe"
+    } else {
+        "raw-viewer"
+    });
+    p
 }
 
-fn temp_dir(label: &str) -> PathBuf {
-    let mut p = std::env::temp_dir();
-    p.push(format!(
-        "raw_viewer_grammar_test_{}_{}",
-        label,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&p).expect("create temp dir");
-    p
+fn temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("raw_viewer_test_{}_{}", name, std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn isolate_cmd(cmd: &mut Command, fake_home: &Path) {
+    let appdata = fake_home.join("AppData").join("Roaming");
+    let localappdata = fake_home.join("AppData").join("Local");
+    let config = fake_home.join(".config");
+    let _ = fs::create_dir_all(&appdata);
+    let _ = fs::create_dir_all(&localappdata);
+    let _ = fs::create_dir_all(&config);
+    cmd.env("HOME", fake_home)
+        .env("USERPROFILE", fake_home)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("APPDATA", &appdata)
+        .env("LOCALAPPDATA", &localappdata);
 }
 
 #[test]
@@ -51,9 +61,9 @@ grammar:
     fs::write(&candidate_file, candidate_content).unwrap();
 
     // 1. Initial show --global with isolated HOME returns built-in
-    let show_initial = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    let mut cmd1 = Command::new(&bin);
+    isolate_cmd(&mut cmd1, &fake_home);
+    let show_initial = cmd1
         .args(["--json", "grammar", "show", "--global"])
         .output()
         .expect("run grammar show initial");
@@ -64,9 +74,9 @@ grammar:
     assert_eq!(parsed_initial["data"]["source"], "built-in");
 
     // 2. Set --global with candidate
-    let set_output = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    let mut cmd2 = Command::new(&bin);
+    isolate_cmd(&mut cmd2, &fake_home);
+    let set_output = cmd2
         .args([
             "--json",
             "grammar",
@@ -91,9 +101,9 @@ grammar:
     assert_eq!(set_parsed["data"]["id"], "custom-lab-grammar");
 
     // 3. Show --global must now return the custom grammar with source global
-    let show_after = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    let mut cmd3 = Command::new(&bin);
+    isolate_cmd(&mut cmd3, &fake_home);
+    let show_after = cmd3
         .args(["--json", "grammar", "show", "--global"])
         .output()
         .expect("run grammar show after set");
@@ -103,51 +113,58 @@ grammar:
     assert_eq!(parsed_after["ok"], true);
     assert_eq!(parsed_after["data"]["source"], "global");
     assert_eq!(parsed_after["data"]["id"], "custom-lab-grammar");
-    assert_eq!(
-        parsed_after["data"]["template"],
-        "{instrument}_{mode}_{device}"
-    );
 
-    // 4. Explorer opened in an unconfigured project inherits the global grammar
-    let proj = temp_root.join("empty_proj");
+    // 4. Test that explorer on a new project without local config inherits global grammar
+    let proj = temp_root.join("test_proj");
     fs::create_dir_all(&proj).unwrap();
-    // Set environment so Explorer's paths::resolve_paths_from_env picks up fake_home
-    std::env::set_var("HOME", &fake_home);
-    std::env::set_var("XDG_CONFIG_HOME", fake_home.join(".config"));
 
-    let explorer = Explorer::open(&proj).expect("open empty project");
-    let eff = explorer.effective_grammar();
-    assert_eq!(eff.source, raw_viewer_core::explorer::GrammarSource::Global);
-    assert_eq!(eff.grammar.id, "custom-lab-grammar");
+    let mut cmd4 = Command::new(&bin);
+    isolate_cmd(&mut cmd4, &fake_home);
+    let show_proj = cmd4
+        .args([
+            "--json",
+            "grammar",
+            "show",
+            "--project",
+            proj.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run grammar show project");
+    assert!(show_proj.status.success());
+    let stdout_proj = String::from_utf8_lossy(&show_proj.stdout);
+    let parsed_proj: serde_json::Value = serde_json::from_str(&stdout_proj).unwrap();
+    assert_eq!(parsed_proj["ok"], true);
+    assert_eq!(parsed_proj["data"]["source"], "global");
+    assert_eq!(parsed_proj["data"]["id"], "custom-lab-grammar");
 
-    // 5. Test grammar test command on matching filename using global grammar
-    let test_output = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    // 5. grammar test uses this effective global grammar
+    let mut cmd5 = Command::new(&bin);
+    isolate_cmd(&mut cmd5, &fake_home);
+    let test_run = cmd5
         .args([
             "--json",
             "grammar",
             "test",
-            "--global",
+            "--project",
+            proj.to_str().unwrap(),
             "--filename",
-            "keithley_iv_dev01.csv",
+            "keithley_iv_d1.txt",
         ])
         .output()
         .expect("run grammar test");
-    let test_stdout = String::from_utf8_lossy(&test_output.stdout);
-    let test_stderr = String::from_utf8_lossy(&test_output.stderr);
-    assert!(
-        test_output.status.success(),
-        "grammar test failed: status={}, stdout={}, stderr={}",
-        test_output.status,
-        test_stdout,
-        test_stderr
-    );
-    let test_parsed: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&test_output.stdout)).unwrap();
+    assert!(test_run.status.success());
+    let test_stdout = String::from_utf8_lossy(&test_run.stdout);
+    let test_parsed: serde_json::Value = serde_json::from_str(&test_stdout).unwrap();
     assert_eq!(test_parsed["ok"], true);
     assert_eq!(test_parsed["data"]["all_matched"], true);
     assert_eq!(test_parsed["data"]["grammar_id"], "custom-lab-grammar");
+    assert_eq!(test_parsed["data"]["results"][0]["matched"], true);
+    assert_eq!(
+        test_parsed["data"]["results"][0]["tokens"]["instrument"],
+        "keithley"
+    );
+    assert_eq!(test_parsed["data"]["results"][0]["tokens"]["mode"], "iv");
+    assert_eq!(test_parsed["data"]["results"][0]["tokens"]["device"], "d1");
 }
 
 #[test]
@@ -157,13 +174,14 @@ fn test_project_grammar_overrides_global_grammar() {
     let fake_home = temp_root.join("home");
     fs::create_dir_all(&fake_home).unwrap();
 
+    // Set global grammar first
     let global_file = temp_root.join("global_grammar.yaml");
     fs::write(
         &global_file,
         r#"
 grammar:
-  id: global-grammar
-  name: Global Grammar
+  id: global-custom-grammar
+  name: Global Custom Grammar
   template: "{instrument}_{mode}_{device}"
   fields:
     - name: instrument
@@ -176,9 +194,9 @@ grammar:
     )
     .unwrap();
 
-    let set_global = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    let mut cmd1 = Command::new(&bin);
+    isolate_cmd(&mut cmd1, &fake_home);
+    let set_global = cmd1
         .args([
             "--json",
             "grammar",
@@ -212,9 +230,9 @@ grammar:
     )
     .unwrap();
 
-    let set_local = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    let mut cmd2 = Command::new(&bin);
+    isolate_cmd(&mut cmd2, &fake_home);
+    let set_local = cmd2
         .args([
             "--json",
             "grammar",
@@ -229,9 +247,9 @@ grammar:
     assert!(set_local.status.success());
 
     // Show with --project returns project source
-    let show_proj = Command::new(&bin)
-        .env("HOME", &fake_home)
-        .env("XDG_CONFIG_HOME", fake_home.join(".config"))
+    let mut cmd3 = Command::new(&bin);
+    isolate_cmd(&mut cmd3, &fake_home);
+    let show_proj = cmd3
         .args([
             "--json",
             "grammar",

@@ -21,8 +21,7 @@ fn find_project_root() -> Option<PathBuf> {
 }
 
 pub fn run() -> CliResult {
-    let dummy_root = Path::new("/dummy");
-    let resolved = paths::resolve_paths_from_env(dummy_root).ok();
+    let resolved = paths::resolve_global_paths_from_env().ok();
 
     let global_config_path = resolved
         .as_ref()

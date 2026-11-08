@@ -204,6 +204,18 @@ pub fn resolve_paths_from_env(project_root: &Path) -> Result<ResolvedPaths, Reso
     resolve_paths(&inputs, host_dir_exists)
 }
 
+/// Read the process environment and resolve global config and cache directories.
+///
+/// This does not create directories.
+pub fn resolve_global_paths_from_env() -> Result<ResolvedPaths, ResolveError> {
+    let dummy = if cfg!(windows) {
+        PathBuf::from("C:\\")
+    } else {
+        PathBuf::from("/")
+    };
+    resolve_paths_from_env(&dummy)
+}
+
 /// Owner-private cache directory for one project's index (`…/projects/<sha256>/`).
 ///
 /// The digest is SHA-256 hex of the canonical project root path as UTF-8. The

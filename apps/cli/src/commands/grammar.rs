@@ -31,8 +31,7 @@ fn resolve_grammar(
         };
         Ok((eff.grammar.clone(), src.to_string()))
     } else if global {
-        let dummy = Path::new("/dummy");
-        let resolved = paths::resolve_paths_from_env(dummy).map_err(|e| {
+        let resolved = paths::resolve_global_paths_from_env().map_err(|e| {
             CliResult::io(format!("failed to resolve global config directory: {e}"))
         })?;
         let global_dir = Path::new(&resolved.global_config_dir);
@@ -115,8 +114,7 @@ pub fn set(global: bool, project: Option<&Path>, file: &Path, dry_run: bool) -> 
         }
         p.join(".raw-viewer").join("grammar.yaml")
     } else if global {
-        let dummy = Path::new("/dummy");
-        let resolved = match paths::resolve_paths_from_env(dummy) {
+        let resolved = match paths::resolve_global_paths_from_env() {
             Ok(r) => r,
             Err(e) => return CliResult::io(format!("failed to resolve global paths: {e}")),
         };
