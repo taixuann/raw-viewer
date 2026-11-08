@@ -11,6 +11,7 @@ pub mod config;
 pub mod explorer;
 pub mod grammar;
 pub mod measurement;
+pub mod package;
 pub mod paths;
 pub mod profile;
 pub mod project;
