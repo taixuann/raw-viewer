@@ -94,6 +94,7 @@ struct InspectorPane: View {
     var onSelectY: (([String]?) -> Void)? = nil
     var onResetAxes: (() -> Void)? = nil
 
+    @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @State private var selectedTab: InspectorTab = .data
 
     var body: some View {
@@ -162,17 +163,21 @@ struct InspectorPane: View {
                         selectedTab = tab
                     }
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                            .font(.system(size: 9.5 * AppTypography.scale(for: uiFontSize), weight: isSelected ? .semibold : .regular))
                         Text(tab.rawValue)
-                            .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                            .font(AppTypography.font(size: 11, weight: isSelected ? .semibold : .regular, uiFontSize: uiFontSize))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+                .accessibilityLabel("\(tab.rawValue) tab")
                 .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                 .background {
                     if isSelected {

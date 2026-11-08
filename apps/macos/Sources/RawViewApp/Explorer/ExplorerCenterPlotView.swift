@@ -153,7 +153,7 @@ struct NativePlot: View {
     }
 
     var body: some View {
-        let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500, uiFontSize: uiFontSize)
+        let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500)
         switch transformed {
         case .failure(let failure):
             if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
@@ -231,7 +231,7 @@ struct NativePlot: View {
         }
         let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
-        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
+        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth)
 
         let maxChars = yLabels.map(\.count).max() ?? 1
         let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
@@ -501,7 +501,7 @@ struct OverlayPlot: View {
     }
 
     var body: some View {
-        let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500, uiFontSize: uiFontSize)
+        let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500)
         switch transformed {
         case .failure(let failure):
             if case .message(let message) = failure {
@@ -590,7 +590,7 @@ struct OverlayPlot: View {
         }
         let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
-        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth, uiFontSize: uiFontSize)
+        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth)
 
         let maxChars = yLabels.map(\.count).max() ?? 1
         let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)

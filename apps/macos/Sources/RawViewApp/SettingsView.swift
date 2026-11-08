@@ -5,6 +5,7 @@ import RawViewCore
 struct SettingsView: View {
     @ObservedObject var model: RawViewModel
     @AppStorage("appTheme") private var appTheme: String = "System"
+    @AppStorage("uiFontFamily") private var uiFontFamily: String = "System"
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @AppStorage("isLazyInspectionEnabled") private var isLazyInspectionEnabled: Bool = true
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
@@ -451,13 +452,23 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
+                Picker("UI Font Family:", selection: $uiFontFamily) {
+                    ForEach(AppTypography.FontFamily.allCases) { family in
+                        Text(family.label).tag(family.rawValue)
+                    }
+                }
+
                 HStack {
-                    Text("Font Size Preset:")
+                    Text("UI Font Size Preset:")
                     Slider(value: $uiFontSize, in: 10...16, step: 1)
                     Text("\(Int(uiFontSize)) pt")
                         .monospacedDigit()
                         .frame(width: 45, alignment: .trailing)
                 }
+
+                Text("Applies to app sidebar, inspector, settings, dialogs, and navigation controls. Scientific plot rendering and publication presets remain independently controlled.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

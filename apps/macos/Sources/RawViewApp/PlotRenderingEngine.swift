@@ -64,10 +64,10 @@ enum PlotRenderingEngine {
         }
     }
 
-    /// Compute dynamic font scale from viewport width and user preferences.
-    static func fontScale(plotWidth: CGFloat, uiFontSize: Double) -> CGFloat {
-        let baseScale = max(1.0, min(1.6, plotWidth / 480.0))
-        return baseScale * (CGFloat(uiFontSize) / 12.0)
+    /// Compute dynamic font scale from viewport width for publication rendering.
+    /// Canvas scientific typography is preset-controlled and decoupled from app UI font size.
+    static func fontScale(plotWidth: CGFloat) -> CGFloat {
+        max(1.0, min(1.6, plotWidth / 480.0))
     }
 
     /// Convert a sequence of 2D data points into a smooth Catmull-Rom cubic Bezier path.
