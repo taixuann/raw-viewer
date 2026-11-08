@@ -188,6 +188,12 @@ enum ProfilesCommands {
         #[arg(long, help = "Profile YAML file")]
         file: PathBuf,
 
+        #[arg(
+            long,
+            help = "Replace an existing project profile with the same id (required to overwrite user edits)"
+        )]
+        replace: bool,
+
         #[arg(long, help = "Dry-run without modifying filesystem")]
         dry_run: bool,
     },
@@ -356,10 +362,11 @@ fn main() {
             ProfilesCommands::Import {
                 project,
                 file,
+                replace,
                 dry_run,
             } => (
                 "profiles.import",
-                commands::profiles::import_profile(project, file, *dry_run),
+                commands::profiles::import_profile(project, file, *dry_run, *replace),
             ),
             ProfilesCommands::Export {
                 global,

@@ -98,23 +98,31 @@ variants:
       y: [y_channel]
 ```
 
-### Step 6: Validate & Test Match
-1. Dry-run profile import:
+### Step 6: Validate Candidate (Dry-Run Import)
+1. Dry-run profile import **only validates the candidate YAML** (schema v3/v4). It does **not** write files, create `.raw-viewer/profiles/`, change `config.yaml`, enable the profile, or prove the installed project will match files.
    ```sh
    raw-viewer --json profiles import --project <project_path> --file <candidate_profile.yaml> --dry-run
    ```
-2. Test file match on the sample:
+2. Inspect JSON fields such as `validated_candidate`, `destination_exists`, and `would_require_replace`. A dry-run success does **not** mean the profile is active in the project.
+3. To validate behavior against already-installed project profiles, use `files match` / `files inspect` on a sample (Step 6b below) after a real import and enable.
+
+### Step 6b: Test Match on Sample (Installed Config)
+1. Test file match on the sample:
    ```sh
    raw-viewer --json files match --project <project_path> --file <sample_file_path>
    ```
-3. Verification criteria:
+2. Verification criteria:
    - Must return `"outcome": "matched"`.
    - If exit code 3 (`ambiguous_profile`) occurs, refine `when:` tokens or `content_contains_any` until exactly one profile matches.
 
 ### Step 7: Save & Enable Profile
-1. Import the verified profile into the project:
+1. Import the verified profile into the project. If a profile with the **same id** is already installed, the CLI refuses to overwrite user edits unless you pass **`--replace`** (explicit consent). Different profile ids that map to the same destination filename (`a/b` vs `a-b`) are rejected with a collision error even with `--replace`.
    ```sh
    raw-viewer --json profiles import --project <project_path> --file <candidate_profile.yaml>
+   ```
+   To overwrite an existing same-id installation:
+   ```sh
+   raw-viewer --json profiles import --project <project_path> --file <candidate_profile.yaml> --replace
    ```
 2. Enable the profile in project config:
    ```sh
