@@ -190,6 +190,9 @@ enum ProfilesCommands {
 
         #[arg(long, help = "Dry-run without modifying filesystem")]
         dry_run: bool,
+
+        #[arg(long, help = "Replace existing profile with same ID")]
+        replace: bool,
     },
     #[command(about = "Export profile definition")]
     Export {
@@ -357,9 +360,10 @@ fn main() {
                 project,
                 file,
                 dry_run,
+                replace,
             } => (
                 "profiles.import",
-                commands::profiles::import_profile(project, file, *dry_run),
+                commands::profiles::import_profile(project, file, *dry_run, *replace),
             ),
             ProfilesCommands::Export {
                 global,

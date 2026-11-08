@@ -5,7 +5,7 @@ use raw_viewer_core::profile::{
 };
 use serde_json::json;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn list(global: bool, project: Option<&Path>) -> CliResult {
     if let Some(p) = project {
@@ -55,7 +55,142 @@ pub fn disable(project: &Path, id: &str, dry_run: bool) -> CliResult {
     crate::commands::config::set(false, Some(project), "profiles.disabled", id, dry_run)
 }
 
-pub fn import_profile(project: &Path, file: &Path, dry_run: bool) -> CliResult {
+fn destination_path_for_profile_id(project: &Path, id: &str) -> PathBuf {
+    let safe_id = id.replace('/', "-");
+    let dest_filename = format!("{safe_id}.yaml");
+    project
+        .join(".raw-viewer")
+        .join("profiles")
+        .join(dest_filename)
+}
+
+fn read_installed_profile_id(path: &Path) -> Result<String, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|e| format!("failed to read existing profile at {}: {e}", path.display()))?;
+    if let Ok(v4) = parse_profile_v4(&text) {
+        return Ok(v4.profile_id);
+    }
+    if let Ok(v3) = parse_profile_v3(&text) {
+        return Ok(v3.profile_id);
+    }
+    Err(format!(
+        "existing destination {} is not a valid schema v3/v4 profile",
+        path.display().to_string().replace('\\', "/")
+    ))
+}
+
+enum DestinationGuard {
+    Absent,
+    SameId { replace_required: bool },
+    Collision(CliResult),
+}
+
+fn evaluate_destination_guard(
+    dest_path: &Path,
+    candidate_id: &str,
+    replace: bool,
+) -> DestinationGuard {
+    if !dest_path.exists() {
+        return DestinationGuard::Absent;
+    }
+
+    let existing_id = match read_installed_profile_id(dest_path) {
+        Ok(id) => id,
+        Err(message) => {
+            return DestinationGuard::Collision(CliResult {
+                exit_code: crate::envelope::EXIT_VALIDATION,
+                output: Err((
+                    "profile_id_collision".to_string(),
+                    message,
+                    json!({
+                        "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                        "candidate_id": candidate_id,
+                    }),
+                )),
+            });
+        }
+    };
+
+    if existing_id != candidate_id {
+        return DestinationGuard::Collision(CliResult {
+            exit_code: crate::envelope::EXIT_VALIDATION,
+            output: Err((
+                "profile_id_collision".to_string(),
+                format!(
+                    "destination path is already used by profile \"{existing_id}\"; \
+                     importing \"{candidate_id}\" would collide (slash and hyphen ids map to the same filename). \
+                     Use a different profile id or remove the existing file explicitly."
+                ),
+                json!({
+                    "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                    "existing_id": existing_id,
+                    "candidate_id": candidate_id,
+                }),
+            )),
+        });
+    }
+
+    DestinationGuard::SameId {
+        replace_required: !replace,
+    }
+}
+
+fn replacement_required_result(dest_path: &Path, candidate_id: &str) -> CliResult {
+    CliResult {
+        exit_code: crate::envelope::EXIT_VALIDATION,
+        output: Err((
+            "replacement_required".to_string(),
+            format!(
+                "profile \"{candidate_id}\" is already installed at {}; \
+                 re-import requires --replace to overwrite existing edits",
+                dest_path.display().to_string().replace('\\', "/")
+            ),
+            json!({
+                "destination_path": dest_path.display().to_string().replace('\\', "/"),
+                "id": candidate_id,
+            }),
+        )),
+    }
+}
+
+fn write_profile_atomically(dest_path: &Path, text: &str, id: &str, replace: bool) -> CliResult {
+    if let Some(parent) = dest_path.parent() {
+        if !parent.exists() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                return CliResult::io(format!("failed to create directory: {e}"));
+            }
+        }
+    }
+
+    if !replace && dest_path.exists() {
+        return replacement_required_result(dest_path, id);
+    }
+
+    let tmp_path = dest_path.with_extension(format!("import-tmp.{}", std::process::id()));
+    if let Err(e) = fs::write(&tmp_path, text) {
+        return CliResult::io(format!("failed to write staged profile: {e}"));
+    }
+
+    if !replace && dest_path.exists() {
+        let _ = fs::remove_file(&tmp_path);
+        return replacement_required_result(dest_path, id);
+    }
+
+    if let Err(e) = fs::rename(&tmp_path, dest_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return CliResult::io(format!("failed to commit profile: {e}"));
+    }
+
+    CliResult::ok(json!({
+        "action": "profiles.import",
+        "dry_run": false,
+        "id": id,
+        "destination_path": dest_path.display().to_string().replace('\\', "/"),
+        "replaced": replace,
+    }))
+}
+
+pub fn import_profile(project: &Path, file: &Path, dry_run: bool, replace: bool) -> CliResult {
     if !project.exists() {
         return CliResult::not_found(format!(
             "project path does not exist: {}",
@@ -82,12 +217,26 @@ pub fn import_profile(project: &Path, file: &Path, dry_run: bool) -> CliResult {
         return CliResult::validation("file does not conform to profile schema v3 or v4");
     };
 
-    let safe_id = id.replace('/', "-");
-    let dest_filename = format!("{}.yaml", safe_id);
-    let dest_path = project
-        .join(".raw-viewer")
-        .join("profiles")
-        .join(&dest_filename);
+    let dest_path = destination_path_for_profile_id(project, &id);
+    let destination_exists = dest_path.exists();
+
+    let guard = evaluate_destination_guard(&dest_path, &id, replace);
+    let would_require_replace = matches!(
+        &guard,
+        DestinationGuard::SameId {
+            replace_required: true,
+            ..
+        }
+    );
+
+    match guard {
+        DestinationGuard::Collision(result) => return result,
+        DestinationGuard::SameId {
+            replace_required: true,
+            ..
+        } if !dry_run => return replacement_required_result(&dest_path, &id),
+        _ => {}
+    }
 
     if dry_run {
         return CliResult::ok(json!({
@@ -96,27 +245,15 @@ pub fn import_profile(project: &Path, file: &Path, dry_run: bool) -> CliResult {
             "id": id,
             "instrument_name": instrument_name,
             "destination_path": dest_path.display().to_string().replace('\\', "/"),
+            "destination_exists": destination_exists,
+            "replace": replace,
+            "would_require_replace": would_require_replace,
+            "validated_candidate": true,
+            "note": "Dry-run validates the candidate file only; it does not install, activate, or enable the profile.",
         }));
     }
 
-    if let Some(parent) = dest_path.parent() {
-        if !parent.exists() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                return CliResult::io(format!("failed to create directory: {e}"));
-            }
-        }
-    }
-
-    if let Err(e) = fs::write(&dest_path, &text) {
-        return CliResult::io(format!("failed to write profile file: {e}"));
-    }
-
-    CliResult::ok(json!({
-        "action": "profiles.import",
-        "dry_run": false,
-        "id": id,
-        "destination_path": dest_path.display().to_string().replace('\\', "/"),
-    }))
+    write_profile_atomically(&dest_path, &text, &id, replace)
 }
 
 pub fn export_profile(_global: bool, project: Option<&Path>, id: &str, out: &str) -> CliResult {
