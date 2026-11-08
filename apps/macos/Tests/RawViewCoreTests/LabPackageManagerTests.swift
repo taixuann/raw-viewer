@@ -71,9 +71,9 @@ final class LabPackageManagerTests: XCTestCase {
 
         // Check project conflict detection
         let fakeProject = tempDirectory.appendingPathComponent("proj")
-        let localProfiles = fakeProject.appendingPathComponent(".raw-viewer/profiles")
+        let localProfiles = fakeProject.appendingPathComponent(".raw-viewer/profiles/usth")
         try FileManager.default.createDirectory(at: localProfiles, withIntermediateDirectories: true)
-        try "test".write(to: localProfiles.appendingPathComponent("usth/keithley-2400.yaml"), atomically: true, encoding: .utf8)
+        try "test".write(to: localProfiles.appendingPathComponent("keithley-2400.yaml"), atomically: true, encoding: .utf8)
 
         let conflicts = LabPackageManager.detectProjectConflicts(package: installed[0], projectRoot: fakeProject)
         XCTAssertEqual(conflicts, ["usth/keithley-2400"])
