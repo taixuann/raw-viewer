@@ -35,6 +35,7 @@ pub struct ProjectConfig {
     pub source_labels: Vec<String>,
     pub profiles: ProfilesConfig,
     pub recent_projects: Vec<String>,
+    pub tree_grouping: Option<Vec<String>>,
     pub grammar: Option<crate::grammar::FilenameGrammar>,
 }
 
@@ -56,6 +57,7 @@ impl Default for ProjectConfig {
             source_labels: Vec::new(),
             profiles: ProfilesConfig::default(),
             recent_projects: Vec::new(),
+            tree_grouping: None,
             grammar: None,
         }
     }
@@ -253,6 +255,9 @@ fn parse_project_yaml(
             }
             "recent_projects" => {
                 config.recent_projects = expect_string_array(path, "recent_projects", value)?;
+            }
+            "tree_grouping" => {
+                config.tree_grouping = Some(expect_string_array(path, "tree_grouping", value)?);
             }
             "grammar" => {
                 let grammar = crate::grammar::parse_single_grammar_node(value)
@@ -557,6 +562,7 @@ mod tests {
                 source_labels: Vec::new(),
                 profiles: ProfilesConfig::default(),
                 recent_projects: Vec::new(),
+                tree_grouping: None,
                 grammar: None,
             }
         );
@@ -587,6 +593,7 @@ default_view: tree
 default_preset: science-single
 explorer_views: [tree, plot]
 source_labels: [row-a, row-b]
+tree_grouping: [instrument, mode]
 ",
         )
         .unwrap();
@@ -601,6 +608,7 @@ source_labels: [row-a, row-b]
                 source_labels: vec!["row-a".into(), "row-b".into()],
                 profiles: ProfilesConfig::default(),
                 recent_projects: Vec::new(),
+                tree_grouping: Some(vec!["instrument".into(), "mode".into()]),
                 grammar: None,
             }
         );

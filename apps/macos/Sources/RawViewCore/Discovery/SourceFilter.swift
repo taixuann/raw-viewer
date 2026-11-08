@@ -1,7 +1,7 @@
 import Foundation
 
 /// Combined multi-facet filter: AND across facets, OR within a facet.
-public struct SourceFilter: Sendable, Equatable {
+public struct SourceFilter: Sendable, Equatable, Codable {
     public var selections: [String: Set<String>] = [:]
 
     public init() {}

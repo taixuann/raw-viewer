@@ -437,3 +437,52 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(!state.accepts(generation: first), "a superseded root generation must be rejected")
     #expect(state.accepts(generation: second))
 }
+
+@Test func grammarTreeGroupsByOrderedFieldsAndFilters() {
+    let grammar = FilenameGrammar(
+        id: "lab-grammar",
+        name: "Lab Grammar",
+        template: "{date}_{instrument}.{mode}_[{device}]_{tail}",
+        fields: [
+            GrammarField(name: "date"),
+            GrammarField(name: "instrument"),
+            GrammarField(name: "mode"),
+            GrammarField(name: "device"),
+            GrammarField(name: "tail"),
+        ]
+    )
+
+    let sources = [
+        RawSource(relativePath: "a.txt", url: URL(fileURLWithPath: "/tmp/20261007_keithley-2400.dual-sweep_[dev-1]_001.txt"), byteSize: 100),
+        RawSource(relativePath: "b.txt", url: URL(fileURLWithPath: "/tmp/20261007_keithley-2400.dual-sweep_[dev-2]_002.txt"), byteSize: 100),
+        RawSource(relativePath: "c.txt", url: URL(fileURLWithPath: "/tmp/20261007_autolab.cv_[dev-1]_003.txt"), byteSize: 100),
+        RawSource(relativePath: "unmatched.txt", url: URL(fileURLWithPath: "/tmp/random_unmatched_file.txt"), byteSize: 50),
+    ]
+
+    let tree = SourceTree(sources: sources, grammar: grammar, groupingFields: ["instrument", "mode"])
+    #expect(tree.root.children.count == 3) // autolab, keithley-2400, Unmatched
+
+    let autolabNode = tree.root.children.first { $0.name == "autolab" }
+    #expect(autolabNode != nil)
+    #expect(autolabNode?.children.count == 1)
+    #expect(autolabNode?.children.first?.name == "cv")
+
+    let keithleyNode = tree.root.children.first { $0.name == "keithley-2400" }
+    #expect(keithleyNode != nil)
+    #expect(keithleyNode?.children.count == 1)
+    #expect(keithleyNode?.children.first?.name == "dual-sweep")
+    #expect(keithleyNode?.children.first?.children.count == 2)
+
+    let unmatchedNode = tree.root.children.first { $0.name == SourceGrouping.unmatchedBucketLabel }
+    #expect(unmatchedNode != nil)
+    #expect(unmatchedNode?.children.count == 1)
+    #expect(unmatchedNode?.children.first?.sourceID == "unmatched.txt")
+
+    // Filter to retain only b.txt
+    let filtered = tree.filtered(sourceIDs: ["b.txt"])
+    #expect(filtered.count == 1)
+    #expect(filtered.first?.name == "keithley-2400")
+    #expect(filtered.first?.children.first?.children.count == 1)
+    #expect(filtered.first?.children.first?.children.first?.sourceID == "b.txt")
+}
+

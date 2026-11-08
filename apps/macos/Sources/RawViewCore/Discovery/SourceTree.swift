@@ -96,6 +96,98 @@ public struct SourceTree: Sendable, Equatable {
         self.root = makeDirectoryNode(pathKey: rootKey, idPath: configured, name: rootName)
     }
 
+    /// Builds a grammar-grouped tree hierarchy over sources using ordered grammar fields
+    /// (e.g. ["instrument", "mode", "device", "date"]). Sources that do not match the
+    /// grammar are grouped under a dedicated "Unmatched" group node. Sources matching
+    /// the grammar but missing a specific variable are placed in "Missing value".
+    public init(
+        sources: [RawSource],
+        grammar: FilenameGrammar?,
+        groupingFields: [String],
+        rootName: String = "Sources"
+    ) {
+        guard let grammar, !groupingFields.isEmpty else {
+            let fileNodes = sources.sorted { $0.relativePath < $1.relativePath }.map { source in
+                SourceTreeNode(
+                    id: "source:" + source.relativePath,
+                    name: source.url.lastPathComponent,
+                    sourceID: source.relativePath,
+                    children: []
+                )
+            }
+            self.root = SourceTreeNode(id: "root:flat", name: rootName, sourceID: nil, children: fileNodes)
+            return
+        }
+
+        var matchedSources: [(source: RawSource, facts: ExtractedGrammarFacts)] = []
+        var unmatchedSources: [RawSource] = []
+
+        for source in sources {
+            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
+            if facts.isMatched {
+                matchedSources.append((source, facts))
+            } else {
+                unmatchedSources.append(source)
+            }
+        }
+
+        func buildLevel(items: [(source: RawSource, facts: ExtractedGrammarFacts)], fieldIndex: Int, pathPrefix: String) -> [SourceTreeNode] {
+            guard fieldIndex < groupingFields.count else {
+                return items.sorted { $0.source.relativePath < $1.source.relativePath }.map { item in
+                    SourceTreeNode(
+                        id: "source:" + item.source.relativePath,
+                        name: item.source.url.lastPathComponent,
+                        sourceID: item.source.relativePath,
+                        children: []
+                    )
+                }
+            }
+
+            let currentField = groupingFields[fieldIndex]
+            var buckets: [String: [(source: RawSource, facts: ExtractedGrammarFacts)]] = [:]
+            for item in items {
+                let val = item.facts.extractedFields[currentField]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let key = (val != nil && !val!.isEmpty) ? val! : SourceGrouping.missingValueBucketLabel
+                buckets[key, default: []].append(item)
+            }
+
+            let sortedKeys = buckets.keys.sorted { a, b in
+                if a == SourceGrouping.missingValueBucketLabel { return false }
+                if b == SourceGrouping.missingValueBucketLabel { return true }
+                return a < b
+            }
+
+            return sortedKeys.map { key in
+                let subItems = buckets[key] ?? []
+                let nodeID = "group:\(pathPrefix)/\(currentField):\(key)"
+                let childNodes = buildLevel(items: subItems, fieldIndex: fieldIndex + 1, pathPrefix: "\(pathPrefix)/\(currentField):\(key)")
+                return SourceTreeNode(id: nodeID, name: key, sourceID: nil, children: childNodes)
+            }
+        }
+
+        var rootChildren = buildLevel(items: matchedSources, fieldIndex: 0, pathPrefix: "grammar")
+
+        if !unmatchedSources.isEmpty {
+            let unmatchedNodes = unmatchedSources.sorted { $0.relativePath < $1.relativePath }.map { source in
+                SourceTreeNode(
+                    id: "source:" + source.relativePath,
+                    name: source.url.lastPathComponent,
+                    sourceID: source.relativePath,
+                    children: []
+                )
+            }
+            let unmatchedGroup = SourceTreeNode(
+                id: "group:unmatched",
+                name: SourceGrouping.unmatchedBucketLabel,
+                sourceID: nil,
+                children: unmatchedNodes
+            )
+            rootChildren.append(unmatchedGroup)
+        }
+
+        self.root = SourceTreeNode(id: "root:grammar", name: rootName, sourceID: nil, children: rootChildren)
+    }
+
     private static func parent(of path: String) -> String {
         guard let cut = path.lastIndex(of: "/") else { return "" }
         return String(path[..<cut])
