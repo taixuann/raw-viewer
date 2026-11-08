@@ -97,6 +97,17 @@ pub fn resolve_grammar_path(
 
 pub fn load_file(path: &std::path::Path) -> Result<FilenameGrammarCatalog, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    if let Ok(catalog) = parse_catalog_text(&text) {
+        return Ok(catalog);
+    }
+    if let Ok(root) = parse(&text, false) {
+        let grammar_node = root.value_for_key("grammar").unwrap_or(&root);
+        if let Ok(single) = parse_single_grammar_node(grammar_node) {
+            return Ok(FilenameGrammarCatalog {
+                grammars: vec![single],
+            });
+        }
+    }
     parse_catalog_text(&text)
 }
 

@@ -971,9 +971,23 @@ fn resolve_effective_grammar(project: &ProjectContext) -> Result<EffectiveGramma
         }
     }
 
-    // 3. Global config grammar:
+    // 3. Global dedicated grammar file or config grammar:
     if let Ok(resolved) = crate::paths::resolve_paths_from_env(&project.root) {
         let global_config_dir = PathBuf::from(&resolved.global_config_dir);
+        let global_grammar_file = global_config_dir.join("grammar.yaml");
+        if global_grammar_file.is_file() {
+            if let Ok(catalog) = crate::grammar::load_file(&global_grammar_file) {
+                if let Some(first) = catalog.grammars.first() {
+                    let text = fs::read_to_string(&global_grammar_file).unwrap_or_default();
+                    let digest = sha256_hex(text.as_bytes());
+                    return Ok(EffectiveGrammar {
+                        grammar: first.clone(),
+                        source: GrammarSource::Global,
+                        sha256: digest,
+                    });
+                }
+            }
+        }
         if let Ok(config) = crate::config::load_project_config(&global_config_dir) {
             if let Some(grammar) = config.grammar {
                 let text = serde_json::to_string(&grammar).unwrap_or_default();
