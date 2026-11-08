@@ -52,4 +52,25 @@ final class AxisFormatterTests: XCTestCase {
     func testAvoidsNegativeZero() {
         XCTAssertEqual(AxisFormatter.formatTick(-0.000000001, factor: 1.0), "0.0")
     }
+
+    func testNiceTicksPassesThroughExactZeroAndProducesCleanRounds() {
+        // Range equivalent to -540 mV to 540 mV in V (factor = 1e-3)
+        let res = AxisFormatter.niceTicks(lower: -0.540, upper: 0.540, factor: 1e-3, maxTicks: 5)
+        XCTAssertTrue(res.tickValues.contains(0.0), "Ticks must pass through exact zero")
+        XCTAssertEqual(res.precision, 0)
+        // Check formatted strings
+        let formatted = res.tickValues.map { AxisFormatter.formatTick($0, factor: 1e-3, precision: res.precision) }
+        XCTAssertTrue(formatted.contains("0"))
+        for s in formatted {
+            XCTAssertFalse(s.contains(".2"), "Tick '\(s)' must not have odd -0.2 offset")
+        }
+    }
+
+    func testNiceTicksMicroAmperes() {
+        // Range -14 uA to 16 uA in A (factor = 1e-6)
+        let res = AxisFormatter.niceTicks(lower: -14e-6, upper: 16e-6, factor: 1e-6, maxTicks: 5)
+        XCTAssertTrue(res.tickValues.contains(0.0))
+        let formatted = res.tickValues.map { AxisFormatter.formatTick($0, factor: 1e-6, precision: res.precision) }
+        XCTAssertTrue(formatted.contains("0"))
+    }
 }

@@ -109,6 +109,26 @@ struct NativePlot: View {
         PlotRenderingEngine.plotFont(preset: preset, size: size, bold: bold)
     }
 
+    private var activeProgressionChannel: MeasurementChannel? {
+        selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? measurement.progressionChannel
+    }
+
+    private var isProgressionContinuous: Bool {
+        activeProgressionChannel?.quantity == "time" && !(activeProgressionChannel?.name.lowercased().contains("scan") ?? false)
+    }
+
+    private func progressionSegments(data: ([Double?], [(String, [Double?])])) -> [ProgressionPlotSegment] {
+        guard progressionFilterEnabled, let progChannel = activeProgressionChannel else { return [] }
+        guard let firstSeriesY = data.1.first?.1 else { return [] }
+        return ProgressionPlotReader.segments(
+            x: data.0,
+            y: firstSeriesY,
+            progression: progChannel.values,
+            isContinuous: isProgressionContinuous,
+            selectedDiscreteKeys: selectedCycles
+        )
+    }
+
     private var transformed: Result<([Double?], [(String, [Double?])]), PlotFailure> {
         guard let xName = measurement.view.x, let yNames = measurement.view.y,
               let x = measurement.channel(named: xName) else { return .failure(.message("No plottable channels were declared")) }
@@ -145,7 +165,7 @@ struct NativePlot: View {
                     .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                     .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
 
-                if colorBySweepProgress {
+                if isProgressionContinuous && colorBySweepProgress {
                     SweepColorbarView()
                         .padding(.leading, 64)
                         .padding(.top, 24)
@@ -153,16 +173,26 @@ struct NativePlot: View {
                 }
 
                 if showLegend {
+                    let progSegments = progressionSegments(data: data)
                     let hasCustomLabel = data.1.first.flatMap { customSeriesLabels[$0.0] }?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                    let hasProgressionSegmentation = progressionFilterEnabled && !selectedCycles.isEmpty
+                    let hasProgressionSegmentation = progressionFilterEnabled && !progSegments.isEmpty
                     let isMultiSeries = data.1.count > 1
 
                     if isMultiSeries || hasCustomLabel || hasProgressionSegmentation {
-                        let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = data.1.enumerated().map { index, item in
-                            let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
-                            return (palette(index), name, markType)
-                        }
+                        let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = {
+                            if progressionFilterEnabled && !isProgressionContinuous && progSegments.count > 1 {
+                                return progSegments.enumerated().map { segIndex, seg in
+                                    let c = colorByCycle ? NativeOverlayPalette.color(segIndex) : palette(0)
+                                    return (c, "Cycle \(seg.name)", markType)
+                                }
+                            } else {
+                                return data.1.enumerated().map { index, item in
+                                    let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
+                                    return (palette(index), name, markType)
+                                }
+                            }
+                        }()
                         DraggableLegendView(
                             items: legendItems,
                             fontSize: PlotRenderingEngine.legendFontSize(preset: preset, fontScale: headerFontScale, legendScale: legendScale),
@@ -195,11 +225,9 @@ struct NativePlot: View {
         let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
 
         let yRangeTemp = viewport(expanded(finiteY), pan: pan.height, dimension: size.height, vertical: true)
-        let ySpan = yRangeTemp.upperBound - yRangeTemp.lowerBound
-        let yLabels: [String] = (0...4).map { index in
-            let t = Double(index) / 4
-            let y = yRangeTemp.lowerBound + t * ySpan
-            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo, span: ySpan)
+        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: 5)
+        let yLabels: [String] = yNice.tickValues.map { val in
+            axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
         let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
@@ -232,20 +260,33 @@ struct NativePlot: View {
         let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
         let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
         let xSpan = xRange.upperBound - xRange.lowerBound
+        let ySpan = yRange.upperBound - yRange.lowerBound
 
-        for index in 0...4 {
-            let t = Double(index) / 4
-            let x = xRange.lowerBound + t * xSpan
-            let px = plot.minX + t * plot.width
-            let py = plot.maxY - t * plot.height
-
-            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
-            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
+        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: 5)
+        for val in xNice.tickValues {
+            guard xSpan > 0 else { continue }
+            let t = (val - xRange.lowerBound) / xSpan
+            guard t >= -0.001 && t <= 1.001 else { continue }
+            let px = plot.minX + CGFloat(t) * plot.width
+            var xTick = Path()
+            xTick.move(to: CGPoint(x: px, y: plot.maxY))
+            xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
             context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
-            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
+            let label = axisLabel(val, scale: xScale, scaleInfo: xScaleInfo, precision: xNice.precision)
+            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+        }
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo, span: xSpan)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-            context.draw(Text(yLabels[index]).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
+        for (idx, val) in yNice.tickValues.enumerated() {
+            guard ySpan > 0 else { continue }
+            let t = (val - yRange.lowerBound) / ySpan
+            guard t >= -0.001 && t <= 1.001 else { continue }
+            let py = plot.maxY - CGFloat(t) * plot.height
+            var yTick = Path()
+            yTick.move(to: CGPoint(x: plot.minX, y: py))
+            yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
+            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
+            let label = idx < yLabels.count ? yLabels[idx] : axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
+            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
@@ -286,8 +327,12 @@ struct NativePlot: View {
                     }
                     let segColor: Color = {
                         if colorByCycle && progSegments.count > 1 {
-                            let t = Double(segIndex) / Double(max(1, progSegments.count - 1))
-                            return PlotRenderingEngine.sweepColor(at: t)
+                            if isContinuous {
+                                let t = Double(segIndex) / Double(max(1, progSegments.count - 1))
+                                return PlotRenderingEngine.sweepColor(at: t)
+                            } else {
+                                return NativeOverlayPalette.color(segIndex)
+                            }
                         } else {
                             return color
                         }
@@ -348,20 +393,17 @@ struct NativePlot: View {
         let magnitude = absolute ? "|\(physical)|" : physical
         return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
     }
-    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, span: Double = 1.0) -> String {
+    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, precision: Int? = nil, span: Double = 1.0) -> String {
         if scale == .logarithmic {
-            return "10^\(AxisFormatter.formatTick(value, factor: 1.0))"
+            return "10^\(AxisFormatter.formatTick(value, factor: 1.0, precision: 1))"
         }
-        let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
-        let precision: Int
-        if scaledSpan < 0.05 {
-            precision = 3
-        } else if scaledSpan < 0.5 {
-            precision = 2
-        } else {
-            precision = 1
-        }
-        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: precision)
+        let prec: Int = precision ?? {
+            let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
+            if scaledSpan < 0.05 { return 3 }
+            if scaledSpan < 0.5 { return 2 }
+            return 1
+        }()
+        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
     }
     private func palette(_ index: Int) -> Color {
         NativeOverlayPalette.color(index)
@@ -542,11 +584,9 @@ struct OverlayPlot: View {
         let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
 
         let yRangeTemp = viewport(expanded(yBounds), pan: pan.height, dimension: size.height, vertical: true)
-        let ySpan = yRangeTemp.upperBound - yRangeTemp.lowerBound
-        let yLabels: [String] = (0...4).map { index in
-            let t = Double(index) / 4
-            let y = yRangeTemp.lowerBound + t * ySpan
-            return axisLabel(y, scale: yScale, scaleInfo: yScaleInfo, span: ySpan)
+        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: 5)
+        let yLabels: [String] = yNice.tickValues.map { val in
+            axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
         let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
         let approxPlotWidth = max(200, size.width - 120)
@@ -579,20 +619,33 @@ struct OverlayPlot: View {
         let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
         let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
         let xSpan = xRange.upperBound - xRange.lowerBound
+        let ySpan = yRange.upperBound - yRange.lowerBound
 
-        for index in 0...4 {
-            let t = Double(index) / 4
-            let x = xRange.lowerBound + t * xSpan
-            let px = plot.minX + t * plot.width
-            let py = plot.maxY - t * plot.height
-
-            var xTick = Path(); xTick.move(to: CGPoint(x: px, y: plot.maxY)); xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
-            var yTick = Path(); yTick.move(to: CGPoint(x: plot.minX, y: py)); yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
+        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: 5)
+        for val in xNice.tickValues {
+            guard xSpan > 0 else { continue }
+            let t = (val - xRange.lowerBound) / xSpan
+            guard t >= -0.001 && t <= 1.001 else { continue }
+            let px = plot.minX + CGFloat(t) * plot.width
+            var xTick = Path()
+            xTick.move(to: CGPoint(x: px, y: plot.maxY))
+            xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
             context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
-            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
+            let label = axisLabel(val, scale: xScale, scaleInfo: xScaleInfo, precision: xNice.precision)
+            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+        }
 
-            context.draw(Text(axisLabel(x, scale: xScale, scaleInfo: xScaleInfo, span: xSpan)).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-            context.draw(Text(yLabels[index]).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
+        for (idx, val) in yNice.tickValues.enumerated() {
+            guard ySpan > 0 else { continue }
+            let t = (val - yRange.lowerBound) / ySpan
+            guard t >= -0.001 && t <= 1.001 else { continue }
+            let py = plot.maxY - CGFloat(t) * plot.height
+            var yTick = Path()
+            yTick.move(to: CGPoint(x: plot.minX, y: py))
+            yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
+            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
+            let label = idx < yLabels.count ? yLabels[idx] : axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
+            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
         }
         let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
@@ -701,20 +754,17 @@ struct OverlayPlot: View {
         let magnitude = absolute ? "|\(physical)|" : physical
         return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
     }
-    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, span: Double = 1.0) -> String {
+    private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, precision: Int? = nil, span: Double = 1.0) -> String {
         if scale == .logarithmic {
-            return "10^\(AxisFormatter.formatTick(value, factor: 1.0))"
+            return "10^\(AxisFormatter.formatTick(value, factor: 1.0, precision: 1))"
         }
-        let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
-        let precision: Int
-        if scaledSpan < 0.05 {
-            precision = 3
-        } else if scaledSpan < 0.5 {
-            precision = 2
-        } else {
-            precision = 1
-        }
-        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: precision)
+        let prec: Int = precision ?? {
+            let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
+            if scaledSpan < 0.05 { return 3 }
+            if scaledSpan < 0.5 { return 2 }
+            return 1
+        }()
+        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
     }
     private func palette(_ sourcePath: String, order: [String]) -> Color {
         NativeOverlayPalette.color(order.firstIndex(of: sourcePath) ?? 0)

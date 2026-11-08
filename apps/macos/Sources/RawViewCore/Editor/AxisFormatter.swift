@@ -84,4 +84,87 @@ public struct AxisFormatter: Sendable {
         }
         return formatted
     }
+
+    public struct NiceTicksResult: Sendable, Equatable {
+        /// Tick values in original raw data coordinates
+        public let tickValues: [Double]
+        /// Step in raw data coordinates
+        public let step: Double
+        /// Display precision (digits after decimal point) when formatted with factor
+        public let precision: Int
+
+        public init(tickValues: [Double], step: Double, precision: Int) {
+            self.tickValues = tickValues
+            self.step = step
+            self.precision = precision
+        }
+    }
+
+    /// Computes scientific "nice ticks" (multiples of 1, 2, 2.5, 5 * 10^k in scaled space)
+    /// across [lower, upper]. Ticks are guaranteed to pass cleanly through 0 (if in range)
+    /// and avoid floating point rounding noise like "-0.2" at the origin.
+    public static func niceTicks(
+        lower: Double,
+        upper: Double,
+        factor: Double = 1.0,
+        maxTicks: Int = 5
+    ) -> NiceTicksResult {
+        guard lower.isFinite, upper.isFinite, lower < upper else {
+            let single = lower.isFinite ? lower : 0.0
+            return NiceTicksResult(tickValues: [single], step: 1.0, precision: 0)
+        }
+        let effectiveFactor = (factor != 0 && factor.isFinite) ? factor : 1.0
+        let sLo = lower / effectiveFactor
+        let sHi = upper / effectiveFactor
+        let span = sHi - sLo
+        guard span > 0 else {
+            return NiceTicksResult(tickValues: [lower], step: 1.0, precision: 0)
+        }
+
+        let rawStep = span / Double(max(2, maxTicks))
+        let exponent = floor(log10(rawStep))
+        let mag = pow(10.0, exponent)
+        let fraction = rawStep / mag
+
+        let niceFraction: Double
+        if fraction <= 1.5 {
+            niceFraction = 1.0
+        } else if fraction <= 3.0 {
+            niceFraction = fraction <= 2.2 ? 2.0 : 2.5
+        } else if fraction <= 7.0 {
+            niceFraction = 5.0
+        } else {
+            niceFraction = 10.0
+        }
+        let scaledStep = niceFraction * mag
+        let rawStepActual = scaledStep * effectiveFactor
+
+        let firstScaled = ceil(sLo / scaledStep) * scaledStep
+        let lastScaled = floor(sHi / scaledStep) * scaledStep
+
+        var rawTicks: [Double] = []
+        var currScaled = firstScaled
+        let displayPrecision: Int = {
+            if exponent >= 0 {
+                return (scaledStep.truncatingRemainder(dividingBy: 1.0) == 0) ? 0 : 1
+            } else {
+                return max(0, Int(-exponent) + (niceFraction == 2.5 ? 1 : 0))
+            }
+        }()
+
+        while currScaled <= lastScaled + scaledStep * 0.5 {
+            var rawVal = currScaled * effectiveFactor
+            if abs(currScaled) < 1e-12 {
+                rawVal = 0.0
+            }
+            rawTicks.append(rawVal)
+            currScaled += scaledStep
+        }
+
+        if rawTicks.isEmpty {
+            rawTicks = [(lower + upper) / 2.0]
+        }
+
+        return NiceTicksResult(tickValues: rawTicks, step: rawStepActual, precision: displayPrecision)
+    }
 }
