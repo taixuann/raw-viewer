@@ -25,7 +25,6 @@ struct RawViewApp: App {
                     model.openRecentProject(url: url)
                 }
                 .task {
-                    _ = await NodeBackend.shared.ensureRunning()
                     await AppUpdateChecker.shared.checkForUpdates(userInitiated: false)
                 }
         }

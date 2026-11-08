@@ -79,7 +79,7 @@ public struct MeasurementCache: Sendable {
     /// project root path: the raw path itself never appears in the tree.
     /// Application Support first; a writable temp app-local directory second
     /// (Application Support can be unavailable in sandboxes).
-    static func appLocalRoot(project: ProjectContext) -> URL {
+    public static func appLocalRoot(project: ProjectContext) -> URL {
         appLocalLocation(project: project).root
     }
 
