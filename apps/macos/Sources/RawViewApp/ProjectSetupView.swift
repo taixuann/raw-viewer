@@ -93,7 +93,7 @@ struct ProjectSetupView: View {
 
                 suggestionsView
 
-                Toggle("Save configuration in .rawviewer/setting.yaml", isOn: $persistSettings)
+                Toggle("Save configuration in .raw-viewer/config.yaml", isOn: $persistSettings)
                     .font(.caption)
                     .padding(.top, 4)
 
