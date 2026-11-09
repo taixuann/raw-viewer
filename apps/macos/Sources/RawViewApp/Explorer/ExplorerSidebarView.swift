@@ -43,6 +43,7 @@ struct ProjectSourcesSidebar: View {
     @State private var addVariable = ""
     @State private var groupDisplayLimits: [String: Int] = [:]
     @State private var flatListLimit = 100
+    @State private var treeListLimit = 150
     private let defaultPageSize = 100
     private let sourceIndex: [String: RawSource]
 
@@ -477,7 +478,8 @@ struct ProjectSourcesSidebar: View {
     private func distinctValues(for variable: String) -> [String] {
         guard let grammar = catalog?.activeGrammar ?? catalog?.grammars.first else { return [] }
         var vals = Set<String>()
-        for source in sources {
+        // Sample up to 250 sources to prevent main-thread freeze on massive directories (10k+ files)
+        for source in sources.prefix(250) {
             let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
             if facts.isMatched, let val = facts.extractedFields[variable]?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
                 vals.insert(val)
@@ -635,8 +637,24 @@ struct ProjectSourcesSidebar: View {
                 ContentUnavailableView("No Matching Files", systemImage: "folder",
                     description: Text("No sources match the active filter under '\(dataRoot)'."))
             } else {
-                ForEach(items) { item in
+                let total = items.count
+                let limit = min(total, treeListLimit)
+                let visible = items.prefix(limit)
+                ForEach(visible) { item in
                     treeItemRow(item)
+                }
+                if limit < total {
+                    HStack(spacing: 8) {
+                        Text("Showing \(limit) of \(total)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Show +250") { treeListLimit += 250 }
+                            .font(.caption2).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                        Button("Show all") { treeListLimit = total }
+                            .font(.caption2).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    }
+                    .padding(.vertical, 4)
                 }
             }
         } else {
@@ -648,44 +666,40 @@ struct ProjectSourcesSidebar: View {
     private func treeItemRow(_ item: FlattenedTreeItem) -> some View {
         if item.isDirectory {
             let isExpanded = expandedDirectoryIDs.contains(item.node.id)
-            HStack(spacing: 5) {
-                if item.depth > 0 {
-                    Spacer().frame(width: CGFloat(item.depth * 14))
-                }
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 10)
-                Image(systemName: isExpanded ? "folder.fill" : "folder")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor.opacity(0.85))
-                Text(item.node.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.vertical, 3.5)
-            .contentShape(Rectangle())
-            .onTapGesture {
+            Button {
                 if isExpanded {
                     expandedDirectoryIDs.remove(item.node.id)
                 } else {
                     expandedDirectoryIDs.insert(item.node.id)
                 }
+            } label: {
+                HStack(spacing: 5) {
+                    if item.depth > 0 {
+                        Spacer().frame(width: CGFloat(item.depth * 14))
+                    }
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                    Image(systemName: isExpanded ? "folder.fill" : "folder")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.accentColor.opacity(0.85))
+                    Text(item.node.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.vertical, 3.5)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
         } else if let sourceID = item.node.sourceID, let source = sourceIndex[sourceID] {
             HStack(spacing: 0) {
                 if item.depth > 0 {
                     Spacer().frame(width: CGFloat(item.depth * 14))
                 }
                 sourceRow(source)
-            }
-            .tag(source.id)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                focusedSourceID = source.id
-                selectedSourceIDs = [source.id]
             }
         }
     }

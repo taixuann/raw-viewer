@@ -342,6 +342,73 @@ public actor ProjectIndexStore {
         return try await body()
     }
 
+    /// Recomputes and validates stored inspections for a collection of sources
+    /// against the active namespace, pinned prefix bytes, and current catalog,
+    /// opening the index database once for the entire batch.
+    public func validatedInspections(
+        for sources: [RawSource],
+        project: ProjectContext
+    ) async throws -> [String: SourceInspectionResult] {
+        let destination = Self.preferredDestinationURL(project: project)
+        guard FileManager.default.fileExists(atPath: destination.path) else {
+            return [:]
+        }
+        guard let db = try? IndexDatabase.open(at: destination) else {
+            return [:]
+        }
+        defer { try? db.close() }
+
+        guard let storedNamespace = try? db.readMetadata(),
+              storedNamespace == activeNamespace else {
+            return [:]
+        }
+
+        let allRecords = db.lookupAll()
+        let catalog = ProfileCatalog.load(project: project)
+        var results: [String: SourceInspectionResult] = [:]
+
+        for source in sources {
+            do {
+                guard let record = allRecords[source.relativePath],
+                      let storedSHA = record.prefixSHA256,
+                      let storedSize = record.descriptorSize else {
+                    continue
+                }
+
+                let secured: (handle: FileHandle, prefix: Data, selectedURL: URL, descriptorSize: Int64)
+                do {
+                    secured = try MeasurementCache.openSecuredPrefix(source: source, project: project)
+                } catch {
+                    continue
+                }
+                defer { try? secured.handle.close() }
+
+                guard sha256Hex(secured.prefix) == storedSHA,
+                      secured.descriptorSize == storedSize else {
+                    continue
+                }
+
+                if let outcome = try? InstrumentReader.inspectPinned(
+                    source: source,
+                    project: project,
+                    catalog: catalog,
+                    prefix: secured.prefix,
+                    descriptorSize: secured.descriptorSize,
+                    actualURL: secured.selectedURL
+                ) {
+                    switch outcome {
+                    case .supported(let inspection, let disposition):
+                        results[source.id] = SourceInspectionResult(source: source, inspection: inspection, disposition: disposition, error: nil)
+                    case .blocked(let message):
+                        results[source.id] = SourceInspectionResult(source: source, inspection: nil, disposition: .deterministicBlocked, error: message)
+                    }
+                }
+            }
+        }
+
+        return results
+    }
+
     /// Recomputes and validates the stored inspection against the active
     /// namespace, pinned prefix bytes, and current catalog. No SQLite row
     /// ever authenticates an outcome by itself.
