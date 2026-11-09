@@ -364,10 +364,9 @@ final class RawViewModel: ObservableObject {
         guard let context = project, let inv = inventory else { return }
         if treeGroupingMode == "grammar", let grammar = explorerCatalog?.activeGrammar ?? explorerCatalog?.grammars.first {
             sourceTree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: treeGroupingFields)
-        } else if treeGroupingMode == "folder" {
-            sourceTree = SourceTree(inventory: inv, project: context)
         } else {
-            sourceTree = SourceTree(sources: inv.sources, grammar: nil, groupingFields: [])
+            // Physical directory tree is the universal hierarchy whenever grammar is missing or mode is folder
+            sourceTree = SourceTree(inventory: inv, project: context)
         }
     }
 
@@ -1434,7 +1433,7 @@ final class RawViewModel: ObservableObject {
 
         if isLazyInspectionEnabled {
             // Lazy inspection mode: Do not bulk inspect or show ongoing progress bar.
-            // Rapidly restore pre-indexed entries from SQLite cache off the main thread.
+            // Rapidly restore pre-indexed entries from SQLite cache off the main thread in a single fast pass.
             isLoading = false
             loadingPhase = "Idle"
             inspectedSources = 0
@@ -1442,13 +1441,14 @@ final class RawViewModel: ObservableObject {
             Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
                 let store = try? await ProjectIndexStore.open(project: context)
+                let restoredMap = (try? await store?.validatedInspections(for: capturedSources, project: context)) ?? [:]
 
                 var initialStates: [String: GallerySourceState] = [:]
                 var cachedCount = 0
 
                 for source in capturedSources {
                     if Task.isCancelled { return }
-                    if let restored = try? await store?.validatedInspection(for: source, project: context) {
+                    if let restored = restoredMap[source.id] {
                         var state = GallerySourceState()
                         state.inspection = restored.inspection
                         state.error = restored.error
@@ -1463,13 +1463,15 @@ final class RawViewModel: ObservableObject {
                 let finalCached = cachedCount
                 await MainActor.run {
                     guard requestID == self.inspectionID else { return }
+                    var mergedStates = self.sourceStates
                     for (id, state) in finalStates {
-                        var existing = self.sourceStates[id] ?? GallerySourceState()
+                        var existing = mergedStates[id] ?? GallerySourceState()
                         if existing.inspection == nil { existing.inspection = state.inspection }
                         if existing.error == nil { existing.error = state.error }
-                        self.sourceStates[id] = existing
+                        mergedStates[id] = existing
                     }
-                    self.inspections = self.sourceStates.compactMapValues(\.inspection)
+                    self.sourceStates = mergedStates
+                    self.inspections = mergedStates.compactMapValues(\.inspection)
                     self.inspectedSources = finalCached
                     self.refreshLoading()
                     if let focused = self.focusedSourceID, self.sourceStates[focused]?.measurement == nil, self.sourceStates[focused]?.isLoading != true {
@@ -1486,10 +1488,11 @@ final class RawViewModel: ObservableObject {
         loadingPhase = "Inspecting"
         inspectedSources = 0
 
-        // Perform fast Cache Restoration off the MainActor:
+        // Perform fast Cache Restoration off the MainActor in a single pass:
         inspectionTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let store = try? await ProjectIndexStore.open(project: context)
+            let restoredMap = (try? await store?.validatedInspections(for: capturedSources, project: context)) ?? [:]
 
             var uninspected: [RawSource] = []
             var initialStates: [String: GallerySourceState] = [:]
@@ -1497,7 +1500,7 @@ final class RawViewModel: ObservableObject {
 
             for source in capturedSources {
                 if Task.isCancelled { return }
-                if let restored = try? await store?.validatedInspection(for: source, project: context) {
+                if let restored = restoredMap[source.id] {
                     var state = GallerySourceState()
                     state.inspection = restored.inspection
                     state.error = restored.error
@@ -1515,13 +1518,15 @@ final class RawViewModel: ObservableObject {
 
             await MainActor.run {
                 guard requestID == self.inspectionID else { return }
+                var mergedStates = self.sourceStates
                 for (id, state) in finalStates {
-                    var existing = self.sourceStates[id] ?? GallerySourceState()
+                    var existing = mergedStates[id] ?? GallerySourceState()
                     if existing.inspection == nil { existing.inspection = state.inspection }
                     if existing.error == nil { existing.error = state.error }
-                    self.sourceStates[id] = existing
+                    mergedStates[id] = existing
                 }
-                self.inspections = self.sourceStates.compactMapValues(\.inspection)
+                self.sourceStates = mergedStates
+                self.inspections = mergedStates.compactMapValues(\.inspection)
                 self.inspectedSources = finalCached
 
                 if finalUninspected.isEmpty {
@@ -1576,15 +1581,19 @@ final class RawViewModel: ObservableObject {
                     if shouldFlush {
                         await MainActor.run {
                             guard requestID == self.inspectionID else { return }
+                            var mergedStates = self.sourceStates
+                            var mergedInspections = self.inspections
                             for result in toFlush {
-                                var state = self.sourceStates[result.id] ?? GallerySourceState()
+                                var state = mergedStates[result.id] ?? GallerySourceState()
                                 state.inspection = result.inspection
                                 state.error = result.error
-                                self.sourceStates[result.id] = state
+                                mergedStates[result.id] = state
                                 if let insp = result.inspection {
-                                    self.inspections[result.id] = insp
+                                    mergedInspections[result.id] = insp
                                 }
                             }
+                            self.sourceStates = mergedStates
+                            self.inspections = mergedInspections
                             self.inspectedSources = baseCompleted + completed
                         }
                     }
@@ -1603,15 +1612,19 @@ final class RawViewModel: ObservableObject {
             if !remaining.isEmpty {
                 await MainActor.run {
                     guard requestID == self.inspectionID else { return }
+                    var mergedStates = self.sourceStates
+                    var mergedInspections = self.inspections
                     for result in remaining {
-                        var state = self.sourceStates[result.id] ?? GallerySourceState()
+                        var state = mergedStates[result.id] ?? GallerySourceState()
                         state.inspection = result.inspection
                         state.error = result.error
-                        self.sourceStates[result.id] = state
+                        mergedStates[result.id] = state
                         if let insp = result.inspection {
-                            self.inspections[result.id] = insp
+                            mergedInspections[result.id] = insp
                         }
                     }
+                    self.sourceStates = mergedStates
+                    self.inspections = mergedInspections
                 }
             }
             self.profileIssues = report.profileIssues
