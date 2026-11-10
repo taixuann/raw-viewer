@@ -133,21 +133,21 @@ public enum LabPackageManager {
         }
 
         // 2. Write manifest
-        let manifestYAML = """
-schema_version: 1
-id: \(usthPackageID)
-version: "\(usthPackageVersion)"
-display_name: "\(usthDisplayName)"
-profiles:
-  - id: usth/keithley-2400
-    path: profiles/usth/keithley-2400.yaml
-  - id: usth/autolab-usth
-    path: profiles/usth/autolab-usth.yaml
-  - id: usth/horiba-labram
-    path: profiles/usth/horiba-labram.yaml
-  - id: usth/iop-hanoi
-    path: profiles/usth/iop-hanoi.yaml
-"""
+        var manifestLines = [
+            "schema_version: 1",
+            "id: \(usthPackageID)",
+            "version: \"\(usthPackageVersion)\"",
+            "display_name: \"\(usthDisplayName)\"",
+            "profiles:"
+        ]
+        for item in BuiltinAssets.builtinProfiles {
+            let filename = URL(fileURLWithPath: item.relativePath).lastPathComponent
+            let sha = sha256Hex(item.yaml.data(using: .utf8) ?? Data())
+            manifestLines.append("  - id: \(item.id)")
+            manifestLines.append("    path: profiles/\(filename)")
+            manifestLines.append("    sha256: \(sha)")
+        }
+        let manifestYAML = manifestLines.joined(separator: "\n") + "\n"
         let manifestURL = pkgDir.appendingPathComponent(manifestFileName)
         do {
             try manifestYAML.write(to: manifestURL, atomically: true, encoding: .utf8)

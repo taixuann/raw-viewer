@@ -256,7 +256,12 @@ pub fn import_profile(project: &Path, file: &Path, dry_run: bool, replace: bool)
     write_profile_atomically(&dest_path, &text, &id, replace)
 }
 
-pub fn export_profile(_global: bool, project: Option<&Path>, id: &str, out: &str) -> CliResult {
+pub fn export_profile(
+    _global: bool,
+    project: Option<&Path>,
+    id: &str,
+    out: Option<&str>,
+) -> CliResult {
     let catalog = if let Some(p) = project {
         if !p.exists() {
             return CliResult::not_found(format!(
@@ -281,7 +286,6 @@ pub fn export_profile(_global: bool, project: Option<&Path>, id: &str, out: &str
         }
     };
 
-    // Find the text of the profile: either from BUILTIN_PROFILES or from file on disk
     let yaml_repr = if let Some((_, text)) = BUILTIN_PROFILES.iter().find(|(rel, _)| {
         *rel == profile.relative_path
             || rel.ends_with(&format!("{}.yaml", id.split('/').next_back().unwrap_or(id)))
@@ -303,18 +307,40 @@ pub fn export_profile(_global: bool, project: Option<&Path>, id: &str, out: &str
         )
     };
 
-    if out == "-" {
-        println!("{yaml_repr}");
-    } else {
-        let out_path = Path::new(out);
+    let safe_id = id.replace('/', "-");
+    let target_dest: Option<PathBuf> = match out {
+        Some("-") => {
+            println!("{yaml_repr}");
+            None
+        }
+        Some(o) => {
+            let p = Path::new(o);
+            if p.is_dir() || o.ends_with('/') || o.ends_with('\\') {
+                Some(p.join(format!("{safe_id}.yaml")))
+            } else {
+                Some(p.to_path_buf())
+            }
+        }
+        None => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            Some(cwd.join(format!("{safe_id}.yaml")))
+        }
+    };
+
+    if let Some(ref out_path) = target_dest {
         if let Some(parent) = out_path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 let _ = fs::create_dir_all(parent);
             }
         }
-        if let Err(e) = fs::write(out_path, &yaml_repr) {
+        let tmp_path = out_path.with_extension(format!("tmp.{}", std::process::id()));
+        if let Err(e) = fs::write(&tmp_path, &yaml_repr) {
+            return CliResult::io(format!("failed to write export staging file: {e}"));
+        }
+        if let Err(e) = fs::rename(&tmp_path, out_path) {
+            let _ = fs::remove_file(&tmp_path);
             return CliResult::io(format!(
-                "failed to write export to {}: {}",
+                "failed to commit export to {}: {}",
                 out_path.display(),
                 e
             ));
@@ -324,6 +350,98 @@ pub fn export_profile(_global: bool, project: Option<&Path>, id: &str, out: &str
     CliResult::ok(json!({
         "action": "profiles.export",
         "id": id,
-        "output": out,
+        "output": target_dest
+            .map(|p| p.display().to_string().replace('\\', "/"))
+            .unwrap_or_else(|| "-".to_string()),
+    }))
+}
+
+pub fn create_profile(id: &str, name: Option<&str>, out: Option<&str>) -> CliResult {
+    let (_ns, inst_id) = match id.split_once('/') {
+        Some((n, i)) => (n, i),
+        None => ("custom", id),
+    };
+    let inst_name = name.unwrap_or(inst_id);
+
+    let template = format!(
+        r#"schema_version: 4
+id: {id}
+revision: 1
+instrument:
+  id: {inst_id}
+  name: "{inst_name}"
+variants:
+  default:
+    format:
+      kind: tabular
+      extensions: [".txt", ".csv"]
+      delimiter: ","
+    rows:
+      names_prefix: ""
+      data_prefix: ""
+    columns:
+      x:
+        role: channel
+        header: "X"
+        quantity: voltage
+        unit: V
+        label: Voltage
+      y:
+        role: channel
+        header: "Y"
+        quantity: current
+        unit: A
+        label: Current
+    plot:
+      x: x
+      y: [y]
+"#
+    );
+
+    if let Err(e) = parse_profile_v4(&template) {
+        return CliResult::validation(format!("generated profile template failed validation: {e}"));
+    }
+
+    let safe_id = id.replace('/', "-");
+    let dest_path: PathBuf = match out {
+        Some(o) => {
+            let p = Path::new(o);
+            if p.is_dir() || o.ends_with('/') || o.ends_with('\\') {
+                p.join(format!("{safe_id}.yaml"))
+            } else {
+                p.to_path_buf()
+            }
+        }
+        None => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            cwd.join(format!("{safe_id}.yaml"))
+        }
+    };
+
+    if let Some(parent) = dest_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            let _ = fs::create_dir_all(parent);
+        }
+    }
+
+    let tmp_path = dest_path.with_extension(format!("tmp.{}", std::process::id()));
+    if let Err(e) = fs::write(&tmp_path, &template) {
+        return CliResult::io(format!(
+            "failed to write profile template staging file: {e}"
+        ));
+    }
+    if let Err(e) = fs::rename(&tmp_path, &dest_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return CliResult::io(format!(
+            "failed to commit profile template to {}: {}",
+            dest_path.display(),
+            e
+        ));
+    }
+
+    CliResult::ok(json!({
+        "action": "profiles.create",
+        "id": id,
+        "path": dest_path.display().to_string().replace('\\', "/"),
     }))
 }

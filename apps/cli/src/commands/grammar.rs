@@ -61,6 +61,71 @@ fn resolve_grammar(
     }
 }
 
+fn indent_yaml_sequences(input: &str) -> String {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = input.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        out.push(line.to_string());
+        if trimmed.ends_with(':') && !trimmed.starts_with('#') {
+            let parent_indent = indent;
+            let mut j = i + 1;
+            let mut in_indentless_seq = false;
+            while j < lines.len() {
+                let next_line = lines[j];
+                let next_trimmed = next_line.trim_start();
+                if next_trimmed.is_empty() || next_trimmed.starts_with('#') {
+                    j += 1;
+                    continue;
+                }
+                let next_indent = next_line.len() - next_trimmed.len();
+                if next_indent == parent_indent && next_trimmed.starts_with("- ") {
+                    in_indentless_seq = true;
+                    break;
+                } else {
+                    break;
+                }
+            }
+            if in_indentless_seq {
+                i += 1;
+                while i < lines.len() {
+                    let cur_line = lines[i];
+                    let cur_trimmed = cur_line.trim_start();
+                    if cur_trimmed.is_empty() {
+                        out.push(String::new());
+                        i += 1;
+                        continue;
+                    }
+                    if cur_trimmed.starts_with('#') {
+                        out.push(cur_line.to_string());
+                        i += 1;
+                        continue;
+                    }
+                    let cur_indent = cur_line.len() - cur_trimmed.len();
+                    if cur_indent < parent_indent
+                        || (cur_indent == parent_indent && !cur_trimmed.starts_with("- "))
+                    {
+                        break;
+                    } else {
+                        out.push(format!("  {cur_line}"));
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+        }
+        i += 1;
+    }
+    let mut result = out.join("\n");
+    if input.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 pub fn show(global: bool, project: Option<&Path>) -> CliResult {
     let (grammar, source) = match resolve_grammar(global, project) {
         Ok(res) => res,
@@ -112,13 +177,13 @@ pub fn set(global: bool, project: Option<&Path>, file: &Path, dry_run: bool) -> 
                 p.display().to_string().replace('\\', "/")
             ));
         }
-        p.join(".raw-viewer").join("grammar.yaml")
+        p.join(".raw-viewer").join("config.yaml")
     } else if global {
         let resolved = match paths::resolve_global_paths_from_env() {
             Ok(r) => r,
             Err(e) => return CliResult::io(format!("failed to resolve global paths: {e}")),
         };
-        Path::new(&resolved.global_config_dir).join("grammar.yaml")
+        Path::new(&resolved.global_config_dir).join("config.yaml")
     } else {
         return CliResult::validation("must specify either --global or --project <PATH>");
     };
@@ -142,13 +207,66 @@ pub fn set(global: bool, project: Option<&Path>, file: &Path, dry_run: bool) -> 
         }
     }
 
+    let mut config_val: serde_yaml::Value = if target_path.exists() {
+        let existing = match fs::read_to_string(&target_path) {
+            Ok(t) => t,
+            Err(e) => return CliResult::io(format!("failed to read config file: {e}")),
+        };
+        match serde_yaml::from_str(&existing) {
+            Ok(v) => v,
+            Err(e) => return CliResult::validation(format!("malformed YAML in config file: {e}")),
+        }
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    let mapping = match config_val.as_mapping_mut() {
+        Some(m) => m,
+        None => return CliResult::validation("config root must be a YAML mapping".to_string()),
+    };
+
+    if !mapping.contains_key("schema_version") {
+        mapping.insert(
+            serde_yaml::Value::String("schema_version".to_string()),
+            serde_yaml::Value::Number(1.into()),
+        );
+    }
+    if !mapping.contains_key("data_root") {
+        mapping.insert(
+            serde_yaml::Value::String("data_root".to_string()),
+            serde_yaml::Value::String("data/raw".to_string()),
+        );
+    }
+
+    let grammar_yaml_val = match serde_yaml::to_value(&parsed_grammar) {
+        Ok(v) => v,
+        Err(e) => return CliResult::validation(format!("failed to serialize grammar: {e}")),
+    };
+    mapping.insert(
+        serde_yaml::Value::String("grammar".to_string()),
+        grammar_yaml_val,
+    );
+
+    let output_yaml = match serde_yaml::to_string(&config_val) {
+        Ok(s) => indent_yaml_sequences(&s),
+        Err(e) => return CliResult::io(format!("failed to serialize config: {e}")),
+    };
+
     let tmp_path = target_path.with_extension(format!("tmp.{}", std::process::id()));
-    if let Err(e) = fs::write(&tmp_path, &text) {
-        return CliResult::io(format!("failed to write grammar staging file: {e}"));
+    if let Err(e) = fs::write(&tmp_path, &output_yaml) {
+        return CliResult::io(format!("failed to write config staging file: {e}"));
     }
     if let Err(e) = fs::rename(&tmp_path, &target_path) {
         let _ = fs::remove_file(&tmp_path);
-        return CliResult::io(format!("failed to commit grammar: {e}"));
+        return CliResult::io(format!("failed to commit config: {e}"));
+    }
+
+    // Clean up any legacy loose grammar.yaml in the same directory
+    if let Some(parent) = target_path.parent() {
+        let old_grammar = parent.join("grammar.yaml");
+        if old_grammar.is_file() {
+            let _ = fs::remove_file(old_grammar);
+        }
     }
 
     CliResult::ok(json!({
@@ -200,5 +318,49 @@ pub fn test(global: bool, project: Option<&Path>, filenames: &[String]) -> CliRe
                 data,
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_yaml_formatting_and_parsing() {
+        let grammar_text = r#"
+grammar:
+  id: custom-lab-grammar
+  name: Custom Lab Grammar
+  template: "{sample}_{run}"
+  fields:
+    - name: sample
+      type: string
+    - name: run
+      type: string
+"#;
+        let root = parse(grammar_text, false).unwrap();
+        let parsed_grammar =
+            parse_single_grammar_node(root.value_for_key("grammar").unwrap()).unwrap();
+
+        let mut config_val = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        let mapping = config_val.as_mapping_mut().unwrap();
+        mapping.insert(
+            serde_yaml::Value::String("schema_version".to_string()),
+            serde_yaml::Value::Number(1.into()),
+        );
+        mapping.insert(
+            serde_yaml::Value::String("data_root".to_string()),
+            serde_yaml::Value::String("data/raw".to_string()),
+        );
+        let g_val = serde_yaml::to_value(&parsed_grammar).unwrap();
+        mapping.insert(serde_yaml::Value::String("grammar".to_string()), g_val);
+
+        let raw_yaml = serde_yaml::to_string(&config_val).unwrap();
+        println!("RAW YAML:\n{}", raw_yaml);
+        let indented = indent_yaml_sequences(&raw_yaml);
+        println!("INDENTED YAML:\n{}", indented);
+        let parsed_back = parse(&indented, false);
+        println!("PARSED BACK: {:?}", parsed_back);
+        assert!(parsed_back.is_ok());
     }
 }

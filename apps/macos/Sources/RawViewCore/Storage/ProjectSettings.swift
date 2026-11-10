@@ -443,7 +443,7 @@ public enum ProjectSettingsStore {
         let allowedKeys: Set<String> = [
             "schema_version", "data_root", "default_view", "default_preset",
             "developer_mode", "explorer_views", "source_labels", "grammar", "profiles",
-            "tree_grouping"
+            "tree_grouping", "explorer"
         ]
         for entry in root.mapEntries ?? [] where !allowedKeys.contains(entry.key) {
             throw ProjectSettingsError(reason: "unknown config key \"\(entry.key)\" for schema_version 1.")
@@ -613,6 +613,37 @@ public enum ProjectSettingsStore {
                 fields.append(field)
             }
             treeGrouping = fields
+        }
+
+        if let explorerNode = root.value(for: "explorer") {
+            guard explorerNode.mapEntries != nil else {
+                throw ProjectSettingsError(reason: "explorer must be a YAML mapping.")
+            }
+            for entry in explorerNode.mapEntries ?? [] {
+                if entry.key != "grouping_mode" && entry.key != "grouping_fields" {
+                    throw ProjectSettingsError(reason: "unknown explorer key \"\(entry.key)\"; expected grouping_mode, grouping_fields.")
+                }
+            }
+            if let modeNode = explorerNode.value(for: "grouping_mode") {
+                guard let mode = modeNode.scalarValue, mode == "grammar" || mode == "folder" else {
+                    throw ProjectSettingsError(reason: "explorer.grouping_mode must be \"grammar\" or \"folder\".")
+                }
+            }
+            if let fieldsNode = explorerNode.value(for: "grouping_fields") {
+                guard let items = fieldsNode.listItems else {
+                    throw ProjectSettingsError(reason: "explorer.grouping_fields must be a list of grammar field names.")
+                }
+                var fields: [String] = []
+                for item in items {
+                    guard let field = item.scalarValue, !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw ProjectSettingsError(reason: "explorer.grouping_fields entries must be non-empty strings.")
+                    }
+                    fields.append(field)
+                }
+                if treeGrouping == nil {
+                    treeGrouping = fields
+                }
+            }
         }
 
         return ProjectSettings(
