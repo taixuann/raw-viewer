@@ -259,6 +259,34 @@ fn parse_project_yaml(
             "tree_grouping" => {
                 config.tree_grouping = Some(expect_string_array(path, "tree_grouping", value)?);
             }
+            "explorer" => {
+                let map = value.map_entries().ok_or_else(|| {
+                    ConfigError::malformed(
+                        path,
+                        Some("explorer".into()),
+                        "expected a YAML mapping".into(),
+                    )
+                })?;
+                for (ek, ev) in map {
+                    match ek.as_str() {
+                        "grouping_mode" => {
+                            config.default_view =
+                                expect_string(path, "explorer.grouping_mode", ev)?;
+                        }
+                        "grouping_fields" => {
+                            config.tree_grouping =
+                                Some(expect_string_array(path, "explorer.grouping_fields", ev)?);
+                        }
+                        _ => {
+                            return Err(ConfigError::malformed(
+                                path,
+                                Some(format!("explorer.{ek}")),
+                                "unknown field".into(),
+                            ));
+                        }
+                    }
+                }
+            }
             "grammar" => {
                 let grammar = crate::grammar::parse_single_grammar_node(value)
                     .map_err(|err| ConfigError::malformed(path, Some("grammar".into()), err))?;

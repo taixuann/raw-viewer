@@ -2,6 +2,7 @@ pub mod config;
 pub mod doctor;
 pub mod files;
 pub mod grammar;
+pub mod packages;
 pub mod profiles;
 pub mod projects;
 pub mod skills;

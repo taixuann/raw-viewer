@@ -49,6 +49,12 @@ enum Commands {
         cmd: ProfilesCommands,
     },
 
+    #[command(about = "Manage optional lab packages")]
+    Packages {
+        #[command(subcommand)]
+        cmd: PackagesCommands,
+    },
+
     #[command(about = "File inspection, matching, and data export")]
     Files {
         #[command(subcommand)]
@@ -205,8 +211,46 @@ enum ProfilesCommands {
         #[arg(long, help = "Profile id (namespace/id)")]
         id: String,
 
-        #[arg(long, help = "Output file path or '-' for stdout")]
-        out: String,
+        #[arg(
+            long,
+            help = "Output file path or '-' for stdout (default: ./<safe-id>.yaml in cwd)"
+        )]
+        out: Option<String>,
+    },
+    #[command(about = "Create a new instrument profile template (Schema v4)")]
+    Create {
+        #[arg(help = "Profile ID in namespace/name format (e.g. usth/fluorospec)")]
+        id: String,
+
+        #[arg(long, help = "Instrument name")]
+        name: Option<String>,
+
+        #[arg(long, help = "Output file path or directory (defaults to cwd)")]
+        out: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackagesCommands {
+    #[command(about = "List installed and available lab packages")]
+    List,
+
+    #[command(about = "Install lab package (use --usth or --from <path>)")]
+    Install {
+        #[arg(long, help = "Install bundled USTH Clean Energy Lab Profiles package")]
+        usth: bool,
+
+        #[arg(long, help = "Install custom package from directory or manifest")]
+        from: Option<PathBuf>,
+
+        #[arg(long, help = "Replace package if already installed")]
+        replace: bool,
+    },
+
+    #[command(about = "Remove an installed package and its global profiles")]
+    Remove {
+        #[arg(help = "Package ID to remove (e.g. usth-lab)")]
+        id: String,
     },
 }
 
@@ -372,8 +416,24 @@ fn main() {
                 out,
             } => (
                 "profiles.export",
-                commands::profiles::export_profile(*global, project.as_deref(), id, out),
+                commands::profiles::export_profile(*global, project.as_deref(), id, out.as_deref()),
             ),
+            ProfilesCommands::Create { id, name, out } => (
+                "profiles.create",
+                commands::profiles::create_profile(id, name.as_deref(), out.as_deref()),
+            ),
+        },
+        Commands::Packages { cmd } => match cmd {
+            PackagesCommands::List => ("packages.list", commands::packages::list()),
+            PackagesCommands::Install {
+                usth,
+                from,
+                replace,
+            } => (
+                "packages.install",
+                commands::packages::install(*usth, from.as_deref(), *replace),
+            ),
+            PackagesCommands::Remove { id } => ("packages.remove", commands::packages::remove(id)),
         },
         Commands::Files { cmd } => match cmd {
             FilesCommands::Inspect { project, file } => {

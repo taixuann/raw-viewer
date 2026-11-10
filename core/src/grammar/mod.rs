@@ -23,9 +23,11 @@ pub const GRAMMAR_READ_ORDER: [&str; 3] = [
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum GrammarFieldType {
     String,
     Number,
+    #[serde(rename = "datetime")]
     DateTime,
 }
 
@@ -43,9 +45,13 @@ impl GrammarFieldType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrammarField {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    #[serde(rename = "type")]
     pub field_type: GrammarFieldType,
+    #[serde(rename = "format", skip_serializing_if = "String::is_empty", default)]
     pub format_hint: String,
+    #[serde(rename = "optional", default)]
     pub is_optional: bool,
 }
 

@@ -229,7 +229,8 @@ struct ProfileCatalog: Sendable {
 
     static func load(project: ProjectContext) -> ProfileCatalog {
         let projectCatalog = loadProjectProfiles(project: project)
-        return mergeBuiltinProfiles(projectCatalog, project: project)
+        let withGlobal = mergeGlobalProfiles(projectCatalog, project: project)
+        return mergeBuiltinProfiles(withGlobal, project: project)
     }
 
     private static func loadProjectProfiles(project: ProjectContext) -> ProfileCatalog {
@@ -367,6 +368,88 @@ struct ProfileCatalog: Sendable {
             brokenClaims: catalog.brokenClaims,
             v3Documents: catalog.v3Documents
         )
+    }
+
+    private static func mergeGlobalProfiles(_ catalog: ProfileCatalog, project: ProjectContext) -> ProfileCatalog {
+        let globalProfilesDir = GlobalPathResolver.globalProfilesDirectory()
+        guard FileManager.default.fileExists(atPath: globalProfilesDir.path) else {
+            return catalog
+        }
+
+        let settings = (try? ProjectSettingsStore.load(projectRoot: project.root))
+            ?? (try? ProjectSettingsStore.loadConfigOrDefault(projectRoot: project.root))
+        let profilesConfig = settings?.profiles ?? ProfilesConfig()
+
+        var profiles = catalog.profiles
+        let issues = catalog.issues
+        let brokenClaims = catalog.brokenClaims
+        var v3Documents = catalog.v3Documents
+
+        var yamlFiles: [URL] = []
+        scanYAMLFilesRecursive(at: globalProfilesDir, results: &yamlFiles)
+        yamlFiles.sort { $0.path < $1.path }
+
+        let globalConfigDir = GlobalPathResolver.resolveGlobalConfigDirectory()
+
+        for fileURL in yamlFiles {
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+               let type = attrs[.type] as? FileAttributeType, type == .typeSymbolicLink {
+                continue
+            }
+            guard let raw = try? Data(contentsOf: fileURL),
+                  raw.count <= maximumProfileBytes,
+                  let text = String(data: raw, encoding: .utf8) else {
+                continue
+            }
+
+            let relPath = fileURL.path.replacingOccurrences(of: globalConfigDir.path + "/", with: "")
+            let outcome = ProfileSchema.load(text: text, relativePath: relPath, sha256: sha256Hex(raw))
+
+            if let profile = outcome.profile {
+                if profiles.contains(where: { $0.profileID == profile.profileID }) {
+                    continue
+                }
+                if profilesConfig.disabled.contains(profile.profileID) {
+                    continue
+                }
+                if let enabled = profilesConfig.enabled, !enabled.contains(profile.profileID) {
+                    continue
+                }
+                profiles.append(profile)
+            } else if let v3 = outcome.v3Document {
+                if v3Documents.contains(where: { $0.document.profileID == v3.document.profileID }) {
+                    continue
+                }
+                if profilesConfig.disabled.contains(v3.document.profileID) {
+                    continue
+                }
+                if let enabled = profilesConfig.enabled, !enabled.contains(v3.document.profileID) {
+                    continue
+                }
+                v3Documents.append(v3)
+            }
+        }
+
+        return ProfileCatalog(profiles: profiles, issues: issues, brokenClaims: brokenClaims, v3Documents: v3Documents)
+    }
+
+    private static func scanYAMLFilesRecursive(at directory: URL, results: inout [URL]) {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey]
+        ) else { return }
+        for entry in entries {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    scanYAMLFilesRecursive(at: entry, results: &results)
+                } else {
+                    let ext = entry.pathExtension.lowercased()
+                    if ext == "yaml" || ext == "yml" {
+                        results.append(entry)
+                    }
+                }
+            }
+        }
     }
 
     private static func revisionFromYAML(_ yaml: String) -> Int? {

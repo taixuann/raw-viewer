@@ -54,7 +54,11 @@ plot:
 ```
 
 ### Step 5: Draft Schema v4 Profile YAML
-Assemble the candidate profile YAML:
+You can scaffold a clean Schema v4 boilerplate using the CLI:
+```sh
+raw-viewer --json profiles create <namespace>/<instrument-id> --name "<Instrument Name>" --out candidate_profile.yaml
+```
+Or assemble the candidate profile YAML manually:
 ```yaml
 schema_version: 4
 id: <namespace>/<instrument-id>
@@ -139,3 +143,23 @@ Present the verified preview to the user:
 - Total row count
 - X and Y channel names and physical units
 - First 3 rows of parsed data
+
+## Lab Packages & Profile Exporting
+
+### Lab Packages
+Optional lab packages (such as `usth-lab`) install global profiles to `~/.config/raw-viewer/profiles/<namespace>/` and can be managed via:
+```sh
+raw-viewer --json packages list
+raw-viewer --json packages install --usth
+raw-viewer --json packages remove usth-lab
+```
+
+### Exporting Profiles
+To export any installed or builtin profile definition:
+```sh
+# Exports to ./<safe-id>.yaml in current working directory by default:
+raw-viewer --json profiles export --id <namespace>/<instrument-id>
+
+# Or specify a custom output path or directory:
+raw-viewer --json profiles export --id <namespace>/<instrument-id> --out ./my-profiles/
+```

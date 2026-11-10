@@ -121,8 +121,118 @@ pub fn load_catalog(project_root: &Path) -> ProfileCatalog {
     };
 
     let mut catalog = load_raw_catalog(&project);
+    merge_global_profiles(&mut catalog, &project);
     merge_builtin_profiles(&mut catalog, &project);
     catalog
+}
+
+fn scan_yaml_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_yaml_files_recursive(&path, files);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml") {
+                files.push(path);
+            }
+        }
+    }
+}
+
+pub fn merge_global_profiles(catalog: &mut ProfileCatalog, project: &ProjectContext) {
+    let global_config_dir = match crate::paths::resolve_paths_from_env(&project.root) {
+        Ok(r) => PathBuf::from(r.global_config_dir),
+        Err(_) => match crate::paths::resolve_global_paths_from_env() {
+            Ok(r) => PathBuf::from(r.global_config_dir),
+            Err(_) => return,
+        },
+    };
+
+    let global_profiles_dir = global_config_dir.join("profiles");
+    if !global_profiles_dir.is_dir() {
+        return;
+    }
+
+    let mut yaml_files = Vec::new();
+    scan_yaml_files_recursive(&global_profiles_dir, &mut yaml_files);
+    yaml_files.sort();
+
+    for file_path in yaml_files {
+        if fs::symlink_metadata(&file_path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let raw = match fs::read(&file_path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if raw.len() > ProfileCatalog::MAXIMUM_PROFILE_BYTES {
+            continue;
+        }
+        let text = match std::str::from_utf8(&raw) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let digest = sha256_hex(&raw);
+        let rel_display = file_path
+            .strip_prefix(&global_config_dir)
+            .unwrap_or(&file_path)
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        let outcome = schema::load_document(text, &rel_display, &digest);
+
+        if let Some(profile) = outcome.profile {
+            if catalog
+                .profiles
+                .iter()
+                .any(|p| p.profile_id == profile.profile_id)
+            {
+                continue;
+            }
+            if project
+                .config
+                .profiles
+                .disabled
+                .contains(&profile.profile_id)
+            {
+                continue;
+            }
+            if let Some(ref enabled) = project.config.profiles.enabled {
+                if !enabled.contains(&profile.profile_id) {
+                    continue;
+                }
+            }
+            catalog.profiles.push(profile);
+        } else if let Some(v3) = outcome.v3_document {
+            if catalog
+                .v3_documents
+                .iter()
+                .any(|v| v.document.profile_id == v3.document.profile_id)
+            {
+                continue;
+            }
+            if project
+                .config
+                .profiles
+                .disabled
+                .contains(&v3.document.profile_id)
+            {
+                continue;
+            }
+            if let Some(ref enabled) = project.config.profiles.enabled {
+                if !enabled.contains(&v3.document.profile_id) {
+                    continue;
+                }
+            }
+            catalog.v3_documents.push(v3);
+        }
+    }
 }
 
 fn load_raw_catalog(project: &ProjectContext) -> ProfileCatalog {

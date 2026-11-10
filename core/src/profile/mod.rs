@@ -21,7 +21,10 @@ pub use v3::{
 
 pub use v3::MetadataCaptureRuleV3 as MetadataCaptureRule;
 
-pub use catalog::{is_directory_with_yamls, load_catalog, BUILTIN_PROFILES};
+pub use catalog::{
+    is_directory_with_yamls, load_catalog, merge_builtin_profiles, merge_global_profiles,
+    BUILTIN_PROFILES,
+};
 pub use types::*;
 
 pub fn builtin_catalog() -> ProfileCatalog {
