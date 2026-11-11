@@ -73,4 +73,36 @@ final class AxisFormatterTests: XCTestCase {
         let formatted = res.tickValues.map { AxisFormatter.formatTick($0, factor: 1e-6, precision: res.precision) }
         XCTAssertTrue(formatted.contains("0"))
     }
+
+    func testCustomTickCounts() {
+        let res3 = AxisFormatter.niceTicks(lower: 0, upper: 100, factor: 1.0, maxTicks: 3)
+        XCTAssertLessThanOrEqual(res3.tickValues.count, 5)
+
+        let res8 = AxisFormatter.niceTicks(lower: 0, upper: 100, factor: 1.0, maxTicks: 8)
+        XCTAssertGreaterThanOrEqual(res8.tickValues.count, 4)
+    }
+
+    func testMinorTicksSubdivision() {
+        let majors = [0.0, 10.0, 20.0]
+        let minors = AxisFormatter.minorTicks(majorTicks: majors, step: 10.0, subdivisions: 2)
+        XCTAssertEqual(minors, [5.0, 15.0])
+
+        let minors4 = AxisFormatter.minorTicks(majorTicks: majors, step: 10.0, subdivisions: 4)
+        XCTAssertEqual(minors4, [2.5, 5.0, 7.5, 12.5, 15.0, 17.5])
+    }
+
+    func testNormalizeDateGranularities() {
+        // USTH lab format DDMMYY-HHmmss (Day: 10, Month: 08, Year: 26 -> 2026)
+        let usth = "100826-102100"
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(usth, formatHint: "DDMMYY-HHmmSS", granularity: .year), "2026")
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(usth, formatHint: "DDMMYY-HHmmSS", granularity: .month), "2026-08")
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(usth, formatHint: "DDMMYY-HHmmSS", granularity: .day), "2026-08-10")
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(usth, formatHint: "DDMMYY-HHmmSS", granularity: .raw), usth)
+
+        // ISO format YYYY-MM-DD
+        let iso = "2026-08-10"
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(iso, granularity: .year), "2026")
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(iso, granularity: .month), "2026-08")
+        XCTAssertEqual(FilenameGrammarEngine.normalizeDate(iso, granularity: .day), "2026-08-10")
+    }
 }

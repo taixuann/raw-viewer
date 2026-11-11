@@ -99,6 +99,14 @@ struct NativePlot: View {
     var legendScale: Double = 1.0
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
+    var xTickCount: Int = 0
+    var yTickCount: Int = 0
+    var minorTicksCount: Int = 0
+    var showMajorGrid: Bool = false
+    var showMinorGrid: Bool = false
+    var showZeroLine: Bool = false
+    var showCursor: Bool = false
+    @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
@@ -162,6 +170,16 @@ struct NativePlot: View {
                 Canvas { context, size in draw(data, in: &context, size: size) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        if showCursor {
+                            switch phase {
+                            case .active(let loc): hoverLocation = loc
+                            case .ended: hoverLocation = nil
+                            }
+                        } else {
+                            hoverLocation = nil
+                        }
+                    }
                     .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                     .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
 
@@ -225,7 +243,8 @@ struct NativePlot: View {
         let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
 
         let yRangeTemp = viewport(expanded(finiteY), pan: pan.height, dimension: size.height, vertical: true)
-        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: 5)
+        let yTicksTarget = yTickCount > 0 ? yTickCount : 5
+        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: yTicksTarget)
         let yLabels: [String] = yNice.tickValues.map { val in
             axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
@@ -262,7 +281,94 @@ struct NativePlot: View {
         let xSpan = xRange.upperBound - xRange.lowerBound
         let ySpan = yRange.upperBound - yRange.lowerBound
 
-        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: 5)
+        let xTicksTarget = xTickCount > 0 ? xTickCount : 5
+        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: xTicksTarget)
+
+        // Zero Reference Lines (x = 0 / y = 0)
+        if showZeroLine {
+            if yRange.lowerBound <= 0 && yRange.upperBound >= 0, ySpan > 0 {
+                let zeroT = (0.0 - yRange.lowerBound) / ySpan
+                let zeroY = plot.maxY - CGFloat(zeroT) * plot.height
+                var zeroH = Path()
+                zeroH.move(to: CGPoint(x: plot.minX, y: zeroY))
+                zeroH.addLine(to: CGPoint(x: plot.maxX, y: zeroY))
+                context.stroke(zeroH, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
+            }
+            if xRange.lowerBound <= 0 && xRange.upperBound >= 0, xSpan > 0 {
+                let zeroT = (0.0 - xRange.lowerBound) / xSpan
+                let zeroX = plot.minX + CGFloat(zeroT) * plot.width
+                var zeroV = Path()
+                zeroV.move(to: CGPoint(x: zeroX, y: plot.minY))
+                zeroV.addLine(to: CGPoint(x: zeroX, y: plot.maxY))
+                context.stroke(zeroV, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
+            }
+        }
+
+        // Major Gridlines
+        if showMajorGrid {
+            for val in xNice.tickValues {
+                guard xSpan > 0 else { continue }
+                let t = (val - xRange.lowerBound) / xSpan
+                guard t >= 0.001 && t <= 0.999 else { continue }
+                let px = plot.minX + CGFloat(t) * plot.width
+                var gridLine = Path()
+                gridLine.move(to: CGPoint(x: px, y: plot.minY))
+                gridLine.addLine(to: CGPoint(x: px, y: plot.maxY))
+                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
+            }
+            for val in yNice.tickValues {
+                guard ySpan > 0 else { continue }
+                let t = (val - yRange.lowerBound) / ySpan
+                guard t >= 0.001 && t <= 0.999 else { continue }
+                let py = plot.maxY - CGFloat(t) * plot.height
+                var gridLine = Path()
+                gridLine.move(to: CGPoint(x: plot.minX, y: py))
+                gridLine.addLine(to: CGPoint(x: plot.maxX, y: py))
+                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
+            }
+        }
+
+        // Minor Ticks & Minor Gridlines
+        if minorTicksCount > 1 {
+            let xMinors = AxisFormatter.minorTicks(majorTicks: xNice.tickValues, step: xNice.step, subdivisions: minorTicksCount)
+            for val in xMinors {
+                guard xSpan > 0 else { continue }
+                let t = (val - xRange.lowerBound) / xSpan
+                guard t >= -0.001 && t <= 1.001 else { continue }
+                let px = plot.minX + CGFloat(t) * plot.width
+                var minorTick = Path()
+                minorTick.move(to: CGPoint(x: px, y: plot.maxY))
+                minorTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen * 0.55))
+                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
+
+                if showMinorGrid && t >= 0.001 && t <= 0.999 {
+                    var mGrid = Path()
+                    mGrid.move(to: CGPoint(x: px, y: plot.minY))
+                    mGrid.addLine(to: CGPoint(x: px, y: plot.maxY))
+                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
+                }
+            }
+
+            let yMinors = AxisFormatter.minorTicks(majorTicks: yNice.tickValues, step: yNice.step, subdivisions: minorTicksCount)
+            for val in yMinors {
+                guard ySpan > 0 else { continue }
+                let t = (val - yRange.lowerBound) / ySpan
+                guard t >= -0.001 && t <= 1.001 else { continue }
+                let py = plot.maxY - CGFloat(t) * plot.height
+                var minorTick = Path()
+                minorTick.move(to: CGPoint(x: plot.minX, y: py))
+                minorTick.addLine(to: CGPoint(x: plot.minX - tickLen * 0.55, y: py))
+                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
+
+                if showMinorGrid && t >= 0.001 && t <= 0.999 {
+                    var mGrid = Path()
+                    mGrid.move(to: CGPoint(x: plot.minX, y: py))
+                    mGrid.addLine(to: CGPoint(x: plot.maxX, y: py))
+                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
+                }
+            }
+        }
+
         for val in xNice.tickValues {
             guard xSpan > 0 else { continue }
             let t = (val - xRange.lowerBound) / xSpan
@@ -371,6 +477,34 @@ struct NativePlot: View {
                 }
             }
         }
+
+        // Interactive Crosshair Cursor
+        if showCursor, let loc = hoverLocation, plot.contains(loc) {
+            var hLine = Path()
+            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
+            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
+            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+            var vLine = Path()
+            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
+            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
+            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+            let tX = Double((loc.x - plot.minX) / plot.width)
+            let tY = Double((plot.maxY - loc.y) / plot.height)
+            let dataX = xRange.lowerBound + tX * xSpan
+            let dataY = yRange.lowerBound + tY * ySpan
+
+            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
+            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
+            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
+            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
+            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+
+            let tooltipFont = plotFont(size: max(9.5, 10.5 * fontScale), bold: true)
+            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
+            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
+        }
     }
 
     private func gapCount(_ data: ([Double?], [(String, [Double?])])) -> Int {
@@ -436,6 +570,14 @@ struct OverlayPlot: View {
     var customSeriesLabels: [String: String] = [:]
     var resetTrigger: Int = 0
     @Binding var legendOffset: CGSize
+    var xTickCount: Int = 0
+    var yTickCount: Int = 0
+    var minorTicksCount: Int = 0
+    var showMajorGrid: Bool = false
+    var showMinorGrid: Bool = false
+    var showZeroLine: Bool = false
+    var showCursor: Bool = false
+    @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
     @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
@@ -537,6 +679,16 @@ struct OverlayPlot: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    if showCursor {
+                        switch phase {
+                        case .active(let loc): hoverLocation = loc
+                        case .ended: hoverLocation = nil
+                        }
+                    } else {
+                        hoverLocation = nil
+                    }
+                }
                 .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
                 .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
                 .accessibilityElement(children: .ignore)
@@ -584,7 +736,8 @@ struct OverlayPlot: View {
         let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
 
         let yRangeTemp = viewport(expanded(yBounds), pan: pan.height, dimension: size.height, vertical: true)
-        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: 5)
+        let yTicksTarget = yTickCount > 0 ? yTickCount : 5
+        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: yTicksTarget)
         let yLabels: [String] = yNice.tickValues.map { val in
             axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
@@ -621,7 +774,94 @@ struct OverlayPlot: View {
         let xSpan = xRange.upperBound - xRange.lowerBound
         let ySpan = yRange.upperBound - yRange.lowerBound
 
-        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: 5)
+        let xTicksTarget = xTickCount > 0 ? xTickCount : 5
+        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: xTicksTarget)
+
+        // Zero Reference Lines (x = 0 / y = 0)
+        if showZeroLine {
+            if yRange.lowerBound <= 0 && yRange.upperBound >= 0, ySpan > 0 {
+                let zeroT = (0.0 - yRange.lowerBound) / ySpan
+                let zeroY = plot.maxY - CGFloat(zeroT) * plot.height
+                var zeroH = Path()
+                zeroH.move(to: CGPoint(x: plot.minX, y: zeroY))
+                zeroH.addLine(to: CGPoint(x: plot.maxX, y: zeroY))
+                context.stroke(zeroH, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
+            }
+            if xRange.lowerBound <= 0 && xRange.upperBound >= 0, xSpan > 0 {
+                let zeroT = (0.0 - xRange.lowerBound) / xSpan
+                let zeroX = plot.minX + CGFloat(zeroT) * plot.width
+                var zeroV = Path()
+                zeroV.move(to: CGPoint(x: zeroX, y: plot.minY))
+                zeroV.addLine(to: CGPoint(x: zeroX, y: plot.maxY))
+                context.stroke(zeroV, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
+            }
+        }
+
+        // Major Gridlines
+        if showMajorGrid {
+            for val in xNice.tickValues {
+                guard xSpan > 0 else { continue }
+                let t = (val - xRange.lowerBound) / xSpan
+                guard t >= 0.001 && t <= 0.999 else { continue }
+                let px = plot.minX + CGFloat(t) * plot.width
+                var gridLine = Path()
+                gridLine.move(to: CGPoint(x: px, y: plot.minY))
+                gridLine.addLine(to: CGPoint(x: px, y: plot.maxY))
+                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
+            }
+            for val in yNice.tickValues {
+                guard ySpan > 0 else { continue }
+                let t = (val - yRange.lowerBound) / ySpan
+                guard t >= 0.001 && t <= 0.999 else { continue }
+                let py = plot.maxY - CGFloat(t) * plot.height
+                var gridLine = Path()
+                gridLine.move(to: CGPoint(x: plot.minX, y: py))
+                gridLine.addLine(to: CGPoint(x: plot.maxX, y: py))
+                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
+            }
+        }
+
+        // Minor Ticks & Minor Gridlines
+        if minorTicksCount > 1 {
+            let xMinors = AxisFormatter.minorTicks(majorTicks: xNice.tickValues, step: xNice.step, subdivisions: minorTicksCount)
+            for val in xMinors {
+                guard xSpan > 0 else { continue }
+                let t = (val - xRange.lowerBound) / xSpan
+                guard t >= -0.001 && t <= 1.001 else { continue }
+                let px = plot.minX + CGFloat(t) * plot.width
+                var minorTick = Path()
+                minorTick.move(to: CGPoint(x: px, y: plot.maxY))
+                minorTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen * 0.55))
+                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
+
+                if showMinorGrid && t >= 0.001 && t <= 0.999 {
+                    var mGrid = Path()
+                    mGrid.move(to: CGPoint(x: px, y: plot.minY))
+                    mGrid.addLine(to: CGPoint(x: px, y: plot.maxY))
+                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
+                }
+            }
+
+            let yMinors = AxisFormatter.minorTicks(majorTicks: yNice.tickValues, step: yNice.step, subdivisions: minorTicksCount)
+            for val in yMinors {
+                guard ySpan > 0 else { continue }
+                let t = (val - yRange.lowerBound) / ySpan
+                guard t >= -0.001 && t <= 1.001 else { continue }
+                let py = plot.maxY - CGFloat(t) * plot.height
+                var minorTick = Path()
+                minorTick.move(to: CGPoint(x: plot.minX, y: py))
+                minorTick.addLine(to: CGPoint(x: plot.minX - tickLen * 0.55, y: py))
+                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
+
+                if showMinorGrid && t >= 0.001 && t <= 0.999 {
+                    var mGrid = Path()
+                    mGrid.move(to: CGPoint(x: plot.minX, y: py))
+                    mGrid.addLine(to: CGPoint(x: plot.maxX, y: py))
+                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
+                }
+            }
+        }
+
         for val in xNice.tickValues {
             guard xSpan > 0 else { continue }
             let t = (val - xRange.lowerBound) / xSpan
@@ -699,6 +939,34 @@ struct OverlayPlot: View {
                     in: &plotContext
                 )
             }
+        }
+
+        // Interactive Crosshair Cursor
+        if showCursor, let loc = hoverLocation, plot.contains(loc) {
+            var hLine = Path()
+            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
+            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
+            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+            var vLine = Path()
+            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
+            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
+            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+            let tX = Double((loc.x - plot.minX) / plot.width)
+            let tY = Double((plot.maxY - loc.y) / plot.height)
+            let dataX = xRange.lowerBound + tX * xSpan
+            let dataY = yRange.lowerBound + tY * ySpan
+
+            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
+            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
+            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
+            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
+            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+
+            let tooltipFont = plotFont(size: max(9.5, 10.5 * fontScale), bold: true)
+            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
+            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
         }
     }
 
@@ -912,6 +1180,14 @@ struct ProjectGallery: View {
     @Binding var legendScale: Double
     var customSeriesLabels: [String: String] = [:]
     @Binding var legendOffset: CGSize
+    var xTickCount: Int = 0
+    var yTickCount: Int = 0
+    var minorTicksCount: Int = 0
+    var showMajorGrid: Bool = false
+    var showMinorGrid: Bool = false
+    var showZeroLine: Bool = false
+    var showCursor: Bool = false
+    var snapshotDPI: Int = 300
     @State private var plotResetTrigger: Int = 0
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
 
@@ -1285,7 +1561,14 @@ struct ProjectGallery: View {
                                 legendScale: legendScale,
                                 customSeriesLabels: customSeriesLabels,
                                 resetTrigger: plotResetTrigger,
-                                legendOffset: $legendOffset)
+                                legendOffset: $legendOffset,
+                                xTickCount: xTickCount,
+                                yTickCount: yTickCount,
+                                minorTicksCount: minorTicksCount,
+                                showMajorGrid: showMajorGrid,
+                                showMinorGrid: showMinorGrid,
+                                showZeroLine: showZeroLine,
+                                showCursor: showCursor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -1335,7 +1618,14 @@ struct ProjectGallery: View {
                                     legendScale: legendScale,
                                     customSeriesLabels: customSeriesLabels,
                                     resetTrigger: plotResetTrigger,
-                                    legendOffset: $legendOffset)
+                                    legendOffset: $legendOffset,
+                                    xTickCount: xTickCount,
+                                    yTickCount: yTickCount,
+                                    minorTicksCount: minorTicksCount,
+                                    showMajorGrid: showMajorGrid,
+                                    showMinorGrid: showMinorGrid,
+                                    showZeroLine: showZeroLine,
+                                    showCursor: showCursor)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1375,7 +1665,14 @@ struct ProjectGallery: View {
                                showLegend: showLegend,
                                legendScale: legendScale,
                                customSeriesLabels: customSeriesLabels,
-                               legendOffset: $legendOffset)
+                               legendOffset: $legendOffset,
+                               xTickCount: xTickCount,
+                               yTickCount: yTickCount,
+                               minorTicksCount: minorTicksCount,
+                               showMajorGrid: showMajorGrid,
+                               showMinorGrid: showMinorGrid,
+                               showZeroLine: showZeroLine,
+                               showCursor: showCursor)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

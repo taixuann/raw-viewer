@@ -33,6 +33,10 @@ struct ProjectSourcesSidebar: View {
     var onUpdateGrouping: (() -> Void)? = nil
     var onSaveGrouping: (([String]) -> Void)? = nil
 
+    @AppStorage("uiFontSize") private var uiFontSize: Double = AppTypography.baselineFontSize
+    @AppStorage("uiFontFamily") private var uiFontFamily: String = "System"
+    @AppStorage("treeDateGranularity") private var treeDateGranularity: String = "day"
+
     @State private var search = ""
     @State private var collapsed = Set<String>()
     @State private var showAddView = false
@@ -408,23 +412,19 @@ struct ProjectSourcesSidebar: View {
                 if isExpanded { collapsed.insert(group.label) } else { collapsed.remove(group.label) }
             } label: {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9.5, weight: .bold))
+                    .font(AppTypography.chevron(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
 
             Text(group.label)
-                .font(.system(size: 11.5, weight: .bold))
+                .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
 
             Spacer(minLength: 4)
 
-            Text("\(group.sourceIDs.count)")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(Capsule().fill(.quaternary))
+            AppCountBadge(count: group.sourceIDs.count, uiFontSize: uiFontSize)
 
             filterToggle(for: group.label)
         }
@@ -523,11 +523,11 @@ struct ProjectSourcesSidebar: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: activeFacetCount > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 11))
+                    .font(AppTypography.control(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                     .foregroundStyle(activeFacetCount > 0 ? Color.accentColor : Color.secondary)
                 if activeFacetCount > 0 {
                     Text("\(activeFacetCount)")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(AppTypography.badge(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(Color.accentColor)
                 }
             }
@@ -582,11 +582,11 @@ struct ProjectSourcesSidebar: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: treeGroupingMode == "flat" ? "list.bullet" : "folder")
-                    .font(.system(size: 11))
+                    .font(AppTypography.control(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                 Text(treeGroupingMode == "grammar" ? "Grammar" : (treeGroupingMode == "folder" ? "Folder" : "Flat"))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(AppTypography.control(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8))
+                    .font(AppTypography.chevron(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 6).padding(.vertical, 4.5)
@@ -600,10 +600,14 @@ struct ProjectSourcesSidebar: View {
             HierarchyConfigPopover(
                 availableFields: available,
                 selectedFields: $treeGroupingFields,
+                dateGranularity: $treeDateGranularity,
+                uiFontSize: uiFontSize,
+                fontFamily: uiFontFamily,
                 onSave: { fields in
                     onSaveGrouping?(fields)
                     onUpdateGrouping?()
                 },
+                onUpdateGrouping: onUpdateGrouping,
                 onClose: {
                     showHierarchyConfig = false
                 }
@@ -678,14 +682,14 @@ struct ProjectSourcesSidebar: View {
                         Spacer().frame(width: CGFloat(item.depth * 14))
                     }
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8.5, weight: .bold))
+                        .font(AppTypography.chevron(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(.secondary)
-                        .frame(width: 10)
+                        .frame(width: max(10, 10 * AppTypography.scale(for: uiFontSize)))
                     Image(systemName: isExpanded ? "folder.fill" : "folder")
-                        .font(.system(size: 11))
+                        .font(AppTypography.control(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(Color.accentColor.opacity(0.85))
                     Text(item.node.name)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Spacer()
@@ -694,6 +698,7 @@ struct ProjectSourcesSidebar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .tag(item.node.id)
         } else if let sourceID = item.node.sourceID, let source = sourceIndex[sourceID] {
             HStack(spacing: 0) {
                 if item.depth > 0 {
@@ -701,6 +706,7 @@ struct ProjectSourcesSidebar: View {
                 }
                 sourceRow(source)
             }
+            .tag(source.id)
         }
     }
 
@@ -825,19 +831,19 @@ struct ProjectSourcesSidebar: View {
         return HStack(alignment: .center, spacing: 8) {
             Circle()
                 .fill(isFocused ? Color.accentColor : stateColor(states[source.id]))
-                .frame(width: 6, height: 6)
+                .frame(width: max(6, 6 * AppTypography.scale(for: uiFontSize)), height: max(6, 6 * AppTypography.scale(for: uiFontSize)))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     Text(row.text)
-                        .font(labelFont(for: row.style))
+                        .font(labelFont(for: row.style, uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(row.style.emphasis == "secondary" ? .secondary : .primary)
                 }
             }
             Spacer(minLength: 0)
             if isFocused {
                 Text("Focused")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(AppTypography.badge(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                     .foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 4).padding(.vertical, 1)
                     .background(RoundedRectangle(cornerRadius: 3).fill(Color.accentColor.opacity(0.12)))
@@ -1100,7 +1106,7 @@ struct SourceLabelCustomizerView: View {
 }
 
 /// Shared source-label font so sidebar rows and customizer preview match.
-private func labelFont(for style: SourceLabelRow) -> Font {
+private func labelFont(for style: SourceLabelRow, uiFontSize: Double = AppTypography.baselineFontSize, fontFamily: String = "System") -> Font {
     let weight: Font.Weight = {
         switch style.weight {
         case "medium": return .medium
@@ -1108,8 +1114,13 @@ private func labelFont(for style: SourceLabelRow) -> Font {
         default: return .regular
         }
     }()
-    return .system(size: CGFloat(style.fontSize), weight: weight,
-                   design: style.font == "monospace" ? .monospaced : .default)
+    return AppTypography.font(
+        size: CGFloat(style.fontSize),
+        weight: weight,
+        design: style.font == "monospace" ? .monospaced : nil,
+        uiFontSize: uiFontSize,
+        fontFamily: fontFamily
+    )
 }
 
 /// Minimal flow layout: native adaptive arrangement, no truncation.
@@ -1149,15 +1160,20 @@ private struct FlowLayout: Layout {
 struct HierarchyConfigPopover: View {
     let availableFields: [String]
     @Binding var selectedFields: [String]
+    @Binding var dateGranularity: String
+    var uiFontSize: Double = AppTypography.baselineFontSize
+    var fontFamily: String = "System"
     let onSave: (([String]) -> Void)?
+    var onUpdateGrouping: (() -> Void)? = nil
     let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Tree Grouping Hierarchy")
-                .font(.system(size: 12, weight: .bold))
+                .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: fontFamily))
             Text("Arrange grammar variables to form the tree hierarchy:")
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: fontFamily))
+                .foregroundStyle(.secondary)
 
             ForEach(availableFields, id: \.self) { field in
                 let isIncluded = selectedFields.contains(field)
@@ -1173,15 +1189,32 @@ struct HierarchyConfigPopover: View {
                         Image(systemName: isIncluded ? "checkmark.square.fill" : "square")
                             .foregroundStyle(isIncluded ? Color.accentColor : .secondary)
                         Text(field)
-                            .font(.system(size: 11))
+                            .font(AppTypography.control(uiFontSize: uiFontSize, fontFamily: fontFamily))
                         Spacer()
                         if isIncluded, let idx = selectedFields.firstIndex(of: field) {
                             Text("Level \(idx + 1)")
-                                .font(.caption2).foregroundStyle(.secondary)
+                                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: fontFamily))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
                 .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Date Granularity")
+                    .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: fontFamily))
+                Picker("", selection: $dateGranularity) {
+                    ForEach(DateGranularity.allCases) { gran in
+                        Text(gran.label).tag(gran.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: dateGranularity) { _, _ in
+                    onUpdateGrouping?()
+                }
             }
 
             Divider()
@@ -1191,7 +1224,9 @@ struct HierarchyConfigPopover: View {
                     let defaults = ["instrument", "mode", "device", "date"]
                     let filtered = defaults.filter { availableFields.contains($0) }
                     selectedFields = filtered.isEmpty ? Array(availableFields.prefix(3)) : filtered
+                    dateGranularity = "day"
                     onSave?(selectedFields)
+                    onUpdateGrouping?()
                 }
                 .buttonStyle(.bordered).controlSize(.small)
                 Spacer()
@@ -1200,6 +1235,6 @@ struct HierarchyConfigPopover: View {
             }
         }
         .padding(14)
-        .frame(width: 260)
+        .frame(width: 280)
     }
 }

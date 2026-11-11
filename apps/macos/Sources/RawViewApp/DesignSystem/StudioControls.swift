@@ -91,3 +91,87 @@ public struct StudioSegmentPicker<SelectionValue: Hashable, Content: View>: View
         .pickerStyle(.segmented)
     }
 }
+
+// MARK: - AppTokenPill
+
+/// Reusable grammar token pill with syntax tint and dynamic typography scaling.
+public struct AppTokenPill: View {
+    let name: String
+    var isOptional: Bool = false
+    var isHighlighted: Bool = false
+    var uiFontSize: Double = 12.0
+
+    public init(name: String, isOptional: Bool = false, isHighlighted: Bool = false, uiFontSize: Double = 12.0) {
+        self.name = name
+        self.isOptional = isOptional
+        self.isHighlighted = isHighlighted
+        self.uiFontSize = uiFontSize
+    }
+
+    private var tokenColor: Color {
+        let lower = name.lowercased()
+        if lower.contains("date") || lower.contains("time") {
+            return .orange
+        } else if lower.contains("device") || lower.contains("instrument") {
+            return .blue
+        } else if lower.contains("mode") || lower.contains("application") {
+            return .teal
+        } else if lower.contains("study") || lower.contains("batch") {
+            return .purple
+        } else if isOptional {
+            return .secondary
+        } else {
+            return .primary
+        }
+    }
+
+    public var body: some View {
+        HStack(spacing: 2) {
+            if isOptional {
+                Text("[")
+                    .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary.opacity(0.8))
+            }
+            Text("{\(name)}")
+                .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                .foregroundStyle(isHighlighted ? Color.white : tokenColor)
+            if isOptional {
+                Text("]")
+                    .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary.opacity(0.8))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2.5)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(isHighlighted ? Color.accentColor : tokenColor.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isHighlighted ? Color.accentColor : tokenColor.opacity(0.3), lineWidth: 0.8)
+        )
+    }
+}
+
+// MARK: - AppCountBadge
+
+/// Scaled count badge capsule.
+public struct AppCountBadge: View {
+    let count: Int
+    var uiFontSize: Double = 12.0
+
+    public init(count: Int, uiFontSize: Double = 12.0) {
+        self.count = count
+        self.uiFontSize = uiFontSize
+    }
+
+    public var body: some View {
+        Text("\(count)")
+            .font(AppTypography.badge(uiFontSize: uiFontSize))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
+            .background(Capsule().fill(.quaternary))
+    }
+}

@@ -486,3 +486,37 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(filtered.first?.children.first?.children.first?.sourceID == "b.txt")
 }
 
+@Test func grammarTreeDateGranularityAndDeviceAliasing() {
+    let grammar = FilenameGrammar(
+        id: "usth-grammar",
+        name: "USTH Grammar",
+        template: "{date}_{device}.{mode}_[{device-id}]",
+        fields: [
+            GrammarField(name: "date", type: .datetime, formatHint: "DDMMYY-HHmmSS"),
+            GrammarField(name: "device", role: "instrument"),
+            GrammarField(name: "mode"),
+            GrammarField(name: "device-id"),
+        ]
+    )
+
+    let sources = [
+        RawSource(relativePath: "s1.txt", url: URL(fileURLWithPath: "/tmp/100826-102100_autolab-usth.ca_[sampleA].txt"), byteSize: 100),
+        RawSource(relativePath: "s2.txt", url: URL(fileURLWithPath: "/tmp/100826-102600_autolab-usth.ca_[sampleB].txt"), byteSize: 100),
+        RawSource(relativePath: "s3.txt", url: URL(fileURLWithPath: "/tmp/150926-140000_autolab-usth.ca_[sampleC].txt"), byteSize: 100),
+    ]
+
+    // 1. Grouping by "instrument" (aliasing {device}) and "date" with .month granularity
+    let treeMonth = SourceTree(sources: sources, grammar: grammar, groupingFields: ["instrument", "date"], dateGranularity: .month)
+    let instNode = treeMonth.root.children.first { $0.name == "autolab-usth" }
+    #expect(instNode != nil)
+    // Dates 100826 and 150926 normalize to "2026-08" and "2026-09"
+    #expect(instNode?.children.map(\.name) == ["2026-08", "2026-09"])
+
+    // 2. Grouping by "date" with .day granularity
+    let treeDay = SourceTree(sources: sources, grammar: grammar, groupingFields: ["date"], dateGranularity: .day)
+    // 100826-102100 and 100826-102600 merge into single folder "2026-08-10"
+    let dayNode = treeDay.root.children.first { $0.name == "2026-08-10" }
+    #expect(dayNode != nil)
+    #expect(dayNode?.children.count == 2)
+}
+

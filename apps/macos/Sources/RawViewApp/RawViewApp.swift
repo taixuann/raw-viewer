@@ -151,6 +151,14 @@ final class RawViewModel: ObservableObject {
             }
         }
     }
+    @Published var xTickCount: Int = 0
+    @Published var yTickCount: Int = 0
+    @Published var minorTicksCount: Int = 0
+    @Published var showMajorGrid: Bool = false
+    @Published var showMinorGrid: Bool = false
+    @Published var showZeroLine: Bool = false
+    @Published var showCursor: Bool = false
+    @Published var snapshotDPI: Int = 300
     @Published var studyManifests: [StudyManifest] = []
     @Published var manifestIssues: [String] = []
     @Published var isLoading = false
@@ -363,7 +371,9 @@ final class RawViewModel: ObservableObject {
     func updateSourceTree() {
         guard let context = project, let inv = inventory else { return }
         if treeGroupingMode == "grammar", let grammar = explorerCatalog?.activeGrammar ?? explorerCatalog?.grammars.first {
-            sourceTree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: treeGroupingFields)
+            let granRaw = UserDefaults.standard.string(forKey: "treeDateGranularity") ?? "day"
+            let granularity = DateGranularity(rawValue: granRaw) ?? .day
+            sourceTree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: treeGroupingFields, dateGranularity: granularity)
         } else {
             // Physical directory tree is the universal hierarchy whenever grammar is missing or mode is folder
             sourceTree = SourceTree(inventory: inv, project: context)
@@ -607,9 +617,15 @@ final class RawViewModel: ObservableObject {
                 showLegend: showLegend,
                 legendScale: legendScale,
                 customSeriesLabels: customSeriesLabels,
-                legendOffset: .constant(.zero)
+                legendOffset: .constant(.zero),
+                xTickCount: xTickCount,
+                yTickCount: yTickCount,
+                minorTicksCount: minorTicksCount,
+                showMajorGrid: showMajorGrid,
+                showMinorGrid: showMinorGrid,
+                showZeroLine: showZeroLine
             )
-            FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize)
+            FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize, dpi: snapshotDPI)
         } else if let focused = focusedSourceID, let measurement = effectiveMeasurement(for: focused) {
             let exportView = NativePlot(
                 measurement: measurement,
@@ -631,9 +647,15 @@ final class RawViewModel: ObservableObject {
                 showLegend: showLegend,
                 legendScale: legendScale,
                 customSeriesLabels: customSeriesLabels,
-                legendOffset: .constant(.zero)
+                legendOffset: .constant(.zero),
+                xTickCount: xTickCount,
+                yTickCount: yTickCount,
+                minorTicksCount: minorTicksCount,
+                showMajorGrid: showMajorGrid,
+                showMinorGrid: showMinorGrid,
+                showZeroLine: showZeroLine
             )
-            FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize)
+            FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize, dpi: snapshotDPI)
         }
     }
 
@@ -1118,6 +1140,7 @@ final class RawViewModel: ObservableObject {
 
     /// Deterministic multi-source selection: keep focus while selected,
     /// otherwise take the sorted first. Loads all selected without stale results.
+    /// Sanitizes tree prefixes (e.g. "source:") and filters directory nodes.
     func updateSelection(_ ids: Set<String>) {
         if let activeID = activeSnapshotID, let snap = snapshots.first(where: { $0.id == activeID }) {
             if snap.selectedSourceIDs != ids {
@@ -1126,9 +1149,17 @@ final class RawViewModel: ObservableObject {
             }
         }
         cancelOverlayLoad()
-        selectedSourceIDs = ids
-        focusedSourceID = OverlaySelection.focused(selected: ids, current: focusedSourceID)
-        hiddenSeries = hiddenSeries.intersection(ids)
+        let cleanIDs = Set(ids.compactMap { id -> String? in
+            if id.hasPrefix("directory:") || id.hasPrefix("root:") { return nil }
+            let candidate = id.hasPrefix("source:") ? String(id.dropFirst("source:".count)) : id
+            return candidate.isEmpty ? nil : candidate
+        })
+        if cleanIDs.isEmpty && ids.contains(where: { $0.hasPrefix("directory:") || $0.hasPrefix("root:") }) {
+            return
+        }
+        selectedSourceIDs = cleanIDs
+        focusedSourceID = OverlaySelection.focused(selected: cleanIDs, current: focusedSourceID)
+        hiddenSeries = hiddenSeries.intersection(cleanIDs)
         loadFocused()
         ensureSelectedLoaded()
     }
@@ -1784,7 +1815,15 @@ struct RawViewShell: View {
                        showLegend: $model.showLegend,
                        legendScale: $model.legendScale,
                        customSeriesLabels: model.customSeriesLabels,
-                       legendOffset: $model.legendOffset)
+                       legendOffset: $model.legendOffset,
+                       xTickCount: model.xTickCount,
+                       yTickCount: model.yTickCount,
+                       minorTicksCount: model.minorTicksCount,
+                       showMajorGrid: model.showMajorGrid,
+                       showMinorGrid: model.showMinorGrid,
+                       showZeroLine: model.showZeroLine,
+                       showCursor: model.showCursor,
+                       snapshotDPI: model.snapshotDPI)
             .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -2017,6 +2056,14 @@ struct RawViewShell: View {
                              comparisonTitle: $model.comparisonTitle,
                              onSaveSnapshot: { model.saveSnapshot() },
                              activeSnapshotID: model.activeSnapshotID,
+                             xTickCount: $model.xTickCount,
+                             yTickCount: $model.yTickCount,
+                             minorTicksCount: $model.minorTicksCount,
+                             showMajorGrid: $model.showMajorGrid,
+                             showMinorGrid: $model.showMinorGrid,
+                             showZeroLine: $model.showZeroLine,
+                             showCursor: $model.showCursor,
+                             snapshotDPI: $model.snapshotDPI,
                              onSelectGenericColumns: { x, y in
                                  if let id = model.focusedSourceID {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)

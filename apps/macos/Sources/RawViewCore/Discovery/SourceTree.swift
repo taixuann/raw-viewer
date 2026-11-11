@@ -104,6 +104,7 @@ public struct SourceTree: Sendable, Equatable {
         sources: [RawSource],
         grammar: FilenameGrammar?,
         groupingFields: [String],
+        dateGranularity: DateGranularity = .day,
         rootName: String = "Sources"
     ) {
         guard let grammar, !groupingFields.isEmpty else {
@@ -144,10 +145,37 @@ public struct SourceTree: Sendable, Equatable {
             }
 
             let currentField = groupingFields[fieldIndex]
+            let fieldDef = grammar.fields.first(where: { $0.name == currentField })
+            let isDateField = (currentField == "date" || fieldDef?.type == .datetime || fieldDef?.role?.lowercased().contains("date") == true)
+            let formatHint = fieldDef?.formatHint
+
             var buckets: [String: [(source: RawSource, facts: ExtractedGrammarFacts)]] = [:]
             for item in items {
-                let val = item.facts.extractedFields[currentField]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let key = (val != nil && !val!.isEmpty) ? val! : SourceGrouping.missingValueBucketLabel
+                var rawVal = item.facts.extractedFields[currentField]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Field alias resolution (e.g. instrument <-> device, or match field by role)
+                if rawVal == nil || rawVal!.isEmpty {
+                    if currentField == "instrument" {
+                        rawVal = item.facts.extractedFields["device"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else if currentField == "device" {
+                        rawVal = item.facts.extractedFields["instrument"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    if rawVal == nil || rawVal!.isEmpty {
+                        if let matchedByRole = grammar.fields.first(where: { $0.role?.lowercased() == currentField.lowercased() }) {
+                            rawVal = item.facts.extractedFields[matchedByRole.name]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                }
+
+                let key: String
+                if let v = rawVal, !v.isEmpty {
+                    if isDateField {
+                        key = FilenameGrammarEngine.normalizeDate(v, formatHint: formatHint, granularity: dateGranularity)
+                    } else {
+                        key = v
+                    }
+                } else {
+                    key = SourceGrouping.missingValueBucketLabel
+                }
                 buckets[key, default: []].append(item)
             }
 
