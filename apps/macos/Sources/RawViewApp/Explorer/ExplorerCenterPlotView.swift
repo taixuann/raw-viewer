@@ -1006,9 +1006,17 @@ struct ProjectGallery: View {
             .frame(height: 44)
             pane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            HStack {
+            HStack(spacing: 8) {
                 if let source = sources.first(where: { $0.id == focusedSourceID }) {
                     Text(source.url.lastPathComponent).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([source.url])
+                    } label: {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Reveal in Finder")
                     Spacer()
                     if let sha = states[source.id]?.measurement?.source.sha256 {
                         Text("Loaded · SHA-256 of parsed bytes \(String(sha.prefix(12)))…")

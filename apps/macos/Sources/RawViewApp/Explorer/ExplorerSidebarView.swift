@@ -67,7 +67,7 @@ struct ProjectSourcesSidebar: View {
         onSaveSourceLabels: (([SourceLabelLayout]) -> String?)? = nil,
         filter: Binding<SourceFilter> = .constant(SourceFilter()),
         treeGroupingMode: Binding<String> = .constant("grammar"),
-        treeGroupingFields: Binding<[String]> = .constant(["instrument", "mode", "device", "date"]),
+        treeGroupingFields: Binding<[String]> = .constant(["device", "application-mode", "device-id", "date"]),
         onUpdateGrouping: (() -> Void)? = nil,
         onSaveGrouping: (([String]) -> Void)? = nil
     ) {
@@ -478,11 +478,11 @@ struct ProjectSourcesSidebar: View {
     private func distinctValues(for variable: String) -> [String] {
         guard let grammar = catalog?.activeGrammar ?? catalog?.grammars.first else { return [] }
         var vals = Set<String>()
-        // Sample up to 250 sources to prevent main-thread freeze on massive directories (10k+ files)
-        for source in sources.prefix(250) {
+        for source in sources {
             let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
             if facts.isMatched, let val = facts.extractedFields[variable]?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
                 vals.insert(val)
+                if vals.count >= 250 { break }
             }
         }
         return vals.sorted()
@@ -490,7 +490,7 @@ struct ProjectSourcesSidebar: View {
 
     private var filterMenu: some View {
         let grammar = catalog?.activeGrammar ?? catalog?.grammars.first
-        let fields = grammar?.fields.map(\.name) ?? ["instrument", "mode", "device", "date"]
+        let fields = grammar?.fields.map(\.name) ?? ["device", "application-mode", "device-id", "date"]
         let activeFacetCount = filter.selections.values.filter { !$0.isEmpty }.count
         return Menu {
             Text("Filter by Grammar Variable:").font(.caption)
@@ -596,7 +596,7 @@ struct ProjectSourcesSidebar: View {
         .fixedSize()
         .help("Tree grouping: Grammar, Folder, or Flat")
         .popover(isPresented: $showHierarchyConfig) {
-            let available = catalog?.activeGrammar?.fields.map(\.name) ?? ["instrument", "mode", "device", "date"]
+            let available = catalog?.activeGrammar?.fields.map(\.name) ?? ["device", "application-mode", "device-id", "date"]
             HierarchyConfigPopover(
                 availableFields: available,
                 selectedFields: $treeGroupingFields,
@@ -847,6 +847,27 @@ struct ProjectSourcesSidebar: View {
         .tag(source.id)
         .help(filename)
         .accessibilityLabel("\(filename)\(isFocused ? ", focused" : "")")
+        .contextMenu {
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([source.url])
+            } label: {
+                Label("Reveal in Finder", systemImage: "folder")
+            }
+            Button {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(source.relativePath, forType: .string)
+            } label: {
+                Label("Copy Relative Path", systemImage: "doc.on.doc")
+            }
+            Button {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(source.url.path, forType: .string)
+            } label: {
+                Label("Copy Full Path", systemImage: "link")
+            }
+        }
     }
 
     private func stateColor(_ state: GallerySourceState?) -> Color {

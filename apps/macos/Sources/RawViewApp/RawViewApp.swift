@@ -310,7 +310,7 @@ final class RawViewModel: ObservableObject {
 
     // MARK: - Issue #72: Unified Explorer (grammar tree grouping & multi-select filtering)
     @Published var treeGroupingMode: String = "grammar" // "grammar", "folder", "flat"
-    @Published var treeGroupingFields: [String] = ["instrument", "mode", "device", "date"]
+    @Published var treeGroupingFields: [String] = ["device", "application-mode", "device-id", "date"]
     @Published var explorerFilter = SourceFilter()
 
     func setExplorerFilter(_ newFilter: SourceFilter) {
@@ -395,15 +395,9 @@ final class RawViewModel: ObservableObject {
         let saved = try? ProjectSettingsStore.load(projectRoot: project.root)
         explorerViews = saved?.explorerViews ?? []
         sourceLabelLayouts = saved?.sourceLabels ?? []
-        do {
-            explorerCatalog = try FilenameGrammarEngine.load(project: project)
-            if explorerViewError?.hasPrefix("Filename grammar") == true { explorerViewError = nil }
-        } catch {
-            explorerCatalog = nil
-            explorerViewError = "Filename grammar unavailable (\(error.localizedDescription)). Explorer views are unavailable; Tree remains."
-            selectedExplorerView = "tree"
-            return
-        }
+        let effectiveCatalog = FilenameGrammarEngine.loadEffective(project: project)
+        explorerCatalog = effectiveCatalog
+        if explorerViewError?.hasPrefix("Filename grammar") == true { explorerViewError = nil }
         validateExplorerSelection()
     }
 

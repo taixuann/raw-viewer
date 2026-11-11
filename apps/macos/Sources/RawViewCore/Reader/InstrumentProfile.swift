@@ -371,6 +371,28 @@ struct ProfileCatalog: Sendable {
     }
 
     private static func mergeGlobalProfiles(_ catalog: ProfileCatalog, project: ProjectContext) -> ProfileCatalog {
+        if catalog.issues.contains(where: { $0.localizedCaseInsensitiveContains("no profiles were loaded") }) {
+            return catalog
+        }
+
+        let instrumentsRoot = project.root.appendingPathComponent("data/instruments", isDirectory: true)
+        let companionEntry = instrumentsRoot.appendingPathComponent("rawview", isDirectory: true)
+        var companionStat = stat()
+        if lstat(companionEntry.path, &companionStat) == 0 {
+            return catalog
+        }
+
+        let hasRawViewerDir = FileManager.default.fileExists(atPath: project.root.appendingPathComponent(".raw-viewer").path)
+        if !hasRawViewerDir {
+            let hasLegacyProfiles = isDirectoryWithYAMLs(instrumentsRoot, within: project.root)
+                || isDirectoryWithYAMLs(companionEntry, within: project.root)
+                || isDirectoryWithYAMLs(project.root.appendingPathComponent("data/.rawview/instrument"), within: project.root)
+                || isDirectoryWithYAMLs(project.root.appendingPathComponent(".rawviewer/instrument"), within: project.root)
+            if hasLegacyProfiles {
+                return catalog
+            }
+        }
+
         let globalProfilesDir = GlobalPathResolver.globalProfilesDirectory()
         guard FileManager.default.fileExists(atPath: globalProfilesDir.path) else {
             return catalog
