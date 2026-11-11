@@ -205,6 +205,15 @@ public struct ProjectContext: Sendable {
         for case let url as URL in enumerator {
             // macOS Finder metadata is not a measurement source.
             if url.lastPathComponent == ".DS_Store" { continue }
+
+            // Hidden directories (.raw-viewer, .git, .vscode, etc.) are skipped.
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                if url.lastPathComponent.hasPrefix(".") {
+                    enumerator.skipDescendants()
+                    continue
+                }
+            }
             // Excluded suffixes are decided from the claimed name alone,
             // before any per-entry metadata request or symlink
             // canonicalization: an entry named *.spe/*.affm is skipped with

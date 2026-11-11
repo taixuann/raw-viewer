@@ -143,6 +143,14 @@ fn scan_yaml_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 pub fn merge_global_profiles(catalog: &mut ProfileCatalog, project: &ProjectContext) {
+    if catalog
+        .issues
+        .iter()
+        .any(|i| i.to_lowercase().contains("no profiles were loaded"))
+    {
+        return;
+    }
+
     let global_config_dir = match crate::paths::resolve_paths_from_env(&project.root) {
         Ok(r) => PathBuf::from(r.global_config_dir),
         Err(_) => match crate::paths::resolve_global_paths_from_env() {

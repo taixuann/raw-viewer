@@ -845,7 +845,7 @@ public enum FilenameGrammarEngine {
     }
 
     /// Loads the canonical `.raw-viewer/grammar.yaml` catalog in the project,
-    /// falling back to legacy `.rawviewer/grammar.yaml`.
+    /// falling back to legacy `.rawviewer/grammar.yaml`, or embedded grammar in `config.yaml`.
     public static func load(project: ProjectContext) throws -> FilenameGrammarCatalog {
         let primary = project.root.appendingPathComponent(relativePath)
         if FileManager.default.fileExists(atPath: primary.path) {
@@ -855,7 +855,38 @@ public enum FilenameGrammarEngine {
         if FileManager.default.fileExists(atPath: legacy.path) {
             return try load(fileURL: legacy)
         }
+        if let settings = try? ProjectSettingsStore.load(projectRoot: project.root),
+           let grammar = settings.grammar {
+            return FilenameGrammarCatalog(grammars: [grammar])
+        }
         throw GrammarCatalogError.fileNotFound(path: primary.path)
+    }
+
+    /// Loads the effective grammar catalog for Explorer views and matching:
+    /// 1. Dedicated project grammar file (.raw-viewer/grammar.yaml or legacy)
+    /// 2. Embedded grammar in project config (.raw-viewer/config.yaml)
+    /// 3. Embedded grammar in global config or dedicated global grammar.yaml
+    /// 4. Bundled fallback: BuiltinAssets.defaultGrammarCatalog()
+    public static func loadEffective(project: ProjectContext) -> FilenameGrammarCatalog {
+        if let projectCatalog = try? load(project: project) {
+            return projectCatalog
+        }
+        let globalConfigDir = GlobalPathResolver.resolveGlobalConfigDirectory()
+        let globalGrammarFile = globalConfigDir.appendingPathComponent("grammar.yaml")
+        if FileManager.default.fileExists(atPath: globalGrammarFile.path),
+           let globalCatalog = try? load(fileURL: globalGrammarFile) {
+            return globalCatalog
+        }
+        let globalConfigFile = globalConfigDir.appendingPathComponent("config.yaml")
+        if FileManager.default.fileExists(atPath: globalConfigFile.path),
+           let data = try? Data(contentsOf: globalConfigFile),
+           let text = String(data: data, encoding: .utf8),
+           let node = try? YAMLParser.parse(text, allowIndentlessSequences: false),
+           let grammarNode = node.value(for: "grammar"),
+           let grammar = try? parseSingleGrammar(node: grammarNode) {
+            return FilenameGrammarCatalog(grammars: [grammar])
+        }
+        return BuiltinAssets.defaultGrammarCatalog()
     }
 
     /// Result of a legacy import: the migrated catalog plus human-reviewable

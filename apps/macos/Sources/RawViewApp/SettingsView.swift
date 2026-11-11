@@ -13,14 +13,16 @@ struct SettingsView: View {
     @State private var packageActionMessage: String?
     @State private var packageErrorMessage: String?
     @State private var installedPackages: [LabPackageSummary] = []
+    @State private var selectedUSTHProfiles: Set<String> = Set(BuiltinAssets.builtinProfiles.map(\.id))
     @ObservedObject private var hotkeyManager = HotkeyManager.shared
 
     enum SettingsTab: String, Identifiable, CaseIterable {
         case project
         case appearance
+        case packages
+        case profiles
         case performance
         case storage
-        case packages
         case hotkeys
 
         var id: String { rawValue }
@@ -29,9 +31,10 @@ struct SettingsView: View {
             switch self {
             case .project: return "Project"
             case .appearance: return "Appearance"
+            case .packages: return "Lab Packages"
+            case .profiles: return "Profiles"
             case .performance: return "Performance"
             case .storage: return "Storage"
-            case .packages: return "Lab Packages"
             case .hotkeys: return "Hotkeys"
             }
         }
@@ -40,9 +43,10 @@ struct SettingsView: View {
             switch self {
             case .project: return "folder"
             case .appearance: return "paintbrush"
+            case .packages: return "shippingbox"
+            case .profiles: return "slider.horizontal.3"
             case .performance: return "bolt.fill"
             case .storage: return "internaldrive"
-            case .packages: return "shippingbox"
             case .hotkeys: return "keyboard"
             }
         }
@@ -58,6 +62,7 @@ struct SettingsView: View {
                         tabRow(.project)
                         tabRow(.appearance)
                         tabRow(.packages)
+                        tabRow(.profiles)
                     }
 
                     Section("System") {
@@ -107,6 +112,8 @@ struct SettingsView: View {
             storageTab
         case .packages:
             packagesTab
+        case .profiles:
+            profilesTab
         case .hotkeys:
             hotkeysTab
         }
@@ -377,24 +384,43 @@ struct SettingsView: View {
             }
 
             Section("Available Optional Packages") {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(LabPackageManager.usthDisplayName)
                                 .font(.headline)
-                            Text("Keithley 2400 (IV), Autolab PGSTAT204 (CV/CA/EIS), Horiba LabRAM, IOP UV-Vis")
+                            Text("Select which instrument profiles to install:")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
 
                         let isInstalled = LabPackageManager.isUSTHPackageInstalled()
-                        Button(isInstalled ? "Reinstall USTH Package" : "Install USTH Package") {
+                        Button(isInstalled ? "Reinstall Selected" : "Install Selected") {
                             installUSTHPackage()
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
+                        .disabled(selectedUSTHProfiles.isEmpty)
                     }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(BuiltinAssets.builtinProfiles, id: \.id) { prof in
+                            let isChecked = selectedUSTHProfiles.contains(prof.id)
+                            Toggle(isOn: Binding(
+                                get: { isChecked },
+                                set: { val in
+                                    if val { selectedUSTHProfiles.insert(prof.id) }
+                                    else { selectedUSTHProfiles.remove(prof.id) }
+                                }
+                            )) {
+                                Text("\(prof.id) (\(prof.relativePath))")
+                                    .font(.caption)
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                    .padding(.leading, 4)
 
                     if let message = packageActionMessage {
                         Text(message)
@@ -421,7 +447,7 @@ struct SettingsView: View {
     private func installUSTHPackage() {
         packageErrorMessage = nil
         do {
-            try LabPackageManager.installUSTHLabPackage()
+            try LabPackageManager.installUSTHLabPackage(selectedProfileIDs: selectedUSTHProfiles)
             packageActionMessage = "USTH Lab Package installed successfully."
             refreshInstalledPackages()
         } catch {
@@ -437,6 +463,149 @@ struct SettingsView: View {
             refreshInstalledPackages()
         } catch {
             packageErrorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Profiles Tab
+
+    private var profilesTab: some View {
+        Form {
+            Section("Instrument Profiles") {
+                Text("Manage instrument profiles recognized for scientific raw data parsing. Disabled profiles are ignored during file inspection and matching.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let project = model.project {
+                    let settings = (try? ProjectSettingsStore.load(projectRoot: project.root))
+                    let profilesConfig = settings?.profiles ?? ProfilesConfig()
+                    let discovered = LabPackageManager.listAllDiscoveredProfiles(projectRoot: project.root)
+
+                    if discovered.isEmpty {
+                        Text("No instrument profiles found.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(discovered) { prof in
+                            let isEnabled = !profilesConfig.disabled.contains(prof.id)
+                                && (profilesConfig.enabled == nil || profilesConfig.enabled!.contains(prof.id))
+                            profileRow(
+                                profile: prof,
+                                isEnabled: isEnabled,
+                                project: project,
+                                settings: settings
+                            )
+                        }
+                    }
+                } else {
+                    Text("Open a project to view and configure instrument profiles.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func profileRow(
+        profile: DiscoveredProfileSummary,
+        isEnabled: Bool,
+        project: ProjectContext,
+        settings: ProjectSettings?
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(profile.name.isEmpty ? profile.id : profile.name)
+                        .font(.headline)
+                    Text(profile.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    Text(profile.origin)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                }
+                if !profile.modes.isEmpty {
+                    Text("Modes: \(profile.modes.joined(separator: ", "))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button("Export…") {
+                exportProfile(id: profile.id, project: project)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Toggle("", isOn: Binding(
+                get: { isEnabled },
+                set: { newValue in
+                    toggleProfile(id: profile.id, enabled: newValue, project: project, settings: settings)
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func exportProfile(id: String, project: ProjectContext) {
+        guard let yaml = LabPackageManager.loadProfileYAML(id: id, projectRoot: project.root) else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(id).yaml"
+        panel.prompt = "Export"
+        panel.message = "Export instrument profile YAML"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try yaml.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            packageErrorMessage = "Failed to export profile: \(error.localizedDescription)"
+        }
+    }
+
+    private func toggleProfile(
+        id: String,
+        enabled: Bool,
+        project: ProjectContext,
+        settings: ProjectSettings?
+    ) {
+        var disabled = settings?.profiles.disabled ?? []
+        var enabledList = settings?.profiles.enabled
+
+        if enabled {
+            disabled.removeAll { $0 == id }
+            if enabledList != nil && !enabledList!.contains(id) {
+                enabledList?.append(id)
+            }
+        } else {
+            if !disabled.contains(id) {
+                disabled.append(id)
+            }
+            enabledList?.removeAll { $0 == id }
+        }
+
+        let newProfilesConfig = ProfilesConfig(enabled: enabledList, disabled: disabled)
+        let updated = ProjectSettings(
+            dataRoot: settings?.dataRoot ?? project.dataRootRelativePath,
+            defaultView: settings?.defaultView ?? "tree",
+            defaultPreset: settings?.defaultPreset ?? "nature-single",
+            developerMode: settings?.developerMode ?? false,
+            explorerViews: settings?.explorerViews ?? [],
+            sourceLabels: settings?.sourceLabels ?? [],
+            profiles: newProfilesConfig,
+            grammar: settings?.grammar,
+            treeGrouping: settings?.treeGrouping
+        )
+        do {
+            try ProjectSettingsStore.save(updated, projectRoot: project.root)
+            model.openRecentProject(url: project.root)
+        } catch {
+            packageErrorMessage = "Failed to save profile setting: \(error.localizedDescription)"
         }
     }
 

@@ -106,7 +106,10 @@ public enum LabPackageManager {
     /// Writes manifest to `<globalConfigDir>/packages/usth-lab/manifest.yaml`
     /// and profiles to `<globalConfigDir>/profiles/usth/`.
     /// Note: Does NOT activate or alter any filename grammar.
-    public static func installUSTHLabPackage(globalConfigDir: URL? = nil) throws {
+    public static func installUSTHLabPackage(
+        globalConfigDir: URL? = nil,
+        selectedProfileIDs: Set<String>? = nil
+    ) throws {
         let base = globalConfigDir ?? GlobalPathResolver.resolveGlobalConfigDirectory()
         let packagesDir = GlobalPathResolver.globalPackagesDirectory(globalConfigDir: base)
         let pkgDir = packagesDir.appendingPathComponent(usthPackageID, isDirectory: true)
@@ -121,8 +124,12 @@ public enum LabPackageManager {
             throw LabPackageError.ioError("Failed to create package directories: \(error.localizedDescription)")
         }
 
+        let itemsToInstall = BuiltinAssets.builtinProfiles.filter { item in
+            selectedProfileIDs == nil || selectedProfileIDs!.contains(item.id)
+        }
+
         // 1. Write the profiles
-        for item in BuiltinAssets.builtinProfiles {
+        for item in itemsToInstall {
             let filename = URL(fileURLWithPath: item.relativePath).lastPathComponent
             let targetURL = usthProfilesDir.appendingPathComponent(filename)
             do {
@@ -140,7 +147,7 @@ public enum LabPackageManager {
             "display_name: \"\(usthDisplayName)\"",
             "profiles:"
         ]
-        for item in BuiltinAssets.builtinProfiles {
+        for item in itemsToInstall {
             let filename = URL(fileURLWithPath: item.relativePath).lastPathComponent
             let sha = sha256Hex(item.yaml.data(using: .utf8) ?? Data())
             manifestLines.append("  - id: \(item.id)")
@@ -229,5 +236,192 @@ public enum LabPackageManager {
             storageURL: storageURL,
             isInstalled: true
         )
+    }
+
+    // MARK: - Profile Discovery & Export
+
+    public static func listAllDiscoveredProfiles(projectRoot: URL? = nil) -> [DiscoveredProfileSummary] {
+        var results: [DiscoveredProfileSummary] = []
+        var seenIDs = Set<String>()
+
+        // 1. Project-local profiles
+        if let projectRoot = projectRoot {
+            let candidateDirs = [
+                projectRoot.appendingPathComponent(".raw-viewer/profiles"),
+                projectRoot.appendingPathComponent(".rawviewer/profiles"),
+                projectRoot.appendingPathComponent(".rawviewer/instrument")
+            ]
+            for dir in candidateDirs {
+                guard let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
+                for file in entries where file.pathExtension.lowercased() == "yaml" || file.pathExtension.lowercased() == "yml" {
+                    if let text = try? String(contentsOf: file, encoding: .utf8),
+                       let parsed = try? YAMLParser.parse(text, allowIndentlessSequences: false) {
+                        let id = parsed.value(for: "id")?.scalarValue
+                            ?? parsed.value(for: "profile_id")?.scalarValue
+                            ?? file.deletingPathExtension().lastPathComponent
+                        guard !seenIDs.contains(id) else { continue }
+                        seenIDs.insert(id)
+                        let name = parsed.value(for: "name")?.scalarValue
+                            ?? parsed.value(for: "instrument_name")?.scalarValue
+                            ?? id
+                        var modes: [String] = []
+                        if let modesList = parsed.value(for: "modes")?.listItems {
+                            for m in modesList {
+                                if let mid = m.value(for: "id")?.scalarValue {
+                                    modes.append(mid)
+                                }
+                            }
+                        }
+                        results.append(DiscoveredProfileSummary(
+                            id: id,
+                            name: name,
+                            modes: modes,
+                            origin: "Project",
+                            fileURL: file
+                        ))
+                    }
+                }
+            }
+        }
+
+        // 2. Global profiles
+        let globalProfiles = GlobalPathResolver.globalProfilesDirectory()
+        if let entries = try? FileManager.default.contentsOfDirectory(at: globalProfiles, includingPropertiesForKeys: nil) {
+            for entry in entries {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDir), isDir.boolValue {
+                    let pkgName = entry.lastPathComponent
+                    if let files = try? FileManager.default.contentsOfDirectory(at: entry, includingPropertiesForKeys: nil) {
+                        for file in files where file.pathExtension.lowercased() == "yaml" || file.pathExtension.lowercased() == "yml" {
+                            if let text = try? String(contentsOf: file, encoding: .utf8),
+                               let parsed = try? YAMLParser.parse(text, allowIndentlessSequences: false) {
+                                let id = parsed.value(for: "id")?.scalarValue
+                                    ?? parsed.value(for: "profile_id")?.scalarValue
+                                    ?? file.deletingPathExtension().lastPathComponent
+                                guard !seenIDs.contains(id) else { continue }
+                                seenIDs.insert(id)
+                                let name = parsed.value(for: "name")?.scalarValue
+                                    ?? parsed.value(for: "instrument_name")?.scalarValue
+                                    ?? id
+                                var modes: [String] = []
+                                if let modesList = parsed.value(for: "modes")?.listItems {
+                                    for m in modesList {
+                                        if let mid = m.value(for: "id")?.scalarValue {
+                                            modes.append(mid)
+                                        }
+                                    }
+                                }
+                                results.append(DiscoveredProfileSummary(
+                                    id: id,
+                                    name: name,
+                                    modes: modes,
+                                    origin: "Global (\(pkgName))",
+                                    fileURL: file
+                                ))
+                            }
+                        }
+                    }
+                } else if entry.pathExtension.lowercased() == "yaml" || entry.pathExtension.lowercased() == "yml" {
+                    if let text = try? String(contentsOf: entry, encoding: .utf8),
+                       let parsed = try? YAMLParser.parse(text, allowIndentlessSequences: false) {
+                        let id = parsed.value(for: "id")?.scalarValue
+                            ?? parsed.value(for: "profile_id")?.scalarValue
+                            ?? entry.deletingPathExtension().lastPathComponent
+                        guard !seenIDs.contains(id) else { continue }
+                        seenIDs.insert(id)
+                        let name = parsed.value(for: "name")?.scalarValue
+                            ?? parsed.value(for: "instrument_name")?.scalarValue
+                            ?? id
+                        var modes: [String] = []
+                        if let modesList = parsed.value(for: "modes")?.listItems {
+                            for m in modesList {
+                                if let mid = m.value(for: "id")?.scalarValue {
+                                    modes.append(mid)
+                                }
+                            }
+                        }
+                        results.append(DiscoveredProfileSummary(
+                            id: id,
+                            name: name,
+                            modes: modes,
+                            origin: "Global",
+                            fileURL: entry
+                        ))
+                    }
+                }
+            }
+        }
+
+        // 3. Built-in profiles
+        for item in BuiltinAssets.builtinProfiles {
+            guard !seenIDs.contains(item.id) else { continue }
+            seenIDs.insert(item.id)
+            if let parsed = try? YAMLParser.parse(item.yaml, allowIndentlessSequences: false) {
+                let name = parsed.value(for: "name")?.scalarValue
+                    ?? parsed.value(for: "instrument_name")?.scalarValue
+                    ?? item.id
+                var modes: [String] = []
+                if let modesList = parsed.value(for: "modes")?.listItems {
+                    for m in modesList {
+                        if let mid = m.value(for: "id")?.scalarValue {
+                            modes.append(mid)
+                        }
+                    }
+                }
+                results.append(DiscoveredProfileSummary(
+                    id: item.id,
+                    name: name,
+                    modes: modes,
+                    origin: "Built-in",
+                    fileURL: nil
+                ))
+            }
+        }
+
+        return results.sorted { $0.id < $1.id }
+    }
+
+    public static func loadProfileYAML(id: String, projectRoot: URL? = nil) -> String? {
+        if let projectRoot = projectRoot {
+            for dir in [".raw-viewer/profiles", ".rawviewer/profiles", ".rawviewer/instrument"] {
+                let candidate = projectRoot.appendingPathComponent(dir).appendingPathComponent("\(id).yaml")
+                if let text = try? String(contentsOf: candidate, encoding: .utf8) {
+                    return text
+                }
+            }
+        }
+        let globalDir = GlobalPathResolver.globalProfilesDirectory()
+        if let entries = try? FileManager.default.contentsOfDirectory(at: globalDir, includingPropertiesForKeys: nil) {
+            for entry in entries {
+                let candidate = entry.appendingPathComponent("\(id).yaml")
+                if let text = try? String(contentsOf: candidate, encoding: .utf8) {
+                    return text
+                }
+            }
+        }
+        let directCandidate = globalDir.appendingPathComponent("\(id).yaml")
+        if let text = try? String(contentsOf: directCandidate, encoding: .utf8) {
+            return text
+        }
+        if let builtin = BuiltinAssets.builtinProfiles.first(where: { $0.id == id }) {
+            return builtin.yaml
+        }
+        return nil
+    }
+}
+
+public struct DiscoveredProfileSummary: Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let modes: [String]
+    public let origin: String
+    public let fileURL: URL?
+
+    public init(id: String, name: String, modes: [String], origin: String, fileURL: URL? = nil) {
+        self.id = id
+        self.name = name
+        self.modes = modes
+        self.origin = origin
+        self.fileURL = fileURL
     }
 }
