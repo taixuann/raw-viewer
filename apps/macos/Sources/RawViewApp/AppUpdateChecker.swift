@@ -48,7 +48,7 @@ final class AppUpdateChecker: ObservableObject {
 
             let latest = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
             let current =
-                (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.3.4"
+                (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.3.5"
 
             if isNewer(latest: latest, current: current) {
                 let releaseHtmlUrl = (json["html_url"] as? String).flatMap(URL.init)

@@ -16,7 +16,7 @@ concurrency:
 jobs:
   changes:
     name: detect changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -55,7 +55,7 @@ jobs:
   pr-acceptance-mapping:
     name: pr acceptance mapping
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # Checkout required: scripts and self-test fixtures live in the repo (PR_BODY alone is not enough).
@@ -72,7 +72,7 @@ jobs:
   pr-owned-files:
     name: pr owned files
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,7 +92,7 @@ jobs:
   cross-language-test-contract:
     name: cross-language test contract
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Path filter check
@@ -126,14 +126,20 @@ jobs:
         run: cargo test -p raw-viewer-core --test grammar_vectors
 
   rust:
-    name: rust (${{ matrix.os }})
+    name: rust (${{ matrix.label }})
     needs: changes
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            label: ubuntu-latest
+          - os: macos-latest
+            label: macos-latest
+          - os: windows-latest
+            label: windows-latest
     steps:
       - name: Path filter check
         id: check
@@ -168,8 +174,18 @@ jobs:
         if: runner.os == 'Linux' && steps.check.outputs.should_run == 'true'
         run: |
           mkdir -p /home/runner/.cache/apt-archives/partial
-          sudo apt-get update
+          if ! getent ahostsv4 azure.archive.ubuntu.com >/dev/null 2>&1; then
+            echo "Fallback: configuring public DNS for apt..."
+            echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" | sudo tee /etc/resolv.conf >/dev/null || true
+            if ! getent ahostsv4 archive.ubuntu.com >/dev/null 2>&1; then
+              echo "https://mirrors.edge.kernel.org/ubuntu" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null || true
+            fi
+          fi
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=15 -o Acquire::Retries=2 update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::Retries=2 \
             -o Dir::Cache::archives=/home/runner/.cache/apt-archives \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
