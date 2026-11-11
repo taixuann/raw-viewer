@@ -126,14 +126,20 @@ jobs:
         run: cargo test -p raw-viewer-core --test grammar_vectors
 
   rust:
-    name: rust (${{ matrix.os }})
+    name: rust (${{ matrix.label }})
     needs: changes
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            label: ubuntu-latest
+          - os: macos-latest
+            label: macos-latest
+          - os: windows-latest
+            label: windows-latest
     steps:
       - name: Path filter check
         id: check
