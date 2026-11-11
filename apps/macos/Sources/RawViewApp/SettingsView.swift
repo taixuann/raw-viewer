@@ -11,6 +11,13 @@ struct SettingsView: View {
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
     @AppStorage("treeDateGranularity") private var treeDateGranularity: String = "day"
     @State private var grammarTestFilename = "100826-102100_autolab-usth.ca_sampleA_r.[test]_f.[none]_b1.txt"
+    @State private var builderTemplate: String = ""
+    @State private var builderGrammarID: String = ""
+    @State private var builderGrammarName: String = ""
+    @State private var builderFields: [GrammarField] = []
+    @State private var grammarActionMessage: String?
+    @State private var grammarErrorMessage: String?
+    @State private var isCustomizingGrammar: Bool = false
     @State private var cacheClearedMessage: String?
     @State private var packageActionMessage: String?
     @State private var packageErrorMessage: String?
@@ -651,52 +658,163 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    // MARK: - Grammar Tab
+    // MARK: - Grammar Tab & Builder
 
     private var grammarTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Section 1: Active Grammar & Precedence
+                // Precedence & Origin Header
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("ACTIVE FILENAME GRAMMAR")
+                    Text("FILENAME GRAMMAR PRECEDENCE & ORIGIN")
                         .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(.secondary)
 
+                    let origin = FilenameGrammarEngine.detectOrigin(project: model.project)
                     VStack(alignment: .leading, spacing: 12) {
-                        let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first
-                        if let grammar = activeGrammar {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundStyle(Color.accentColor)
+                        HStack(alignment: .center, spacing: 12) {
+                            Image(systemName: origin == .project ? "folder.badge.gearshape" : (origin == .global ? "globe" : "shippingbox"))
+                                .font(.system(size: 22))
+                                .foregroundStyle(origin == .project ? Color.green : (origin == .global ? Color.blue : Color.secondary))
 
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 8) {
+                                    Text("Active Scope:")
+                                        .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    Text(origin.rawValue)
+                                        .font(AppTypography.badge(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                        .foregroundStyle(origin == .project ? Color.green : (origin == .global ? Color.blue : Color.primary))
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(RoundedRectangle(cornerRadius: 4).fill((origin == .project ? Color.green : (origin == .global ? Color.blue : Color.secondary)).opacity(0.12)))
+                                }
+                                Text(origin == .project ? "Using custom project grammar in .raw-viewer/grammar.yaml" : (origin == .global ? "Using global default grammar in ~/.config/raw-viewer/grammar.yaml" : "Using standard built-in scientific grammar fallback"))
+                                    .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+
+                            HStack(spacing: 8) {
+                                if !isCustomizingGrammar {
+                                    Button("Customize Grammar…") {
+                                        initBuilderFromActiveGrammar()
+                                        isCustomizingGrammar = true
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                } else {
+                                    Button("Close Builder") {
+                                        isCustomizingGrammar = false
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+
+                                if origin == .project {
+                                    Button("Reset to Default") {
+                                        resetProjectGrammar()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+
+                        if let msg = grammarActionMessage {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                Text(msg).font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily)).foregroundStyle(.green)
+                            }
+                        }
+                        if let err = grammarErrorMessage {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                                Text(err).font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily)).foregroundStyle(.red)
+                            }
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
+                }
+
+                // Interactive Grammar Builder Section
+                if isCustomizingGrammar {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("INTERACTIVE GRAMMAR BUILDER")
+                                .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            HStack(spacing: 8) {
+                                Button("Save to Project") {
+                                    saveGrammarToProject()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+
+                                Button("Save as Global Default") {
+                                    saveGrammarAsGlobal()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 14) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Pattern Template")
+                                    .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                Text("Define token placeholders in curly braces `{token}`. Brackets `[{token}]` denote optional elements.")
+                                    .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    .foregroundStyle(.secondary)
+
+                                TextField("e.g. {date}_{instrument}.{mode}_[{device-id}]_{study}", text: $builderTemplate)
+                                    .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                                    .textFieldStyle(.roundedBorder)
+                                    .onChange(of: builderTemplate) { _, _ in
+                                        syncBuilderFieldsWithTemplate()
+                                    }
+                            }
+
+                            Divider()
+
+                            Text("TOKEN SCHEMA & ROLES MATRIX")
+                                .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                .foregroundStyle(.secondary)
+
+                            if builderFields.isEmpty {
+                                Text("No tokens detected. Add tokens in curly braces like `{instrument}` in the template above.")
+                                    .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                VStack(spacing: 8) {
+                                    ForEach(builderFields.indices, id: \.self) { idx in
+                                        tokenConfigRow(idx)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
+                    }
+                } else {
+                    // Active grammar read-only overview
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("ACTIVE PATTERN OVERVIEW")
+                            .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first
+                            if let grammar = activeGrammar {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Text(grammar.id)
-                                            .font(AppTypography.title(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
-                                        if let project = model.project {
-                                            let localGrammar = project.root.appendingPathComponent(".raw-viewer/grammar.yaml")
-                                            let isLocal = FileManager.default.fileExists(atPath: localGrammar.path)
-                                            Text(isLocal ? "Project (.raw-viewer/grammar.yaml)" : "Global Built-in")
-                                                .font(AppTypography.badge(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
-                                                .foregroundStyle(isLocal ? Color.green : Color.blue)
-                                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                                .background(RoundedRectangle(cornerRadius: 4).fill((isLocal ? Color.green : Color.blue).opacity(0.12)))
-                                        }
-                                    }
-
-                                    if !grammar.description.isEmpty {
-                                        Text(grammar.description)
-                                            .font(AppTypography.body(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Text("Template: \(grammar.template)")
+                                    Text("Template:")
+                                        .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    Text(grammar.template)
                                         .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                                         .padding(.vertical, 4)
                                         .foregroundStyle(.primary)
 
-                                    // Token pills
                                     HStack(spacing: 6) {
                                         ForEach(grammar.fields) { field in
                                             AppTokenPill(
@@ -708,20 +826,14 @@ struct SettingsView: View {
                                     }
                                 }
                             }
-                        } else {
-                            ContentUnavailableView(
-                                "No Filename Grammar Configured",
-                                systemImage: "character.textbox",
-                                description: Text("Add a .raw-viewer/grammar.yaml file to your project to enable token parsing.")
-                            )
                         }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
                 }
 
-                // Section 2: Date Granularity & Grouping
+                // Section: Date Granularity & Grouping
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TREE GROUPING & DATE GRANULARITY")
                         .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
@@ -764,22 +876,46 @@ struct SettingsView: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
                 }
 
-                // Section 3: Interactive Tester Scratchpad
+                // Section: Interactive Tester Scratchpad
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LIVE GRAMMAR TESTER")
+                    Text("LIVE GRAMMAR TESTER & TREE PREVIEW")
                         .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Test filename token extraction and date normalization in real time:")
+                        Text("Test filename token extraction, variant key matching, and date normalization in real time:")
                             .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                             .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Text("Presets:")
+                                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                .foregroundStyle(.secondary)
+                            Button("Autolab CA") {
+                                grammarTestFilename = "110526-000000_autolab-usth.ca_[cu-ta-pda.q1-ito.1]_ca.protonation.txt"
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Button("Keithley IV") {
+                                grammarTestFilename = "230926-103615_keithley-2400.dual-sweep_[cu-ec-pda.c4-ito.1_r1-c5]_iv.dual-sweep_r.[reproducible]_014.txt"
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Button("Horiba Raman") {
+                                grammarTestFilename = "150526-000000_horiba-labram.raman_[sample1]_raman_532nm.txt"
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
 
                         TextField("Enter filename to test...", text: $grammarTestFilename)
                             .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                             .textFieldStyle(.roundedBorder)
 
-                        if let grammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first {
+                        let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first
+                        if let grammar = activeGrammar {
                             let facts = FilenameGrammarEngine.extract(from: grammarTestFilename, grammar: grammar)
                             if facts.isMatched {
                                 HStack(spacing: 6) {
@@ -787,9 +923,10 @@ struct SettingsView: View {
                                     Text("Matched successfully").font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily)).foregroundStyle(.green)
                                 }
 
-                                VStack(alignment: .leading, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 8) {
                                     ForEach(Array(facts.extractedFields.keys.sorted()), id: \.self) { key in
                                         if let val = facts.extractedFields[key] {
+                                            let field = grammar.fields.first(where: { $0.name == key })
                                             HStack(spacing: 8) {
                                                 AppTokenPill(name: key, uiFontSize: uiFontSize)
                                                 Text("=")
@@ -799,9 +936,17 @@ struct SettingsView: View {
                                                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                                                     .foregroundStyle(.primary)
 
-                                                if key == "date" || grammar.fields.first(where: { $0.name == key })?.type == .datetime {
+                                                if field?.isVariantKey == true {
+                                                    Text("Variant Key")
+                                                        .font(AppTypography.badge(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                                        .foregroundStyle(.purple)
+                                                        .padding(.horizontal, 4).padding(.vertical, 1)
+                                                        .background(Capsule().fill(Color.purple.opacity(0.12)))
+                                                }
+
+                                                if key == "date" || field?.type == .datetime {
                                                     let gran = DateGranularity(rawValue: treeDateGranularity) ?? .day
-                                                    let norm = FilenameGrammarEngine.normalizeDate(val, formatHint: grammar.fields.first(where: { $0.name == key })?.formatHint, granularity: gran)
+                                                    let norm = FilenameGrammarEngine.normalizeDate(val, formatHint: field?.formatHint, granularity: gran)
                                                     Text("→ Normalized (\(gran.label)): \(norm)")
                                                         .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                                                         .foregroundStyle(.orange)
@@ -811,7 +956,7 @@ struct SettingsView: View {
                                         }
                                     }
                                 }
-                                .padding(8)
+                                .padding(10)
                                 .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
                             } else {
                                 HStack(spacing: 6) {
@@ -829,6 +974,142 @@ struct SettingsView: View {
                 }
             }
             .padding(20)
+        }
+    }
+
+    private func tokenConfigRow(_ idx: Int) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            AppTokenPill(
+                name: builderFields[idx].name,
+                isOptional: builderFields[idx].isOptional,
+                uiFontSize: uiFontSize
+            )
+
+            Picker("", selection: $builderFields[idx].type) {
+                Text("String").tag(GrammarFieldType.string)
+                Text("Date/Time").tag(GrammarFieldType.datetime)
+                Text("Number").tag(GrammarFieldType.number)
+            }
+            .frame(width: 110)
+            .controlSize(.small)
+
+            TextField("Format hint (e.g. DDMMYY-HHmmss)", text: $builderFields[idx].formatHint)
+                .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 180)
+
+            Toggle("Variant Key", isOn: $builderFields[idx].isVariantKey)
+                .toggleStyle(.checkbox)
+                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+
+            Toggle("Optional", isOn: $builderFields[idx].isOptional)
+                .toggleStyle(.checkbox)
+                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+
+            Toggle("Facet", isOn: $builderFields[idx].isFacet)
+                .toggleStyle(.checkbox)
+                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+
+            Toggle("Tree", isOn: $builderFields[idx].isGroupingLevel)
+                .toggleStyle(.checkbox)
+                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func initBuilderFromActiveGrammar() {
+        let active = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first ?? FilenameGrammarCatalog.standardDefaults.first!
+        builderGrammarID = active.id
+        builderGrammarName = active.name
+        builderTemplate = active.template
+        builderFields = active.fields
+    }
+
+    private func syncBuilderFieldsWithTemplate() {
+        let tokenNames = FilenameGrammarEngine.extractTokens(from: builderTemplate)
+        var updated: [GrammarField] = []
+        for name in tokenNames {
+            if let existing = builderFields.first(where: { $0.name == name }) {
+                updated.append(existing)
+            } else {
+                let isDate = name.contains("date") || name.contains("time")
+                let isNum = name.contains("batch") || name.contains("index") || name.contains("num")
+                let isMode = name == "mode" || name == "application-mode" || name == "variant"
+                let isOptional = builderTemplate.contains("[{\(name)}]")
+                let type: GrammarFieldType = isDate ? .datetime : (isNum ? .number : .string)
+                let hint = isDate ? "DDMMYY-HHmmss" : (isNum ? "001" : "")
+                updated.append(GrammarField(
+                    name: name,
+                    role: name.capitalized,
+                    type: type,
+                    formatHint: hint,
+                    isOptional: isOptional,
+                    isFacet: true,
+                    isVariantKey: isMode,
+                    isGroupingLevel: true
+                ))
+            }
+        }
+        builderFields = updated
+    }
+
+    private func saveGrammarToProject() {
+        guard let project = model.project else {
+            grammarErrorMessage = "No project open to save project grammar."
+            return
+        }
+        syncBuilderFieldsWithTemplate()
+        let grammar = FilenameGrammar(
+            id: builderGrammarID.isEmpty ? "custom-project" : builderGrammarID,
+            name: builderGrammarName.isEmpty ? "Project Filename Pattern" : builderGrammarName,
+            template: builderTemplate,
+            fields: builderFields,
+            isDefault: true
+        )
+        let catalog = FilenameGrammarCatalog(grammars: [grammar], activeGrammarID: grammar.id)
+        do {
+            try FilenameGrammarEngine.saveToProject(catalog: catalog, project: project)
+            model.reloadGrammar()
+            grammarActionMessage = "Saved grammar to .raw-viewer/grammar.yaml"
+            grammarErrorMessage = nil
+        } catch {
+            grammarErrorMessage = error.localizedDescription
+            grammarActionMessage = nil
+        }
+    }
+
+    private func saveGrammarAsGlobal() {
+        syncBuilderFieldsWithTemplate()
+        let grammar = FilenameGrammar(
+            id: builderGrammarID.isEmpty ? "custom-global" : builderGrammarID,
+            name: builderGrammarName.isEmpty ? "Global Filename Pattern" : builderGrammarName,
+            template: builderTemplate,
+            fields: builderFields,
+            isDefault: true
+        )
+        let catalog = FilenameGrammarCatalog(grammars: [grammar], activeGrammarID: grammar.id)
+        do {
+            try FilenameGrammarEngine.saveAsGlobalDefault(catalog: catalog)
+            model.reloadGrammar()
+            grammarActionMessage = "Saved grammar as global default in ~/.config/raw-viewer/grammar.yaml"
+            grammarErrorMessage = nil
+        } catch {
+            grammarErrorMessage = error.localizedDescription
+            grammarActionMessage = nil
+        }
+    }
+
+    private func resetProjectGrammar() {
+        guard let project = model.project else { return }
+        do {
+            try FilenameGrammarEngine.resetProjectGrammar(project: project)
+            model.reloadGrammar()
+            initBuilderFromActiveGrammar()
+            grammarActionMessage = "Reverted to global/built-in grammar."
+            grammarErrorMessage = nil
+        } catch {
+            grammarErrorMessage = error.localizedDescription
+            grammarActionMessage = nil
         }
     }
 

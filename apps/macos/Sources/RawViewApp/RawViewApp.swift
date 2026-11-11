@@ -411,6 +411,12 @@ final class RawViewModel: ObservableObject {
         validateExplorerSelection()
     }
 
+    /// Full reload of grammar catalog, tree hierarchy, and facet views
+    func reloadGrammar() {
+        refreshExplorerViews()
+        updateSourceTree()
+    }
+
     /// Adds one grammar-variable view reference. Settings save first; the
     /// visible menu only changes on success. Grammar saves never touch this.
     func addExplorerView(grammarID: String, variable: String) {
@@ -1900,6 +1906,7 @@ struct RawViewShell: View {
                     sourceTree: model.sourceTree,
                     inventoryIssues: model.inventoryIssues,
                     dataRoot: project.dataRootRelativePath,
+                    projectRoot: project.root,
                     expandedDirectoryIDs: $model.expandedDirectoryIDs,
                     facet: $model.selectedExplorerView,
                     explorerViews: model.explorerViews,

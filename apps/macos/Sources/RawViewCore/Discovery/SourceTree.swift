@@ -70,10 +70,14 @@ public struct SourceTree: Sendable, Equatable {
 
         var directoriesByParent: [String: [String]] = [:]
         for path in inventory.directoryPaths {
+            let parts = path.split(separator: "/").map(String.init)
+            if parts.contains(where: { $0.hasPrefix(".") }) { continue }
             directoriesByParent[Self.parent(of: path), default: []].append(path)
         }
         var filesByParent: [String: [RawSource]] = [:]
         for source in inventory.sources {
+            let parts = source.relativePath.split(separator: "/").map(String.init)
+            if parts.contains(where: { $0.hasPrefix(".") }) { continue }
             filesByParent[Self.parent(of: source.relativePath), default: []].append(source)
         }
 
@@ -107,8 +111,13 @@ public struct SourceTree: Sendable, Equatable {
         dateGranularity: DateGranularity = .day,
         rootName: String = "Sources"
     ) {
+        let visibleSources = sources.filter { source in
+            let parts = source.relativePath.split(separator: "/").map(String.init)
+            return !parts.contains(where: { $0.hasPrefix(".") })
+        }
+
         guard let grammar, !groupingFields.isEmpty else {
-            let fileNodes = sources.sorted { $0.relativePath < $1.relativePath }.map { source in
+            let fileNodes = visibleSources.sorted { $0.relativePath < $1.relativePath }.map { source in
                 SourceTreeNode(
                     id: "source:" + source.relativePath,
                     name: source.url.lastPathComponent,
@@ -123,7 +132,7 @@ public struct SourceTree: Sendable, Equatable {
         var matchedSources: [(source: RawSource, facts: ExtractedGrammarFacts)] = []
         var unmatchedSources: [RawSource] = []
 
-        for source in sources {
+        for source in visibleSources {
             let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
             if facts.isMatched {
                 matchedSources.append((source, facts))
