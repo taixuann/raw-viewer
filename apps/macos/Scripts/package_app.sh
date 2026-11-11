@@ -38,7 +38,7 @@ fi
 
 raw_version="${RAWVIEW_VERSION:-}"
 if [ -z "$raw_version" ]; then
-  raw_version=$(git -C "$root" describe --tags --abbrev=0 2>/dev/null || echo "0.3.2")
+  raw_version=$(git -C "$root" describe --tags --abbrev=0 2>/dev/null || echo "0.3.4")
 fi
 app_version="${raw_version#[vV]}"
 build_number="${RAWVIEW_BUILD_NUMBER:-$(git -C "$root" rev-list --count HEAD 2>/dev/null || echo "1")}"
