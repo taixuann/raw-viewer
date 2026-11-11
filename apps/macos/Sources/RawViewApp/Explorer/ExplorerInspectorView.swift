@@ -83,6 +83,14 @@ struct InspectorPane: View {
     @Binding var comparisonTitle: String
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
+    @Binding var xTickCount: Int
+    @Binding var yTickCount: Int
+    @Binding var minorTicksCount: Int
+    @Binding var showMajorGrid: Bool
+    @Binding var showMinorGrid: Bool
+    @Binding var showZeroLine: Bool
+    @Binding var showCursor: Bool
+    @Binding var snapshotDPI: Int
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
     var eligibleX: [String] = []
     var eligibleY: [String] = []
@@ -475,6 +483,128 @@ struct InspectorPane: View {
         }
 
         legendSection
+
+        axesAndTicksSection
+
+        interactionSection
+
+        exportSection
+    }
+
+    private var axesAndTicksSection: some View {
+        InspectorSection(title: "AXES & TICKS") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("X Major Ticks")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("X Ticks", selection: $xTickCount) {
+                        Text("Auto").tag(0)
+                        Text("3").tag(3)
+                        Text("4").tag(4)
+                        Text("5").tag(5)
+                        Text("6").tag(6)
+                        Text("8").tag(8)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 80)
+                }
+
+                HStack {
+                    Text("Y Major Ticks")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Y Ticks", selection: $yTickCount) {
+                        Text("Auto").tag(0)
+                        Text("3").tag(3)
+                        Text("4").tag(4)
+                        Text("5").tag(5)
+                        Text("6").tag(6)
+                        Text("8").tag(8)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 80)
+                }
+
+                HStack {
+                    Text("Minor Ticks")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Minor Ticks", selection: $minorTicksCount) {
+                        Text("None").tag(0)
+                        Text("1 sub").tag(2)
+                        Text("3 subs").tag(4)
+                        Text("4 subs").tag(5)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 90)
+                }
+
+                Toggle(isOn: $showMajorGrid) {
+                    Text("Major Gridlines")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                }
+
+                Toggle(isOn: $showMinorGrid) {
+                    Text("Minor Gridlines")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                }
+
+                Toggle(isOn: $showZeroLine) {
+                    Text("Zero Reference Lines (y = 0 / x = 0)")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                }
+            }
+        }
+    }
+
+    private var interactionSection: some View {
+        InspectorSection(title: "INTERACTION") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: $showCursor) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "cross.fill")
+                            .font(.system(size: 10))
+                        Text("Inspect Crosshair Cursor")
+                            .font(AppTypography.body(uiFontSize: uiFontSize))
+                    }
+                }
+                Text("Hover over curves to read exact (x, y) coordinates with scientific units.")
+                    .font(AppTypography.helperText(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var exportSection: some View {
+        InspectorSection(title: "HIGH-DPI SNAPSHOT EXPORT") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("PNG Resolution")
+                        .font(AppTypography.body(uiFontSize: uiFontSize))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("DPI", selection: $snapshotDPI) {
+                        Text("300 DPI (Retina)").tag(300)
+                        Text("600 DPI (Print)").tag(600)
+                        Text("1200 DPI (Ultra)").tag(1200)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 130)
+                }
+
+                Text("Default export directory: data/snapshot/<name>/ (creates figure.png, vector figure.pdf, and list.yaml manifest).")
+                    .font(AppTypography.helperText(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var legendSection: some View {

@@ -66,6 +66,11 @@ public enum AppTypography {
 
     // MARK: - Semantic Roles
 
+    /// Main page/window header (size 15.0, bold).
+    public static func pageTitle(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
+        font(size: 15.0, weight: .bold, uiFontSize: uiFontSize, fontFamily: fontFamily)
+    }
+
     /// Standard section/card title (size 13.0, bold).
     public static func title(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
         font(size: 13.0, weight: .bold, uiFontSize: uiFontSize, fontFamily: fontFamily)
@@ -74,6 +79,11 @@ public enum AppTypography {
     /// Section header / subtitle (size 12.0, semibold).
     public static func sectionHeadline(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
         font(size: 12.0, weight: .semibold, uiFontSize: uiFontSize, fontFamily: fontFamily)
+    }
+
+    /// Section header / subtitle alias (size 12.0, semibold).
+    public static func sectionHeader(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
+        sectionHeadline(uiFontSize: uiFontSize, fontFamily: fontFamily)
     }
 
     /// Standard body text (size 11.5, regular).
@@ -86,14 +96,34 @@ public enum AppTypography {
         font(size: 11.5, weight: .semibold, uiFontSize: uiFontSize, fontFamily: fontFamily)
     }
 
+    /// Form controls, picker labels, and buttons (size 11.5, medium).
+    public static func control(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
+        font(size: 11.5, weight: .medium, uiFontSize: uiFontSize, fontFamily: fontFamily)
+    }
+
     /// Toolbar labels, buttons, and action text (size 11.0, semibold).
     public static func toolbarLabel(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
         font(size: 11.0, weight: .semibold, uiFontSize: uiFontSize, fontFamily: fontFamily)
     }
 
+    /// Count and status badges (size 10.5, semibold).
+    public static func badge(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
+        font(size: 10.5, weight: .semibold, uiFontSize: uiFontSize, fontFamily: fontFamily)
+    }
+
+    /// Token pill and code identifiers (size 11.0, regular, monospaced).
+    public static func tokenCode(uiFontSize: Double = baselineFontSize) -> Font {
+        mono(size: 11.0, weight: .medium, uiFontSize: uiFontSize)
+    }
+
     /// Descriptive helper text (size 10.5, regular).
     public static func description(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
         font(size: 10.5, weight: .regular, uiFontSize: uiFontSize, fontFamily: fontFamily)
+    }
+
+    /// Explanatory helper text / footnote (size 10.0, regular).
+    public static func helperText(uiFontSize: Double = baselineFontSize, fontFamily: String = "System") -> Font {
+        caption(uiFontSize: uiFontSize, fontFamily: fontFamily)
     }
 
     /// Secondary caption (size 10.0, regular).

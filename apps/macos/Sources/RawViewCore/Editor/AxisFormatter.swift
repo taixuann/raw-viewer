@@ -167,4 +167,23 @@ public struct AxisFormatter: Sendable {
 
         return NiceTicksResult(tickValues: rawTicks, step: rawStepActual, precision: displayPrecision)
     }
+
+    /// Generates minor tick values in original raw data coordinates between major ticks.
+    public static func minorTicks(
+        majorTicks: [Double],
+        step: Double,
+        subdivisions: Int
+    ) -> [Double] {
+        guard subdivisions > 1, majorTicks.count >= 2, step > 0 else { return [] }
+        let subStep = step / Double(subdivisions)
+        var result: [Double] = []
+        for i in 0..<(majorTicks.count - 1) {
+            let start = majorTicks[i]
+            for k in 1..<subdivisions {
+                let val = start + Double(k) * subStep
+                result.append(val)
+            }
+        }
+        return result
+    }
 }

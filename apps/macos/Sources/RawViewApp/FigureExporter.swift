@@ -88,7 +88,7 @@ enum FigureExporter {
     }
 
     /// Presents NSSavePanel for Figure Export (PNG / PDF)
-    static func promptExportFigure<V: View>(view: V, defaultName: String, size: CGSize = CGSize(width: 960, height: 600)) {
+    static func promptExportFigure<V: View>(view: V, defaultName: String, size: CGSize = CGSize(width: 960, height: 600), dpi: Int = 300) {
         let panel = NSSavePanel()
         panel.title = "Export Figure"
         panel.nameFieldStringValue = defaultName
@@ -101,7 +101,8 @@ enum FigureExporter {
             if url.pathExtension.lowercased() == "pdf" {
                 try exportPDF(view: view, size: size, to: url)
             } else {
-                try exportPNG(view: view, size: size, to: url)
+                let scale: CGFloat = dpi >= 1200 ? 12.0 : (dpi >= 600 ? 6.0 : 3.0)
+                try exportPNG(view: view, size: size, scale: scale, to: url)
             }
         } catch {
             let alert = NSAlert(error: error)

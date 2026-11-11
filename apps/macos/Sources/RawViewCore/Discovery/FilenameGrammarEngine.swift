@@ -15,6 +15,25 @@ public enum GrammarFieldType: String, Sendable, Equatable, CaseIterable, Identif
     }
 }
 
+/// Granularity for grouping and displaying datetime tokens in tree hierarchies.
+public enum DateGranularity: String, CaseIterable, Identifiable, Sendable {
+    case year = "year"
+    case month = "month"
+    case day = "day"
+    case raw = "raw"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .year: return "Year (YYYY)"
+        case .month: return "Month (YYYY-MM)"
+        case .day: return "Day (YYYY-MM-DD)"
+        case .raw: return "Raw Token"
+        }
+    }
+}
+
 public struct GrammarField: Sendable, Equatable, Identifiable {
     public var id: String { name }
     public var name: String
@@ -478,6 +497,89 @@ public enum FilenameGrammarEngine {
         } catch {
             throw GrammarCompileError.invalidRegex(reason: error.localizedDescription)
         }
+    }
+
+    /// Normalizes a datetime token to the specified granularity level (Year, Month, Day, or Raw).
+    /// Supports USTH format (DDMMYY-HHmmss), ISO format (YYYY-MM-DD / YYYYMMDD), and YYMMDD.
+    public static func normalizeDate(
+        _ token: String,
+        formatHint: String? = nil,
+        granularity: DateGranularity = .day
+    ) -> String {
+        guard granularity != .raw else { return token }
+        let clean = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return token }
+
+        let hint = (formatHint ?? "").trimmingCharacters(in: .whitespaces)
+
+        // Check if format hint indicates USTH DDMMYY
+        if hint.uppercased().contains("DDMMYY") || (hint.isEmpty && clean.contains("-") && clean.count >= 13) {
+            // USTH format: DDMMYY-HHmmss (e.g. "100826-102100" -> day: 10, month: 08, year: 26 -> 2026)
+            let digits = clean.prefix { $0.isNumber }
+            if digits.count >= 6 {
+                let dStr = String(digits.prefix(6))
+                let dd = String(dStr.prefix(2))
+                let mm = String(dStr.dropFirst(2).prefix(2))
+                let yy = String(dStr.dropFirst(4).prefix(2))
+                if let yInt = Int(yy), let mInt = Int(mm), let dInt = Int(dd),
+                   mInt >= 1 && mInt <= 12 && dInt >= 1 && dInt <= 31 {
+                    let fullYear = yInt < 70 ? (2000 + yInt) : (1900 + yInt)
+                    switch granularity {
+                    case .year: return "\(fullYear)"
+                    case .month: return String(format: "%04d-%02d", fullYear, mInt)
+                    case .day: return String(format: "%04d-%02d-%02d", fullYear, mInt, dInt)
+                    case .raw: return token
+                    }
+                }
+            }
+        }
+
+        // Standard ISO date: YYYY-MM-DD
+        if clean.count >= 10, clean.contains("-") {
+            let parts = clean.split(separator: "-")
+            if parts.count >= 3, parts[0].count == 4, let y = Int(parts[0]), let m = Int(parts[1]), let d = Int(parts[2].prefix(2)) {
+                switch granularity {
+                case .year: return "\(y)"
+                case .month: return String(format: "%04d-%02d", y, m)
+                case .day: return String(format: "%04d-%02d-%02d", y, m, d)
+                case .raw: return token
+                }
+            }
+        }
+
+        // Compact YYYYMMDD
+        if clean.count >= 8 {
+            let digits = String(clean.prefix(8))
+            if digits.allSatisfy({ $0.isNumber }), let y = Int(digits.prefix(4)), y >= 1970 && y <= 2100 {
+                let m = Int(digits.dropFirst(4).prefix(2)) ?? 1
+                let d = Int(digits.dropFirst(6).prefix(2)) ?? 1
+                switch granularity {
+                case .year: return "\(y)"
+                case .month: return String(format: "%04d-%02d", y, m)
+                case .day: return String(format: "%04d-%02d-%02d", y, m, d)
+                case .raw: return token
+                }
+            }
+        }
+
+        // Fallback for YYMMDD (6 digits)
+        let digits = String(clean.prefix { $0.isNumber })
+        if digits.count == 6 {
+            let yy = Int(digits.prefix(2)) ?? 0
+            let mm = Int(digits.dropFirst(2).prefix(2)) ?? 1
+            let dd = Int(digits.dropFirst(4).prefix(2)) ?? 1
+            if mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31 {
+                let fullYear = yy < 70 ? (2000 + yy) : (1900 + yy)
+                switch granularity {
+                case .year: return "\(fullYear)"
+                case .month: return String(format: "%04d-%02d", fullYear, mm)
+                case .day: return String(format: "%04d-%02d-%02d", fullYear, mm, dd)
+                case .raw: return token
+                }
+            }
+        }
+
+        return token
     }
 
     /// Extracts semantic facts from a filename according to the given grammar.
