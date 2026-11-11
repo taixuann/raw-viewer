@@ -520,3 +520,45 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(dayNode?.children.count == 2)
 }
 
+@Test func testHiddenDirectoriesAndFilesExcludedFromTree() {
+    let inventory = SourceInventory(
+        sources: [
+            RawSource(relativePath: "data/raw/normal.csv", url: URL(fileURLWithPath: "/tmp/data/raw/normal.csv"), byteSize: 50),
+            RawSource(relativePath: "data/raw/.intake.log", url: URL(fileURLWithPath: "/tmp/data/raw/.intake.log"), byteSize: 50),
+            RawSource(relativePath: "data/raw/.pytest_cache/cache.json", url: URL(fileURLWithPath: "/tmp/data/raw/.pytest_cache/cache.json"), byteSize: 50),
+            RawSource(relativePath: "data/raw/2026-05/sample.txt", url: URL(fileURLWithPath: "/tmp/data/raw/2026-05/sample.txt"), byteSize: 50),
+        ],
+        directoryPaths: [
+            "data/raw",
+            "data/raw/.pytest_cache",
+            "data/raw/.git",
+            "data/raw/2026-05"
+        ],
+        issues: []
+    )
+
+    let root = makeTempProject("hidden-test")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try! FileManager.default.createDirectory(at: root.appendingPathComponent("data/raw"), withIntermediateDirectories: true)
+    let project = try! ProjectContext.open(root)
+
+    let tree = SourceTree(inventory: inventory, project: project)
+    let flattened = tree.flatten(expandedIDs: ["directory:data/raw", "directory:data/raw/2026-05"])
+
+    // Hidden directories (.pytest_cache, .git) and hidden files (.intake.log) must be excluded
+    #expect(!flattened.contains(where: { $0.node.name.hasPrefix(".") }))
+    #expect(!flattened.contains(where: { $0.node.id.contains(".pytest_cache") }))
+    #expect(!flattened.contains(where: { $0.node.id.contains(".intake.log") }))
+}
+
+@Test func testGrammarFieldVariantKeyAndTokenExtraction() {
+    let fieldMode = GrammarField(name: "mode")
+    #expect(fieldMode.isVariantKey == true)
+
+    let fieldCustom = GrammarField(name: "sample-name", isVariantKey: true)
+    #expect(fieldCustom.isVariantKey == true)
+
+    let tokens = FilenameGrammarEngine.extractTokens(from: "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]")
+    #expect(tokens == ["date", "instrument", "mode", "device-id", "study", "remarks"])
+}
+

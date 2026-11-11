@@ -48,6 +48,8 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
     public var stripBrackets: Bool
     public var isOptional: Bool
     public var isFacet: Bool
+    public var isVariantKey: Bool
+    public var isGroupingLevel: Bool
 
     public init(
         name: String,
@@ -56,7 +58,9 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
         formatHint: String = "",
         stripBrackets: Bool = false,
         isOptional: Bool = false,
-        isFacet: Bool = true
+        isFacet: Bool = true,
+        isVariantKey: Bool = false,
+        isGroupingLevel: Bool = true
     ) {
         self.name = name
         self.role = role
@@ -65,6 +69,8 @@ public struct GrammarField: Sendable, Equatable, Identifiable {
         self.stripBrackets = stripBrackets
         self.isOptional = isOptional
         self.isFacet = isFacet
+        self.isVariantKey = isVariantKey || name == "mode" || name == "application-mode" || name == "variant"
+        self.isGroupingLevel = isGroupingLevel
     }
 }
 
@@ -991,6 +997,75 @@ public enum FilenameGrammarEngine {
         return BuiltinAssets.defaultGrammarCatalog()
     }
 
+    public enum GrammarOrigin: String, Sendable, Equatable {
+        case project = "Project"
+        case global = "Global"
+        case builtin = "Built-in"
+    }
+
+    public static func detectOrigin(project: ProjectContext?) -> GrammarOrigin {
+        guard let project else { return .builtin }
+        let projectFile = project.root.appendingPathComponent(".raw-viewer/grammar.yaml")
+        if FileManager.default.fileExists(atPath: projectFile.path) {
+            return .project
+        }
+        if let settings = try? ProjectSettingsStore.load(projectRoot: project.root), settings.grammar != nil {
+            return .project
+        }
+        let globalDir = GlobalPathResolver.resolveGlobalConfigDirectory()
+        let globalGrammar = globalDir.appendingPathComponent("grammar.yaml")
+        if FileManager.default.fileExists(atPath: globalGrammar.path) {
+            return .global
+        }
+        return .builtin
+    }
+
+    /// Extracts token variable names from a template string (e.g. "{date}_{instrument}" -> ["date", "instrument"])
+    public static func extractTokens(from template: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var inside = false
+        for char in template {
+            if char == "{" {
+                inside = true
+                current = ""
+            } else if char == "}" {
+                if inside && !current.isEmpty && !tokens.contains(current) {
+                    tokens.append(current)
+                }
+                inside = false
+                current = ""
+            } else if inside {
+                current.append(char)
+            }
+        }
+        return tokens
+    }
+
+    public static func saveToProject(catalog: FilenameGrammarCatalog, project: ProjectContext) throws {
+        let text = try serializedYAML(catalog: catalog)
+        let dir = project.root.appendingPathComponent(".raw-viewer")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("grammar.yaml")
+        try text.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    public static func saveAsGlobalDefault(catalog: FilenameGrammarCatalog) throws {
+        let text = try serializedYAML(catalog: catalog)
+        let dir = GlobalPathResolver.resolveGlobalConfigDirectory()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("grammar.yaml")
+        try text.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    public static func resetProjectGrammar(project: ProjectContext) throws {
+        let dir = project.root.appendingPathComponent(".raw-viewer")
+        let file = dir.appendingPathComponent("grammar.yaml")
+        if FileManager.default.fileExists(atPath: file.path) {
+            try FileManager.default.removeItem(at: file)
+        }
+    }
+
     /// Result of a legacy import: the migrated catalog plus human-reviewable
     /// diagnostics describing every guessed or dropped legacy semantic.
     public struct LegacyGrammarImport: Sendable, Equatable {
@@ -1130,7 +1205,9 @@ public enum FilenameGrammarEngine {
                     throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field must be a mapping")
                 }
                 for (key, _) in fEntries {
-                    guard key == "name" || key == "role" || key == "type" || key == "format" || key == "optional" else {
+                    guard key == "name" || key == "role" || key == "type" || key == "format" || key == "optional"
+                       || key == "is_optional" || key == "variant_key" || key == "is_variant_key"
+                       || key == "facet" || key == "is_facet" || key == "grouping_level" || key == "is_grouping_level" else {
                         throw GrammarCatalogError.unexpectedKey(scope: "field in grammar '\(label)'", key: key)
                     }
                 }
@@ -1149,25 +1226,30 @@ public enum FilenameGrammarEngine {
                     throw GrammarCatalogError.unknownType(field: fName, found: fNode.value(for: "type")?.scalarValue)
                 }
                 let fFormat = fNode.value(for: "format")?.scalarValue ?? ""
-                if let optRaw = fNode.value(for: "optional")?.scalarValue?.lowercased() {
-                    guard optRaw == "true" || optRaw == "false" else {
+                let optRaw = fNode.value(for: "optional")?.scalarValue ?? fNode.value(for: "is_optional")?.scalarValue
+                if let opt = optRaw?.lowercased() {
+                    guard opt == "true" || opt == "false" else {
                         throw GrammarCatalogError.invalidGrammar(grammar: label, reason: "field '\(fName)' optional must be true or false")
                     }
-                    fields.append(GrammarField(
-                        name: fName,
-                        role: mappedRole,
-                        type: fType,
-                        formatHint: fFormat,
-                        isOptional: optRaw == "true"
-                    ))
-                } else {
-                    fields.append(GrammarField(
-                        name: fName,
-                        role: mappedRole,
-                        type: fType,
-                        formatHint: fFormat
-                    ))
                 }
+                let isOpt = (optRaw?.lowercased() == "true")
+                let isVarKey = (fNode.value(for: "variant_key")?.scalarValue?.lowercased() == "true")
+                    || (fNode.value(for: "is_variant_key")?.scalarValue?.lowercased() == "true")
+                let isFacet = (fNode.value(for: "is_facet")?.scalarValue?.lowercased() != "false")
+                    && (fNode.value(for: "facet")?.scalarValue?.lowercased() != "false")
+                let isGrouping = (fNode.value(for: "is_grouping_level")?.scalarValue?.lowercased() != "false")
+                    && (fNode.value(for: "grouping_level")?.scalarValue?.lowercased() != "false")
+
+                fields.append(GrammarField(
+                    name: fName,
+                    role: mappedRole,
+                    type: fType,
+                    formatHint: fFormat,
+                    isOptional: isOpt,
+                    isFacet: isFacet,
+                    isVariantKey: isVarKey,
+                    isGroupingLevel: isGrouping
+                ))
             }
         }
         let grammar = FilenameGrammar(
@@ -1256,6 +1338,10 @@ public enum FilenameGrammarEngine {
                         }
                         let fOpt = (optRaw?.lowercased() == "true")
                         let fFacet = (fNode.value(for: "is_facet")?.scalarValue?.lowercased() != "false")
+                        let isVarKey = (fNode.value(for: "variant_key")?.scalarValue?.lowercased() == "true")
+                            || (fNode.value(for: "is_variant_key")?.scalarValue?.lowercased() == "true")
+                        let isGrouping = (fNode.value(for: "is_grouping_level")?.scalarValue?.lowercased() != "false")
+                            && (fNode.value(for: "grouping_level")?.scalarValue?.lowercased() != "false")
                         fields.append(GrammarField(
                             name: fName,
                             role: mappedRole,
@@ -1263,7 +1349,9 @@ public enum FilenameGrammarEngine {
                             formatHint: fHint,
                             stripBrackets: fStrip,
                             isOptional: fOpt,
-                            isFacet: fFacet
+                            isFacet: fFacet,
+                            isVariantKey: isVarKey,
+                            isGroupingLevel: isGrouping
                         ))
                     }
                 }

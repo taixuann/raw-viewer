@@ -11,6 +11,7 @@ struct ProjectSourcesSidebar: View {
     var sourceTree: SourceTree? = nil
     var inventoryIssues: [InventoryIssue] = []
     var dataRoot: String = "data/raw"
+    var projectRoot: URL? = nil
     @Binding var expandedDirectoryIDs: Set<String>
     /// Task 7: settings-driven grammar-variable views. Tree/None stay
     /// structural; every other choice is a qualified (grammar, variable)
@@ -60,6 +61,7 @@ struct ProjectSourcesSidebar: View {
         sourceTree: SourceTree? = nil,
         inventoryIssues: [InventoryIssue] = [],
         dataRoot: String = "data/raw",
+        projectRoot: URL? = nil,
         expandedDirectoryIDs: Binding<Set<String>> = .constant([]),
         facet: Binding<String> = .constant("tree"),
         explorerViews: [ExplorerViewDefinition] = [],
@@ -83,6 +85,7 @@ struct ProjectSourcesSidebar: View {
         self.sourceTree = sourceTree
         self.inventoryIssues = inventoryIssues
         self.dataRoot = dataRoot
+        self.projectRoot = projectRoot
         self._expandedDirectoryIDs = expandedDirectoryIDs
         self._facet = facet
         self.explorerViews = explorerViews
@@ -276,6 +279,18 @@ struct ProjectSourcesSidebar: View {
                 HStack(spacing: 3) {
                     groupingMenu
                     filterMenu
+
+                    Button {
+                        if let root = projectRoot {
+                            let target = root.appendingPathComponent(dataRoot)
+                            NSWorkspace.shared.activateFileViewerSelecting([target])
+                        }
+                    } label: {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Reveal Data Root in Finder")
 
                     Button {
                         showLabelCustomizer = true
@@ -699,6 +714,36 @@ struct ProjectSourcesSidebar: View {
             }
             .buttonStyle(.plain)
             .tag(item.node.id)
+            .contextMenu {
+                if item.node.id.hasPrefix("directory:") {
+                    let relPath = String(item.node.id.dropFirst("directory:".count))
+                    Button {
+                        if let root = projectRoot {
+                            let url = root.appendingPathComponent(relPath)
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    } label: {
+                        Label("Reveal in Finder", systemImage: "folder")
+                    }
+                    Button {
+                        let pb = NSPasteboard.general
+                        pb.clearContents()
+                        pb.setString(relPath, forType: .string)
+                    } label: {
+                        Label("Copy Relative Path", systemImage: "doc.on.doc")
+                    }
+                }
+                Button {
+                    if isExpanded {
+                        expandedDirectoryIDs.remove(item.node.id)
+                    } else {
+                        expandedDirectoryIDs.insert(item.node.id)
+                    }
+                } label: {
+                    Label(isExpanded ? "Collapse" : "Expand",
+                          systemImage: isExpanded ? "chevron.down" : "chevron.right")
+                }
+            }
         } else if let sourceID = item.node.sourceID, let source = sourceIndex[sourceID] {
             HStack(spacing: 0) {
                 if item.depth > 0 {
