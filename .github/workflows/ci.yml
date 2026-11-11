@@ -168,8 +168,18 @@ jobs:
         if: runner.os == 'Linux' && steps.check.outputs.should_run == 'true'
         run: |
           mkdir -p /home/runner/.cache/apt-archives/partial
-          sudo apt-get update
+          if ! getent ahostsv4 azure.archive.ubuntu.com >/dev/null 2>&1; then
+            echo "Fallback: configuring public DNS for apt..."
+            echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" | sudo tee /etc/resolv.conf >/dev/null || true
+            if ! getent ahostsv4 archive.ubuntu.com >/dev/null 2>&1; then
+              echo "https://mirrors.edge.kernel.org/ubuntu" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null || true
+            fi
+          fi
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=15 -o Acquire::Retries=2 update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::Retries=2 \
             -o Dir::Cache::archives=/home/runner/.cache/apt-archives \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
