@@ -2508,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "raw-viewer-cli"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "clap",
  "raw-viewer-core",
@@ -2519,7 +2519,7 @@ dependencies = [
 
 [[package]]
 name = "raw-viewer-core"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "directories",
  "encoding_rs",
