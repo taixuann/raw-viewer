@@ -587,23 +587,12 @@ struct InspectorPane: View {
 
     @ViewBuilder
     private func optionalNumberField(placeholder: String, value: Binding<Double?>) -> some View {
-        TextField(placeholder, text: Binding(
-            get: {
-                guard let v = value.wrappedValue else { return "" }
-                return formatRegionNumber(v)
-            },
-            set: { text in
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    value.wrappedValue = nil
-                } else if let parsed = Double(trimmed), parsed.isFinite {
-                    value.wrappedValue = parsed
-                }
-            }
-        ))
-        .textFieldStyle(.roundedBorder)
-        .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-        .frame(maxWidth: .infinity)
+        BufferedOptionalDoubleField(
+            placeholder: placeholder,
+            value: value,
+            font: AppTypography.tokenCode(uiFontSize: uiFontSize),
+            formatter: formatRegionNumber
+        )
     }
 
     private func formatRegionNumber(_ val: Double) -> String {
@@ -634,13 +623,13 @@ struct InspectorPane: View {
                     .font(AppTypography.badge(uiFontSize: uiFontSize))
                     .foregroundStyle(.secondary)
             }
-            TextField("\(liveCount)", value: Binding(
-                get: { isAuto ? liveCount : count.wrappedValue },
-                set: { newVal in count.wrappedValue = min(max(newVal, 2), 25) }
-            ), format: .number)
-            .textFieldStyle(.roundedBorder)
-            .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-            .multilineTextAlignment(.trailing)
+            BufferedIntField(
+                placeholder: "\(liveCount)",
+                value: isAuto ? liveCount : count.wrappedValue,
+                range: 2...25,
+                font: AppTypography.tokenCode(uiFontSize: uiFontSize),
+                onCommit: { newVal in count.wrappedValue = newVal }
+            )
             .frame(width: 44)
             Stepper("", value: Binding(
                 get: { isAuto ? liveCount : count.wrappedValue },
@@ -658,13 +647,13 @@ struct InspectorPane: View {
                 .font(AppTypography.body(uiFontSize: uiFontSize))
                 .foregroundStyle(.secondary)
             Spacer()
-            TextField("0", value: Binding(
-                get: { count.wrappedValue },
-                set: { newVal in count.wrappedValue = min(max(newVal, 0), 10) }
-            ), format: .number)
-            .textFieldStyle(.roundedBorder)
-            .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-            .multilineTextAlignment(.trailing)
+            BufferedIntField(
+                placeholder: "0",
+                value: count.wrappedValue,
+                range: 0...10,
+                font: AppTypography.tokenCode(uiFontSize: uiFontSize),
+                onCommit: { newVal in count.wrappedValue = newVal }
+            )
             .frame(width: 44)
             Stepper("", value: Binding(
                 get: { count.wrappedValue },
@@ -1269,5 +1258,84 @@ struct InspectorPane: View {
         let order = orderedSelectedIDs.isEmpty ? selectedIDs.sorted() : orderedSelectedIDs
         let index = order.firstIndex(of: id) ?? 0
         return NativeOverlayPalette.color(index)
+    }
+}
+
+private struct BufferedOptionalDoubleField: View {
+    let placeholder: String
+    @Binding var value: Double?
+    let font: Font
+    let formatter: (Double) -> String
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(font)
+            .frame(maxWidth: .infinity)
+            .focused($isFocused)
+            .onAppear { syncFromValue() }
+            .onChange(of: value) { _, _ in
+                if !isFocused { syncFromValue() }
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commit() }
+            }
+            .onSubmit { commit() }
+    }
+
+    private func syncFromValue() {
+        text = value.map(formatter) ?? ""
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            value = nil
+        } else if let parsed = Double(trimmed), parsed.isFinite {
+            value = parsed
+        } else {
+            syncFromValue()
+        }
+    }
+}
+
+private struct BufferedIntField: View {
+    let placeholder: String
+    let value: Int
+    let range: ClosedRange<Int>
+    let font: Font
+    let onCommit: (Int) -> Void
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(font)
+            .multilineTextAlignment(.trailing)
+            .focused($isFocused)
+            .onAppear { text = "\(value)" }
+            .onChange(of: value) { _, newVal in
+                if !isFocused { text = "\(newVal)" }
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commit() }
+            }
+            .onSubmit { commit() }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let parsed = Int(trimmed) {
+            let clamped = min(max(parsed, range.lowerBound), range.upperBound)
+            onCommit(clamped)
+            text = "\(clamped)"
+        } else {
+            text = "\(value)"
+        }
     }
 }
