@@ -189,9 +189,15 @@ public struct AxisFormatter: Sendable {
             guard scaledStep > 0 else { return 0 }
             let exp = floor(log10(scaledStep))
             let base = max(0, Int(-exp))
-            let scaledCheck = scaledStep * pow(10.0, Double(base))
-            let frac = abs(scaledCheck - scaledCheck.rounded())
-            return min(4, frac > 1e-3 ? base + 1 : base)
+            var prec = base
+            while prec < 4 {
+                let scaledCheck = scaledStep * pow(10.0, Double(prec))
+                if abs(scaledCheck - scaledCheck.rounded()) <= 1e-3 {
+                    break
+                }
+                prec += 1
+            }
+            return prec
         }()
 
         var ticks: [Double] = []

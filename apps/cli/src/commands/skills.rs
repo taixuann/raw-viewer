@@ -8,14 +8,16 @@ const SHIPPED_SKILLS: &[&str] = &["setup-rawviewer", "set-grammar", "set-profile
 const EMBEDDED_SETUP_RAWVIEWER: &str =
     include_str!("../../../../.agents/skills/setup-rawviewer/SKILL.md");
 
-fn materialize_embedded_setup_rawviewer(home_path: &Path) -> Option<PathBuf> {
+fn materialize_embedded_setup_rawviewer(home_path: &Path, dry_run: bool) -> Option<PathBuf> {
     let dir = home_path
         .join(".cache")
         .join("raw-viewer")
         .join("skills")
         .join("setup-rawviewer");
-    fs::create_dir_all(&dir).ok()?;
-    fs::write(dir.join("SKILL.md"), EMBEDDED_SETUP_RAWVIEWER).ok()?;
+    if !dry_run {
+        fs::create_dir_all(&dir).ok()?;
+        fs::write(dir.join("SKILL.md"), EMBEDDED_SETUP_RAWVIEWER).ok()?;
+    }
     Some(dir)
 }
 
@@ -72,8 +74,8 @@ pub fn manage_skills(action: &str, dry_run: bool) -> CliResult {
 
     for name in SHIPPED_SKILLS {
         let source_opt = find_skill_source(name).or_else(|| {
-            if *name == "setup-rawviewer" && !dry_run {
-                materialize_embedded_setup_rawviewer(home_path)
+            if *name == "setup-rawviewer" {
+                materialize_embedded_setup_rawviewer(home_path, dry_run)
             } else {
                 None
             }
