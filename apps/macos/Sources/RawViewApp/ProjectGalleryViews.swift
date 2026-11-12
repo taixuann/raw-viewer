@@ -25,9 +25,23 @@ enum NativeOverlayPalette {
         return "Helvetica Neue"
     }()
 
+    static func colors(for palette: ColorPalettePreset) -> [Color] {
+        palette.rgbValues.compactMap { rgb in
+            guard rgb.count >= 3 else { return nil }
+            return Color(.sRGB, red: Double(rgb[0]) / 255, green: Double(rgb[1]) / 255,
+                         blue: Double(rgb[2]) / 255, opacity: 1)
+        }
+    }
+
+    static func color(_ index: Int, palette: ColorPalettePreset) -> Color {
+        let paletteColors = colors(for: palette)
+        guard !paletteColors.isEmpty else { return .blue }
+        return paletteColors[abs(index) % paletteColors.count]
+    }
+
     static func color(_ index: Int) -> Color {
         guard !values.isEmpty else { return .blue }
-        let color = values[index % values.count]
+        let color = values[abs(index) % values.count]
         return Color(.sRGB, red: Double(color[0]) / 255, green: Double(color[1]) / 255,
                     blue: Double(color[2]) / 255, opacity: 1)
     }

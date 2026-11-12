@@ -115,6 +115,8 @@ struct PlotSnapshot: Identifiable, Equatable {
 
 @MainActor
 final class RawViewModel: ObservableObject {
+    @Published var globalPreferences: GlobalPreferences = GlobalPreferences()
+    @Published var selectedPaletteID: String = ColorPalettePreset.classicScientific.rawValue
     @Published var project: ProjectContext?
     @Published var recentProjects: [URL] = []
     @Published var sources: [RawSource] = []
@@ -164,14 +166,14 @@ final class RawViewModel: ObservableObject {
     @Published var loadingPhase = "Idle"
     @Published var inspectionCancelled = false
     var isLazyInspectionEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "isLazyInspectionEnabled") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "isLazyInspectionEnabled") as? Bool ?? globalPreferences.lazyInspectionEnabled }
         set {
             UserDefaults.standard.set(newValue, forKey: "isLazyInspectionEnabled")
             objectWillChange.send()
         }
     }
     var maxComparisonAutoLoad: Int {
-        get { UserDefaults.standard.object(forKey: "maxComparisonAutoLoad") as? Int ?? 15 }
+        get { UserDefaults.standard.object(forKey: "maxComparisonAutoLoad") as? Int ?? globalPreferences.maxComparisonAutoLoad }
         set {
             UserDefaults.standard.set(newValue, forKey: "maxComparisonAutoLoad")
             objectWillChange.send()
@@ -366,7 +368,7 @@ final class RawViewModel: ObservableObject {
     func updateSourceTree() {
         guard let context = project, let inv = inventory else { return }
         if treeGroupingMode == "grammar", let grammar = explorerCatalog?.activeGrammar ?? explorerCatalog?.grammars.first {
-            let granRaw = UserDefaults.standard.string(forKey: "treeDateGranularity") ?? "day"
+            let granRaw = UserDefaults.standard.string(forKey: "treeDateGranularity") ?? globalPreferences.defaultTreeDateGranularity
             let granularity = DateGranularity(rawValue: granRaw) ?? .day
             sourceTree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: treeGroupingFields, dateGranularity: granularity)
         } else {
@@ -638,7 +640,8 @@ final class RawViewModel: ObservableObject {
                 customSeriesColors: customSeriesColors,
                 orderedSourceIDs: orderedSelectedSourceIDs,
                 legendOffset: .constant(.zero),
-                axisConfig: axisConfig
+                axisConfig: axisConfig,
+                palettePreset: ColorPalettePreset.from(id: selectedPaletteID)
             )
             FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize, dpi: snapshotDPI)
         } else if let focused = focusedSourceID, let measurement = effectiveMeasurement(for: focused) {
@@ -664,7 +667,8 @@ final class RawViewModel: ObservableObject {
                 customSeriesLabels: customSeriesLabels,
                 customSeriesColors: customSeriesColors,
                 legendOffset: .constant(.zero),
-                axisConfig: axisConfig
+                axisConfig: axisConfig,
+                palettePreset: ColorPalettePreset.from(id: selectedPaletteID)
             )
             FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize, dpi: snapshotDPI)
         }
@@ -749,7 +753,8 @@ final class RawViewModel: ObservableObject {
                     customSeriesColors: customSeriesColors,
                     orderedSourceIDs: orderedSelectedSourceIDs,
                     legendOffset: .constant(.zero),
-                    axisConfig: axisConfig
+                    axisConfig: axisConfig,
+                    palettePreset: ColorPalettePreset.from(id: selectedPaletteID)
                 )
                 let savedDir = try FigureExporter.exportSnapshotPackage(
                     projectRoot: project.root,
@@ -783,7 +788,8 @@ final class RawViewModel: ObservableObject {
                     customSeriesLabels: customSeriesLabels,
                     customSeriesColors: customSeriesColors,
                     legendOffset: .constant(.zero),
-                    axisConfig: axisConfig
+                    axisConfig: axisConfig,
+                    palettePreset: ColorPalettePreset.from(id: selectedPaletteID)
                 )
                 let savedDir = try FigureExporter.exportSnapshotPackage(
                     projectRoot: project.root,
@@ -965,30 +971,15 @@ final class RawViewModel: ObservableObject {
     }
 
     init() {
+        let prefs = GlobalPreferencesStore.load()
+        globalPreferences = prefs
+        selectedPaletteID = ColorPalettePreset.from(id: prefs.defaultPaletteID).rawValue
         let savedLimit = UserDefaults.standard.object(forKey: "rawView.cacheLimitBytes.v1") as? Int64
-        cacheLimitBytes = savedLimit ?? MeasurementCache.defaultLimitBytes
-        let savedLineWidth = UserDefaults.standard.double(forKey: "defaultLineWidth")
-        if savedLineWidth > 0 {
-            lineWidth = savedLineWidth
+        cacheLimitBytes = savedLimit ?? Int64(prefs.cacheLimitMB) * 1024 * 1024
+        if UserDefaults.standard.object(forKey: "treeDateGranularity") == nil {
+            UserDefaults.standard.set(prefs.defaultTreeDateGranularity, forKey: "treeDateGranularity")
         }
-        let savedMarkerSize = UserDefaults.standard.double(forKey: "defaultMarkerSize")
-        if savedMarkerSize > 0 {
-            markerSize = savedMarkerSize
-        }
-        if let savedStyleRaw = UserDefaults.standard.string(forKey: "defaultRenderStyle"),
-           let savedStyle = PlotRenderStyle(rawValue: savedStyleRaw) {
-            renderStyle = savedStyle
-            markType = savedStyle.markType
-            interpolation = savedStyle.interpolation
-        }
-        if let savedMarkRaw = UserDefaults.standard.string(forKey: "defaultMarkType"),
-           let savedMark = PlotMarkType(rawValue: savedMarkRaw) {
-            markType = savedMark
-        }
-        if let savedInterpRaw = UserDefaults.standard.string(forKey: "defaultInterpolation"),
-           let savedInterp = PlotInterpolation(rawValue: savedInterpRaw) {
-            interpolation = savedInterp
-        }
+        applyGlobalPlotDefaults()
         if let savedRecent = UserDefaults.standard.stringArray(forKey: "rawView.recentProjects.v1") {
             recentProjects = savedRecent.compactMap { URL(fileURLWithPath: $0) }
         }
@@ -998,6 +989,104 @@ final class RawViewModel: ObservableObject {
             openRecentProject(url: argURL)
         } else if let firstRecent = recentProjects.first, FileManager.default.fileExists(atPath: firstRecent.path) {
             openRecentProject(url: firstRecent)
+        }
+    }
+
+    func saveGlobalPreferences(_ prefs: GlobalPreferences) {
+        let clamped = prefs.clamped()
+        globalPreferences = clamped
+        cacheLimitBytes = Int64(clamped.cacheLimitMB) * 1024 * 1024
+        UserDefaults.standard.set(clamped.lazyInspectionEnabled, forKey: "isLazyInspectionEnabled")
+        UserDefaults.standard.set(clamped.maxComparisonAutoLoad, forKey: "maxComparisonAutoLoad")
+        UserDefaults.standard.set(clamped.defaultTreeDateGranularity, forKey: "treeDateGranularity")
+        do {
+            try GlobalPreferencesStore.save(clamped)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func applyGlobalPlotDefaults() {
+        let prefs = globalPreferences
+        selectedPreset = availablePresets.first(where: { $0.id == prefs.defaultPresetID }) ?? .natureSingle
+        selectedPaletteID = ColorPalettePreset.from(id: prefs.defaultPaletteID).rawValue
+        markType = Self.plotMarkType(from: prefs.defaultMarkType)
+        interpolation = Self.plotInterpolation(from: prefs.defaultInterpolation)
+        lineWidth = prefs.defaultLineWidth
+        markerSize = prefs.defaultMarkerSize
+        showLegend = prefs.defaultShowLegend
+        legendScale = prefs.defaultLegendScale
+        axisConfig.xPaddingPercent = prefs.defaultXPaddingPercent
+        axisConfig.yPaddingPercent = prefs.defaultYPaddingPercent
+        axisConfig.xTickCount = prefs.defaultXMajorTicks
+        axisConfig.yTickCount = prefs.defaultYMajorTicks
+        axisConfig.xMinorTicks = prefs.defaultXMinorTicks
+        axisConfig.yMinorTicks = prefs.defaultYMinorTicks
+        axisConfig.showMajorGrid = prefs.defaultShowMajorGrid
+        axisConfig.showMinorGrid = prefs.defaultShowMinorGrid
+        axisConfig.showZeroLine = prefs.defaultShowZeroLine
+        axisConfig.showCursor = prefs.defaultShowCursor
+        snapshotDPI = prefs.defaultSnapshotDPI
+    }
+
+    func saveCurrentPlotAsGlobalDefaults() {
+        var updated = globalPreferences
+        updated.defaultPresetID = selectedPreset.id
+        updated.defaultPaletteID = ColorPalettePreset.from(id: selectedPaletteID).rawValue
+        updated.defaultMarkType = Self.globalMarkTypeString(from: markType)
+        updated.defaultInterpolation = Self.globalInterpolationString(from: interpolation)
+        updated.defaultLineWidth = lineWidth
+        updated.defaultMarkerSize = markerSize
+        updated.defaultShowLegend = showLegend
+        updated.defaultLegendScale = legendScale
+        updated.defaultXPaddingPercent = axisConfig.xPaddingPercent
+        updated.defaultYPaddingPercent = axisConfig.yPaddingPercent
+        updated.defaultXMajorTicks = axisConfig.xTickCount
+        updated.defaultYMajorTicks = axisConfig.yTickCount
+        updated.defaultXMinorTicks = axisConfig.xMinorTicks
+        updated.defaultYMinorTicks = axisConfig.yMinorTicks
+        updated.defaultShowMajorGrid = axisConfig.showMajorGrid
+        updated.defaultShowMinorGrid = axisConfig.showMinorGrid
+        updated.defaultShowZeroLine = axisConfig.showZeroLine
+        updated.defaultShowCursor = axisConfig.showCursor
+        updated.defaultSnapshotDPI = snapshotDPI
+        saveGlobalPreferences(updated)
+    }
+
+    func resetGlobalPreferencesToFactory() {
+        saveGlobalPreferences(GlobalPreferences())
+        applyGlobalPlotDefaults()
+    }
+
+    private static func plotMarkType(from raw: String) -> PlotMarkType {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "dots": return .dots
+        case "both", "lineanddots", "line_and_dots": return .lineAndDots
+        default: return .line
+        }
+    }
+
+    private static func globalMarkTypeString(from mark: PlotMarkType) -> String {
+        switch mark {
+        case .line: return "line"
+        case .dots: return "dots"
+        case .lineAndDots: return "both"
+        }
+    }
+
+    private static func plotInterpolation(from raw: String) -> PlotInterpolation {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "spline": return .spline
+        case "step": return .step
+        default: return .linear
+        }
+    }
+
+    private static func globalInterpolationString(from interp: PlotInterpolation) -> String {
+        switch interp {
+        case .linear: return "linear"
+        case .spline: return "spline"
+        case .step: return "step"
         }
     }
 
@@ -1836,7 +1925,8 @@ struct RawViewShell: View {
                        legendOffset: $model.legendOffset,
                        axisConfig: model.axisConfig,
                        liveMetrics: $model.liveMetrics,
-                       snapshotDPI: model.snapshotDPI)
+                       snapshotDPI: model.snapshotDPI,
+                       palettePreset: ColorPalettePreset.from(id: model.selectedPaletteID))
             .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -2076,6 +2166,7 @@ struct RawViewShell: View {
                              axisConfig: $model.axisConfig,
                              liveMetrics: model.liveMetrics,
                              snapshotDPI: $model.snapshotDPI,
+                             selectedPaletteID: $model.selectedPaletteID,
                              onSelectGenericColumns: { x, y in
                                  if let id = model.focusedSourceID {
                                      model.updateGenericColumnMapping(sourceID: id, xCol: x, yCol: y)

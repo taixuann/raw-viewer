@@ -376,6 +376,7 @@ struct NativePlot: View {
     var customSeriesColors: [String: Color] = [:]
     @Binding var legendOffset: CGSize
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
+    var palettePreset: ColorPalettePreset = .classicScientific
     var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
     @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
@@ -468,7 +469,7 @@ struct NativePlot: View {
                         let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = {
                             if progressionFilterEnabled && !isProgressionContinuous && progSegments.count > 1 {
                                 return progSegments.enumerated().map { segIndex, seg in
-                                    let c = colorByCycle ? NativeOverlayPalette.color(segIndex) : (customColor ?? palette(0))
+                                    let c = colorByCycle ? NativeOverlayPalette.color(segIndex, palette: palettePreset) : (customColor ?? palette(0))
                                     return (c, "Cycle \(seg.name)", markType)
                                 }
                             } else {
@@ -632,7 +633,7 @@ struct NativePlot: View {
                                 let t = Double(segIndex) / Double(max(1, progSegments.count - 1))
                                 return PlotRenderingEngine.sweepColor(at: t)
                             } else {
-                                return NativeOverlayPalette.color(segIndex)
+                                return NativeOverlayPalette.color(segIndex, palette: palettePreset)
                             }
                         } else {
                             return color
@@ -707,7 +708,7 @@ struct NativePlot: View {
         return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
     }
     private func palette(_ index: Int) -> Color {
-        NativeOverlayPalette.color(index)
+        NativeOverlayPalette.color(index, palette: palettePreset)
     }
 }
 
@@ -740,6 +741,7 @@ struct OverlayPlot: View {
     var resetTrigger: Int = 0
     @Binding var legendOffset: CGSize
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
+    var palettePreset: ColorPalettePreset = .classicScientific
     var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
     @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
@@ -843,6 +845,7 @@ struct OverlayPlot: View {
                                    customSeriesColors: customSeriesColors,
                                    legendOffset: $legendOffset,
                                    axisConfig: axisConfig,
+                                   palettePreset: palettePreset,
                                    onMetricsUpdate: onMetricsUpdate)
                     }
                 }
@@ -1108,7 +1111,7 @@ struct OverlayPlot: View {
         return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
     }
     private func palette(_ sourcePath: String, order: [String]) -> Color {
-        NativeOverlayPalette.color(order.firstIndex(of: sourcePath) ?? 0)
+        NativeOverlayPalette.color(order.firstIndex(of: sourcePath) ?? 0, palette: palettePreset)
     }
 }
 
@@ -1258,6 +1261,7 @@ struct ProjectGallery: View {
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
     @Binding var liveMetrics: PlotLiveMetrics
     var snapshotDPI: Int = 300
+    var palettePreset: ColorPalettePreset = .classicScientific
     @State private var plotResetTrigger: Int = 0
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
 
@@ -1635,6 +1639,7 @@ struct ProjectGallery: View {
                                 resetTrigger: plotResetTrigger,
                                 legendOffset: $legendOffset,
                                 axisConfig: axisConfig,
+                                palettePreset: palettePreset,
                                 onMetricsUpdate: { next in
                                     if liveMetrics != next { liveMetrics = next }
                                 })
@@ -1691,6 +1696,7 @@ struct ProjectGallery: View {
                                     resetTrigger: plotResetTrigger,
                                     legendOffset: $legendOffset,
                                     axisConfig: axisConfig,
+                                    palettePreset: palettePreset,
                                     onMetricsUpdate: { next in
                                         if liveMetrics != next { liveMetrics = next }
                                     })
@@ -1736,6 +1742,7 @@ struct ProjectGallery: View {
                                customSeriesColors: customSeriesColors,
                                legendOffset: $legendOffset,
                                axisConfig: axisConfig,
+                               palettePreset: palettePreset,
                                onMetricsUpdate: { next in
                                    if liveMetrics != next { liveMetrics = next }
                                })

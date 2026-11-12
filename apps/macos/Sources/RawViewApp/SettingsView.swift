@@ -27,10 +27,11 @@ struct SettingsView: View {
 
     enum SettingsTab: String, Identifiable, CaseIterable {
         case project
-        case appearance
         case grammar
         case packages
         case profiles
+        case appearance
+        case plotDefaults
         case performance
         case storage
         case hotkeys
@@ -40,10 +41,11 @@ struct SettingsView: View {
         var label: String {
             switch self {
             case .project: return "Project"
-            case .appearance: return "Appearance"
             case .grammar: return "Grammar"
             case .packages: return "Lab Packages"
             case .profiles: return "Profiles"
+            case .appearance: return "Appearance"
+            case .plotDefaults: return "Plot Defaults"
             case .performance: return "Performance"
             case .storage: return "Storage"
             case .hotkeys: return "Hotkeys"
@@ -53,10 +55,11 @@ struct SettingsView: View {
         var icon: String {
             switch self {
             case .project: return "folder"
-            case .appearance: return "paintbrush"
             case .grammar: return "character.textbox"
             case .packages: return "shippingbox"
             case .profiles: return "slider.horizontal.3"
+            case .appearance: return "paintbrush"
+            case .plotDefaults: return "chart.xyaxis.line"
             case .performance: return "bolt.fill"
             case .storage: return "internaldrive"
             case .hotkeys: return "keyboard"
@@ -70,12 +73,16 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 List(selection: $selectedTab) {
-                    Section("General") {
+                    Section("Workspace & Data") {
                         tabRow(.project)
-                        tabRow(.appearance)
                         tabRow(.grammar)
                         tabRow(.packages)
                         tabRow(.profiles)
+                    }
+
+                    Section("Plot & Appearance") {
+                        tabRow(.appearance)
+                        tabRow(.plotDefaults)
                     }
 
                     Section("System") {
@@ -119,6 +126,8 @@ struct SettingsView: View {
             projectTab
         case .appearance:
             appearanceTab
+        case .plotDefaults:
+            plotDefaultsTab
         case .grammar:
             grammarTab
         case .performance:
@@ -269,6 +278,9 @@ struct SettingsView: View {
                         get: { Int(model.cacheLimitBytes / (1024 * 1024)) },
                         set: { newMB in
                             model.cacheLimitBytes = Int64(newMB) * 1024 * 1024
+                            var updated = model.globalPreferences
+                            updated.cacheLimitMB = newMB
+                            model.saveGlobalPreferences(updated)
                         }
                     )) {
                         Text("512 MiB (Default)").tag(512)
@@ -888,8 +900,11 @@ struct SettingsView: View {
                             .labelsHidden()
                             .pickerStyle(.segmented)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .onChange(of: treeDateGranularity) { _, _ in
+                            .onChange(of: treeDateGranularity) { _, newValue in
                                 model.updateSourceTree()
+                                var updated = model.globalPreferences
+                                updated.defaultTreeDateGranularity = newValue
+                                model.saveGlobalPreferences(updated)
                             }
                         }
 
@@ -1198,6 +1213,197 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Plot Defaults Tab
+
+    private func globalPrefBinding<Value>(_ keyPath: WritableKeyPath<GlobalPreferences, Value>) -> Binding<Value> {
+        Binding(
+            get: { model.globalPreferences[keyPath: keyPath] },
+            set: { newValue in
+                var updated = model.globalPreferences
+                updated[keyPath: keyPath] = newValue
+                model.saveGlobalPreferences(updated)
+            }
+        )
+    }
+
+    private var plotDefaultsTab: some View {
+        Form {
+            Section("Plot Style Defaults") {
+                Picker("Default Preset:", selection: globalPrefBinding(\.defaultPresetID)) {
+                    ForEach(ScientificPreset.allCases) { preset in
+                        Text("\(preset.displayName) (\(preset.publisher))").tag(preset.id)
+                    }
+                }
+
+                Picker("Color Palette:", selection: globalPrefBinding(\.defaultPaletteID)) {
+                    ForEach(ColorPalettePreset.allCases) { palette in
+                        Text(palette.displayName).tag(palette.id)
+                    }
+                }
+
+                Picker("Mark Type:", selection: globalPrefBinding(\.defaultMarkType)) {
+                    Text("Line").tag("line")
+                    Text("Dots").tag("dots")
+                    Text("Both").tag("both")
+                }
+                .pickerStyle(.segmented)
+
+                Picker("Interpolation:", selection: globalPrefBinding(\.defaultInterpolation)) {
+                    Text("Linear").tag("linear")
+                    Text("Spline").tag("spline")
+                    Text("Step").tag("step")
+                }
+                .pickerStyle(.segmented)
+
+                HStack {
+                    Text("Line Width:")
+                    Spacer()
+                    Text(String(format: "%.1f pt", model.globalPreferences.defaultLineWidth))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultLineWidth), in: 0.2...10.0, step: 0.1)
+                        .labelsHidden()
+                }
+
+                HStack {
+                    Text("Marker Size:")
+                    Spacer()
+                    Text(String(format: "%.1f pt", model.globalPreferences.defaultMarkerSize))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultMarkerSize), in: 1.0...16.0, step: 0.5)
+                        .labelsHidden()
+                }
+
+                Toggle("Show Legend by Default", isOn: globalPrefBinding(\.defaultShowLegend))
+
+                HStack {
+                    Text("Legend Scale:")
+                    Spacer()
+                    Text(String(format: "%.2fx", model.globalPreferences.defaultLegendScale))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultLegendScale), in: 0.5...2.0, step: 0.05)
+                        .labelsHidden()
+                }
+            }
+
+            Section("Axes & Padding Defaults") {
+                HStack {
+                    Text("X Padding:")
+                    Spacer()
+                    Text(String(format: "%.0f%%", model.globalPreferences.defaultXPaddingPercent))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultXPaddingPercent), in: 0.0...50.0, step: 1.0)
+                        .labelsHidden()
+                }
+
+                HStack {
+                    Text("Y Padding:")
+                    Spacer()
+                    Text(String(format: "%.0f%%", model.globalPreferences.defaultYPaddingPercent))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultYPaddingPercent), in: 0.0...50.0, step: 1.0)
+                        .labelsHidden()
+                }
+
+                HStack {
+                    Text("X Major Ticks (0 = Auto):")
+                    Spacer()
+                    Text(model.globalPreferences.defaultXMajorTicks == 0 ? "Auto" : "\(model.globalPreferences.defaultXMajorTicks)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultXMajorTicks), in: 0...20, step: 1)
+                        .labelsHidden()
+                }
+
+                HStack {
+                    Text("Y Major Ticks (0 = Auto):")
+                    Spacer()
+                    Text(model.globalPreferences.defaultYMajorTicks == 0 ? "Auto" : "\(model.globalPreferences.defaultYMajorTicks)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultYMajorTicks), in: 0...20, step: 1)
+                        .labelsHidden()
+                }
+
+                HStack {
+                    Text("X Minor Ticks:")
+                    Spacer()
+                    Text("\(model.globalPreferences.defaultXMinorTicks)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultXMinorTicks), in: 0...20, step: 1)
+                        .labelsHidden()
+                }
+
+                HStack {
+                    Text("Y Minor Ticks:")
+                    Spacer()
+                    Text("\(model.globalPreferences.defaultYMinorTicks)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: globalPrefBinding(\.defaultYMinorTicks), in: 0...20, step: 1)
+                        .labelsHidden()
+                }
+
+                Toggle("Show Major Grid", isOn: globalPrefBinding(\.defaultShowMajorGrid))
+                Toggle("Show Minor Grid", isOn: globalPrefBinding(\.defaultShowMinorGrid))
+                Toggle("Show Zero Line", isOn: globalPrefBinding(\.defaultShowZeroLine))
+                Toggle("Show Cursor", isOn: globalPrefBinding(\.defaultShowCursor))
+            }
+
+            Section("Export Defaults") {
+                Picker("Snapshot DPI:", selection: globalPrefBinding(\.defaultSnapshotDPI)) {
+                    Text("150 DPI").tag(150)
+                    Text("300 DPI (Default)").tag(300)
+                    Text("600 DPI").tag(600)
+                }
+
+                Picker("Default Export Format:", selection: globalPrefBinding(\.defaultExportFormat)) {
+                    Text("PNG").tag("png")
+                    Text("PDF").tag("pdf")
+                    Text("SVG").tag("svg")
+                }
+                .pickerStyle(.segmented)
+
+                TextField("Snapshot Subdirectory:", text: globalPrefBinding(\.defaultSnapshotSubdir))
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Section {
+                HStack(spacing: 10) {
+                    Button("Apply to Current Plot") {
+                        model.applyGlobalPlotDefaults()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Save Current Plot as Default") {
+                        model.saveCurrentPlotAsGlobalDefaults()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    Button("Reset to Factory") {
+                        model.resetGlobalPreferencesToFactory()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } header: {
+                Text("Actions")
+            } footer: {
+                Text("Saved to \(GlobalPathResolver.globalConfigFile().path)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
     // MARK: - Performance Tab
 
     private var performanceTab: some View {
@@ -1208,6 +1414,11 @@ struct SettingsView: View {
                     Text("Eager (Inspect all files in background)").tag(false)
                 }
                 .pickerStyle(.radioGroup)
+                .onChange(of: isLazyInspectionEnabled) { _, newValue in
+                    var updated = model.globalPreferences
+                    updated.lazyInspectionEnabled = newValue
+                    model.saveGlobalPreferences(updated)
+                }
 
                 Text("Lazy mode instantly opens large folders with thousands of files without background disk thrashing.")
                     .font(.caption)
@@ -1221,6 +1432,11 @@ struct SettingsView: View {
                     Text("15 series (Default)").tag(15)
                     Text("25 series").tag(25)
                     Text("50 series").tag(50)
+                }
+                .onChange(of: maxComparisonAutoLoad) { _, newValue in
+                    var updated = model.globalPreferences
+                    updated.maxComparisonAutoLoad = newValue
+                    model.saveGlobalPreferences(updated)
                 }
 
                 Text("Caps concurrent loading to prevent memory spikes and freezes when selecting large cohorts.")

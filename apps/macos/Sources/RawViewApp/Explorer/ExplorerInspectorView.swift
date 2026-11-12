@@ -89,6 +89,7 @@ struct InspectorPane: View {
     @Binding var axisConfig: PlotAxisConfig
     var liveMetrics: PlotLiveMetrics = PlotLiveMetrics()
     @Binding var snapshotDPI: Int
+    @Binding var selectedPaletteID: String
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
     var eligibleX: [String] = []
     var eligibleY: [String] = []
@@ -102,6 +103,10 @@ struct InspectorPane: View {
 
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @State private var selectedTab: InspectorTab = .data
+
+    private var palettePreset: ColorPalettePreset {
+        ColorPalettePreset.from(id: selectedPaletteID)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -413,6 +418,21 @@ struct InspectorPane: View {
     private var styleTabContent: some View {
         InspectorSection(title: "LINES & MARKS") {
             VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Palette")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("Palette", selection: $selectedPaletteID) {
+                        ForEach(ColorPalettePreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 150)
+                }
+
                 HStack {
                     Text("Mark Type")
                         .font(.system(size: 11))
@@ -1122,6 +1142,7 @@ struct InspectorPane: View {
                 SeriesColorSwatchButton(
                     color: seriesColor(id),
                     hasCustomColor: hasCustomColor,
+                    palettePreset: palettePreset,
                     onSelect: { newColor in
                         customSeriesColors[id] = newColor
                     },
@@ -1298,7 +1319,7 @@ struct InspectorPane: View {
         }
         let order = orderedSelectedIDs.isEmpty ? selectedIDs.sorted() : orderedSelectedIDs
         let index = order.firstIndex(of: id) ?? 0
-        return NativeOverlayPalette.color(index)
+        return NativeOverlayPalette.color(index, palette: palettePreset)
     }
 }
 
@@ -1384,6 +1405,7 @@ private struct BufferedIntField: View {
 private struct SeriesColorSwatchButton: View {
     let color: Color
     let hasCustomColor: Bool
+    var palettePreset: ColorPalettePreset = .classicScientific
     let onSelect: (Color) -> Void
     let onReset: () -> Void
 
@@ -1406,9 +1428,9 @@ private struct SeriesColorSwatchButton: View {
         .help("Pick series color")
         .popover(isPresented: $isPresented) {
             VStack(alignment: .leading, spacing: 10) {
+                let paletteColors = NativeOverlayPalette.colors(for: palettePreset)
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(20), spacing: 6), count: 7), spacing: 6) {
-                    ForEach(Array(NativeOverlayPalette.values.indices), id: \.self) { idx in
-                        let paletteColor = NativeOverlayPalette.color(idx)
+                    ForEach(Array(paletteColors.enumerated()), id: \.offset) { _, paletteColor in
                         Button {
                             onSelect(paletteColor)
                             isPresented = false
