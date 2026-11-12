@@ -4,7 +4,20 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SHIPPED_SKILLS: &[&str] = &["set-grammar", "set-profile"];
+const SHIPPED_SKILLS: &[&str] = &["setup-rawviewer", "set-grammar", "set-profile"];
+const EMBEDDED_SETUP_RAWVIEWER: &str =
+    include_str!("../../../../.agents/skills/setup-rawviewer/SKILL.md");
+
+fn materialize_embedded_setup_rawviewer(home_path: &Path) -> Option<PathBuf> {
+    let dir = home_path
+        .join(".cache")
+        .join("raw-viewer")
+        .join("skills")
+        .join("setup-rawviewer");
+    fs::create_dir_all(&dir).ok()?;
+    fs::write(dir.join("SKILL.md"), EMBEDDED_SETUP_RAWVIEWER).ok()?;
+    Some(dir)
+}
 
 fn find_skill_source(name: &str) -> Option<PathBuf> {
     // 1. Check current directory or ancestors for .agents/skills/<name>
@@ -46,15 +59,25 @@ pub fn manage_skills(action: &str, dry_run: bool) -> CliResult {
         .unwrap_or_else(|_| ".".to_string());
     let home_path = Path::new(&home);
 
-    let target_parents = [
+    let mut target_parents = vec![
         home_path.join(".agents").join("skills"),
         home_path.join(".claude").join("skills"),
     ];
+    let gemini_config = home_path.join(".gemini").join("config");
+    if gemini_config.is_dir() {
+        target_parents.push(gemini_config.join("skills"));
+    }
 
     let mut reports = Vec::new();
 
     for name in SHIPPED_SKILLS {
-        let source_opt = find_skill_source(name);
+        let source_opt = find_skill_source(name).or_else(|| {
+            if *name == "setup-rawviewer" && !dry_run {
+                materialize_embedded_setup_rawviewer(home_path)
+            } else {
+                None
+            }
+        });
 
         for parent in &target_parents {
             let target = parent.join(name);

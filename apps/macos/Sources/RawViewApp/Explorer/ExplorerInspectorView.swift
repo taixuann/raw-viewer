@@ -79,17 +79,15 @@ struct InspectorPane: View {
     @Binding var showLegend: Bool
     @Binding var legendScale: Double
     @Binding var customSeriesLabels: [String: String]
+    @Binding var customSeriesColors: [String: Color]
+    var orderedSelectedIDs: [String] = []
+    var onMoveSeries: ((String, Int) -> Void)? = nil
     @Binding var legendOffset: CGSize
     @Binding var comparisonTitle: String
     var onSaveSnapshot: (() -> Void)? = nil
     var activeSnapshotID: UUID? = nil
-    @Binding var xTickCount: Int
-    @Binding var yTickCount: Int
-    @Binding var minorTicksCount: Int
-    @Binding var showMajorGrid: Bool
-    @Binding var showMinorGrid: Bool
-    @Binding var showZeroLine: Bool
-    @Binding var showCursor: Bool
+    @Binding var axisConfig: PlotAxisConfig
+    var liveMetrics: PlotLiveMetrics = PlotLiveMetrics()
     @Binding var snapshotDPI: Int
     var onSelectGenericColumns: ((Int, Int) -> Void)? = nil
     var eligibleX: [String] = []
@@ -243,8 +241,9 @@ struct InspectorPane: View {
                         .padding(.bottom, 2)
                     }
 
-                    ForEach(selectedIDs.sorted(), id: \.self) { id in
-                        seriesRow(id)
+                    let displayIDs = orderedSelectedIDs.isEmpty ? selectedIDs.sorted() : orderedSelectedIDs
+                    ForEach(Array(displayIDs.enumerated()), id: \.element) { idx, id in
+                        seriesRow(id, index: idx, totalCount: displayIDs.count)
                     }
 
                     if case .blocked(let reason) = overlay {
@@ -492,71 +491,52 @@ struct InspectorPane: View {
     }
 
     private var axesAndTicksSection: some View {
-        InspectorSection(title: "AXES & TICKS") {
+        InspectorSection(title: "REGION, AXES & TICKS") {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("X Major Ticks")
-                        .font(AppTypography.body(uiFontSize: uiFontSize))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("X Ticks", selection: $xTickCount) {
-                        Text("Auto").tag(0)
-                        Text("3").tag(3)
-                        Text("4").tag(4)
-                        Text("5").tag(5)
-                        Text("6").tag(6)
-                        Text("8").tag(8)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 80)
-                }
+                regionRow(
+                    title: "X Region",
+                    liveRange: liveMetrics.xRange,
+                    minVal: $axisConfig.xRegionMin,
+                    maxVal: $axisConfig.xRegionMax
+                )
 
-                HStack {
-                    Text("Y Major Ticks")
-                        .font(AppTypography.body(uiFontSize: uiFontSize))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("Y Ticks", selection: $yTickCount) {
-                        Text("Auto").tag(0)
-                        Text("3").tag(3)
-                        Text("4").tag(4)
-                        Text("5").tag(5)
-                        Text("6").tag(6)
-                        Text("8").tag(8)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 80)
-                }
+                regionRow(
+                    title: "Y Region",
+                    liveRange: liveMetrics.yRange,
+                    minVal: $axisConfig.yRegionMin,
+                    maxVal: $axisConfig.yRegionMax
+                )
 
-                HStack {
-                    Text("Minor Ticks")
-                        .font(AppTypography.body(uiFontSize: uiFontSize))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("Minor Ticks", selection: $minorTicksCount) {
-                        Text("None").tag(0)
-                        Text("1 sub").tag(2)
-                        Text("3 subs").tag(4)
-                        Text("4 subs").tag(5)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 90)
-                }
+                Divider()
 
-                Toggle(isOn: $showMajorGrid) {
+                majorTickRow(
+                    title: "X Major Ticks",
+                    count: $axisConfig.xTickCount,
+                    liveCount: liveMetrics.xTickCount
+                )
+
+                majorTickRow(
+                    title: "Y Major Ticks",
+                    count: $axisConfig.yTickCount,
+                    liveCount: liveMetrics.yTickCount
+                )
+
+                minorTickRow(title: "X Minor Ticks", count: $axisConfig.xMinorTicks)
+                minorTickRow(title: "Y Minor Ticks", count: $axisConfig.yMinorTicks)
+
+                Divider()
+
+                Toggle(isOn: $axisConfig.showMajorGrid) {
                     Text("Major Gridlines")
                         .font(AppTypography.body(uiFontSize: uiFontSize))
                 }
 
-                Toggle(isOn: $showMinorGrid) {
+                Toggle(isOn: $axisConfig.showMinorGrid) {
                     Text("Minor Gridlines")
                         .font(AppTypography.body(uiFontSize: uiFontSize))
                 }
 
-                Toggle(isOn: $showZeroLine) {
+                Toggle(isOn: $axisConfig.showZeroLine) {
                     Text("Zero Reference Lines (y = 0 / x = 0)")
                         .font(AppTypography.body(uiFontSize: uiFontSize))
                 }
@@ -564,10 +544,141 @@ struct InspectorPane: View {
         }
     }
 
+    @ViewBuilder
+    private func regionRow(
+        title: String,
+        liveRange: ClosedRange<Double>?,
+        minVal: Binding<Double?>,
+        maxVal: Binding<Double?>
+    ) -> some View {
+        let isCustom = minVal.wrappedValue != nil || maxVal.wrappedValue != nil
+        let autoMinStr = liveRange.map { formatRegionNumber($0.lowerBound) } ?? "Auto"
+        let autoMaxStr = liveRange.map { formatRegionNumber($0.upperBound) } ?? "Auto"
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(AppTypography.body(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isCustom {
+                    Button("Auto") {
+                        minVal.wrappedValue = nil
+                        maxVal.wrappedValue = nil
+                    }
+                    .font(AppTypography.badge(uiFontSize: uiFontSize))
+                    .buttonStyle(.borderless)
+                } else {
+                    Text("Auto")
+                        .font(AppTypography.badge(uiFontSize: uiFontSize))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 6) {
+                optionalNumberField(placeholder: autoMinStr, value: minVal)
+                Text("to")
+                    .font(AppTypography.helperText(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary)
+                optionalNumberField(placeholder: autoMaxStr, value: maxVal)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func optionalNumberField(placeholder: String, value: Binding<Double?>) -> some View {
+        TextField(placeholder, text: Binding(
+            get: {
+                guard let v = value.wrappedValue else { return "" }
+                return formatRegionNumber(v)
+            },
+            set: { text in
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    value.wrappedValue = nil
+                } else if let parsed = Double(trimmed), parsed.isFinite {
+                    value.wrappedValue = parsed
+                }
+            }
+        ))
+        .textFieldStyle(.roundedBorder)
+        .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+        .frame(maxWidth: .infinity)
+    }
+
+    private func formatRegionNumber(_ val: Double) -> String {
+        if val == 0 { return "0" }
+        let absVal = abs(val)
+        if absVal >= 1000 || absVal < 0.001 {
+            return String(format: "%.3g", val)
+        }
+        return String(format: "%.4g", val)
+    }
+
+    @ViewBuilder
+    private func majorTickRow(title: String, count: Binding<Int>, liveCount: Int) -> some View {
+        let isAuto = count.wrappedValue < 2
+        HStack(spacing: 6) {
+            Text(title)
+                .font(AppTypography.body(uiFontSize: uiFontSize))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if !isAuto {
+                Button("Auto") {
+                    count.wrappedValue = 0
+                }
+                .font(AppTypography.badge(uiFontSize: uiFontSize))
+                .buttonStyle(.borderless)
+            } else {
+                Text("Auto (\(liveCount))")
+                    .font(AppTypography.badge(uiFontSize: uiFontSize))
+                    .foregroundStyle(.secondary)
+            }
+            TextField("\(liveCount)", value: Binding(
+                get: { isAuto ? liveCount : count.wrappedValue },
+                set: { newVal in count.wrappedValue = min(max(newVal, 2), 25) }
+            ), format: .number)
+            .textFieldStyle(.roundedBorder)
+            .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+            .multilineTextAlignment(.trailing)
+            .frame(width: 44)
+            Stepper("", value: Binding(
+                get: { isAuto ? liveCount : count.wrappedValue },
+                set: { newVal in count.wrappedValue = min(max(newVal, 2), 25) }
+            ), in: 2...25)
+            .labelsHidden()
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private func minorTickRow(title: String, count: Binding<Int>) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(AppTypography.body(uiFontSize: uiFontSize))
+                .foregroundStyle(.secondary)
+            Spacer()
+            TextField("0", value: Binding(
+                get: { count.wrappedValue },
+                set: { newVal in count.wrappedValue = min(max(newVal, 0), 10) }
+            ), format: .number)
+            .textFieldStyle(.roundedBorder)
+            .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+            .multilineTextAlignment(.trailing)
+            .frame(width: 44)
+            Stepper("", value: Binding(
+                get: { count.wrappedValue },
+                set: { newVal in count.wrappedValue = min(max(newVal, 0), 10) }
+            ), in: 0...10)
+            .labelsHidden()
+            .controlSize(.small)
+        }
+    }
+
     private var interactionSection: some View {
         InspectorSection(title: "INTERACTION") {
             VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: $showCursor) {
+                Toggle(isOn: $axisConfig.showCursor) {
                     HStack(spacing: 4) {
                         Image(systemName: "cross.fill")
                             .font(.system(size: 10))
@@ -966,11 +1077,12 @@ struct InspectorPane: View {
         }.map(\.name)
     }
 
-    private func seriesRow(_ id: String) -> some View {
+    private func seriesRow(_ id: String, index: Int = 0, totalCount: Int = 1) -> some View {
         let isHidden = hidden.contains(id)
         let isFocused = focusedID == id
         let state = states[id]
         let filename = URL(fileURLWithPath: id).lastPathComponent
+        let hasCustomColor = customSeriesColors[id] != nil
         let exclusionReason: String? = {
             if case .partial(let group) = overlay {
                 return group.excluded.first(where: { $0.path == id })?.reason
@@ -979,27 +1091,60 @@ struct InspectorPane: View {
         }()
 
         return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Circle().fill(seriesColor(id)).frame(width: 9, height: 9).accessibilityHidden(true)
+            HStack(spacing: 6) {
+                ColorPicker("", selection: Binding(
+                    get: { seriesColor(id) },
+                    set: { newColor in customSeriesColors[id] = newColor }
+                ), supportsOpacity: false)
+                .labelsHidden()
+                .frame(width: 20, height: 18)
+                .help("Pick series color")
 
-                TextField(filename, text: Binding(
+                TextField("Legend label…", text: Binding(
                     get: { customSeriesLabels[id] ?? "" },
                     set: { customSeriesLabels[id] = $0 }
                 ))
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11))
-                .help("Custom legend label (leave empty to use default filename)")
+                .help("Custom legend label (leave empty to use filename)")
 
-                if customSeriesLabels[id]?.isEmpty == false {
+                if customSeriesLabels[id]?.isEmpty == false || hasCustomColor {
                     Button {
                         customSeriesLabels.removeValue(forKey: id)
+                        customSeriesColors.removeValue(forKey: id)
                     } label: {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Reset to original filename")
+                    .help("Reset label and color to defaults")
+                }
+
+                if totalCount >= 2 {
+                    HStack(spacing: 2) {
+                        Button {
+                            onMoveSeries?(id, -1)
+                        } label: {
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(index == 0)
+                        .foregroundStyle(index == 0 ? Color.secondary.opacity(0.35) : Color.secondary)
+                        .help("Move series up")
+
+                        Button {
+                            onMoveSeries?(id, 1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(index >= totalCount - 1)
+                        .foregroundStyle(index >= totalCount - 1 ? Color.secondary.opacity(0.35) : Color.secondary)
+                        .help("Move series down")
+                    }
                 }
 
                 if !isFocused {
@@ -1031,27 +1176,36 @@ struct InspectorPane: View {
                 }
             }
 
-            if isFocused {
-                Text("Focused source")
-                    .font(.system(size: 9.5))
+            HStack(spacing: 6) {
+                Text(filename)
+                    .font(AppTypography.tokenCode(uiFontSize: max(10, uiFontSize - 1)))
                     .foregroundStyle(.secondary)
-                    .padding(.leading, 17)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(id)
+
+                if isFocused {
+                    Text("• Focused")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                }
             }
+            .padding(.leading, 26)
             if let error = state?.error {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(.red)
-                    .padding(.leading, 17)
+                    .padding(.leading, 26)
             } else if state?.isLoading == true {
                 Text("Loading…")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .padding(.leading, 17)
+                    .padding(.leading, 26)
             } else if let exclusionReason {
                 Text("Excluded: \(exclusionReason)")
                     .font(.caption2)
                     .foregroundStyle(.orange)
-                    .padding(.leading, 17)
+                    .padding(.leading, 26)
             }
         }
         .padding(.vertical, 2)
@@ -1109,7 +1263,10 @@ struct InspectorPane: View {
     }
 
     private func seriesColor(_ id: String) -> Color {
-        let order = selectedIDs.sorted()
+        if let custom = customSeriesColors[id] {
+            return custom
+        }
+        let order = orderedSelectedIDs.isEmpty ? selectedIDs.sorted() : orderedSelectedIDs
         let index = order.firstIndex(of: id) ?? 0
         return NativeOverlayPalette.color(index)
     }

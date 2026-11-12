@@ -126,7 +126,7 @@ public struct AppTokenPill: View {
     }
 
     public var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             if isOptional {
                 Text("[")
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
@@ -135,12 +135,15 @@ public struct AppTokenPill: View {
             Text("{\(name)}")
                 .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                 .foregroundStyle(isHighlighted ? Color.white : tokenColor)
+                .lineLimit(1)
             if isOptional {
                 Text("]")
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                     .foregroundStyle(.secondary.opacity(0.8))
             }
         }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: true)
         .padding(.horizontal, 6)
         .padding(.vertical, 2.5)
         .background(
@@ -151,6 +154,59 @@ public struct AppTokenPill: View {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(isHighlighted ? Color.accentColor : tokenColor.opacity(0.3), lineWidth: 0.8)
         )
+    }
+}
+
+// MARK: - AppFlowLayout
+
+/// Wrapping horizontal layout that keeps child badges intact instead of crushing or mid-word wrapping.
+public struct AppFlowLayout: Layout {
+    public var horizontalSpacing: CGFloat = 6
+    public var verticalSpacing: CGFloat = 6
+
+    public init(horizontalSpacing: CGFloat = 6, verticalSpacing: CGFloat = 6) {
+        self.horizontalSpacing = horizontalSpacing
+        self.verticalSpacing = verticalSpacing
+    }
+
+    public func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > maxWidth {
+                totalWidth = max(totalWidth, x - horizontalSpacing)
+                x = 0
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalWidth = max(totalWidth, max(0, x - horizontalSpacing))
+        return CGSize(width: proposal.width ?? totalWidth, height: y + rowHeight)
+    }
+
+    public func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + horizontalSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 

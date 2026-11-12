@@ -2,6 +2,230 @@ import AppKit
 import SwiftUI
 import RawViewCore
 
+struct PlotAxisConfig: Equatable {
+    var xTickCount: Int = 0
+    var yTickCount: Int = 0
+    var xMinorTicks: Int = 0
+    var yMinorTicks: Int = 0
+    var showMajorGrid: Bool = false
+    var showMinorGrid: Bool = false
+    var showZeroLine: Bool = false
+    var showCursor: Bool = false
+    var xRegionMin: Double? = nil
+    var xRegionMax: Double? = nil
+    var yRegionMin: Double? = nil
+    var yRegionMax: Double? = nil
+}
+
+struct PlotLiveMetrics: Equatable {
+    var xRange: ClosedRange<Double>? = nil
+    var yRange: ClosedRange<Double>? = nil
+    var xTickCount: Int = 5
+    var yTickCount: Int = 5
+}
+
+enum PlotAxisDrawHelper {
+    static func resolvedRange(autoRange: ClosedRange<Double>, minOverride: Double?, maxOverride: Double?) -> ClosedRange<Double> {
+        let lo = minOverride ?? autoRange.lowerBound
+        let hi = maxOverride ?? autoRange.upperBound
+        if lo.isFinite && hi.isFinite && lo < hi {
+            return lo...hi
+        }
+        return autoRange
+    }
+
+    static func effectiveMinorSubdivisions(minorCount: Int, showMinorGrid: Bool) -> Int {
+        if minorCount > 0 { return minorCount + 1 }
+        return showMinorGrid ? 5 : 0
+    }
+
+    static func drawGridTicksAndCursor(
+        context: inout GraphicsContext,
+        plot: CGRect,
+        xRange: ClosedRange<Double>,
+        yRange: ClosedRange<Double>,
+        xNice: AxisFormatter.NiceTicksResult,
+        yNice: AxisFormatter.NiceTicksResult,
+        xScaleInfo: AxisFormatter.ScaleInfo,
+        yScaleInfo: AxisFormatter.ScaleInfo,
+        xScale: AxisScale,
+        yScale: AxisScale,
+        xTitle: String,
+        yTitle: String,
+        axisConfig: PlotAxisConfig,
+        preset: ScientificPreset,
+        fontScale: CGFloat,
+        maxLabelWidth: CGFloat,
+        yLabels: [String],
+        hoverLocation: CGPoint?,
+        formatLabel: (Double, AxisScale, AxisFormatter.ScaleInfo, Int?) -> String
+    ) {
+        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
+        let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
+        let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
+        let xSpan = xRange.upperBound - xRange.lowerBound
+        let ySpan = yRange.upperBound - yRange.lowerBound
+        let plotFont = { (size: CGFloat, bold: Bool) in
+            PlotRenderingEngine.plotFont(preset: preset, size: size, bold: bold)
+        }
+
+        if axisConfig.showZeroLine {
+            if yRange.lowerBound <= 0 && yRange.upperBound >= 0, ySpan > 0 {
+                let zeroT = (0.0 - yRange.lowerBound) / ySpan
+                let zeroY = plot.maxY - CGFloat(zeroT) * plot.height
+                var zeroH = Path()
+                zeroH.move(to: CGPoint(x: plot.minX, y: zeroY))
+                zeroH.addLine(to: CGPoint(x: plot.maxX, y: zeroY))
+                context.stroke(zeroH, with: .color(.secondary.opacity(0.45)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
+            }
+            if xRange.lowerBound <= 0 && xRange.upperBound >= 0, xSpan > 0 {
+                let zeroT = (0.0 - xRange.lowerBound) / xSpan
+                let zeroX = plot.minX + CGFloat(zeroT) * plot.width
+                var zeroV = Path()
+                zeroV.move(to: CGPoint(x: zeroX, y: plot.minY))
+                zeroV.addLine(to: CGPoint(x: zeroX, y: plot.maxY))
+                context.stroke(zeroV, with: .color(.secondary.opacity(0.45)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
+            }
+        }
+
+        if axisConfig.showMajorGrid {
+            for val in xNice.tickValues where xSpan > 0 {
+                let t = (val - xRange.lowerBound) / xSpan
+                guard t >= 0.001 && t <= 0.999 else { continue }
+                let px = plot.minX + CGFloat(t) * plot.width
+                var gridLine = Path()
+                gridLine.move(to: CGPoint(x: px, y: plot.minY))
+                gridLine.addLine(to: CGPoint(x: px, y: plot.maxY))
+                context.stroke(gridLine, with: .color(.secondary.opacity(0.26)), style: StrokeStyle(lineWidth: 0.85, dash: [2, 3]))
+            }
+            for val in yNice.tickValues where ySpan > 0 {
+                let t = (val - yRange.lowerBound) / ySpan
+                guard t >= 0.001 && t <= 0.999 else { continue }
+                let py = plot.maxY - CGFloat(t) * plot.height
+                var gridLine = Path()
+                gridLine.move(to: CGPoint(x: plot.minX, y: py))
+                gridLine.addLine(to: CGPoint(x: plot.maxX, y: py))
+                context.stroke(gridLine, with: .color(.secondary.opacity(0.26)), style: StrokeStyle(lineWidth: 0.85, dash: [2, 3]))
+            }
+        }
+
+        let xSub = effectiveMinorSubdivisions(minorCount: axisConfig.xMinorTicks, showMinorGrid: axisConfig.showMinorGrid)
+        if xSub > 1 && xSpan > 0 {
+            let xMinors = AxisFormatter.minorTicks(
+                majorTicks: xNice.tickValues,
+                step: xNice.step,
+                subdivisions: xSub,
+                lower: xRange.lowerBound,
+                upper: xRange.upperBound
+            )
+            for val in xMinors {
+                let t = (val - xRange.lowerBound) / xSpan
+                guard t >= -0.001 && t <= 1.001 else { continue }
+                let px = plot.minX + CGFloat(t) * plot.width
+                if axisConfig.xMinorTicks > 0 {
+                    var minorTick = Path()
+                    minorTick.move(to: CGPoint(x: px, y: plot.maxY))
+                    minorTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen * 0.55))
+                    context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
+                }
+                if axisConfig.showMinorGrid && t >= 0.001 && t <= 0.999 {
+                    var mGrid = Path()
+                    mGrid.move(to: CGPoint(x: px, y: plot.minY))
+                    mGrid.addLine(to: CGPoint(x: px, y: plot.maxY))
+                    context.stroke(mGrid, with: .color(.secondary.opacity(0.16)), style: StrokeStyle(lineWidth: 0.6, dash: [1, 2]))
+                }
+            }
+        }
+
+        let ySub = effectiveMinorSubdivisions(minorCount: axisConfig.yMinorTicks, showMinorGrid: axisConfig.showMinorGrid)
+        if ySub > 1 && ySpan > 0 {
+            let yMinors = AxisFormatter.minorTicks(
+                majorTicks: yNice.tickValues,
+                step: yNice.step,
+                subdivisions: ySub,
+                lower: yRange.lowerBound,
+                upper: yRange.upperBound
+            )
+            for val in yMinors {
+                let t = (val - yRange.lowerBound) / ySpan
+                guard t >= -0.001 && t <= 1.001 else { continue }
+                let py = plot.maxY - CGFloat(t) * plot.height
+                if axisConfig.yMinorTicks > 0 {
+                    var minorTick = Path()
+                    minorTick.move(to: CGPoint(x: plot.minX, y: py))
+                    minorTick.addLine(to: CGPoint(x: plot.minX - tickLen * 0.55, y: py))
+                    context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
+                }
+                if axisConfig.showMinorGrid && t >= 0.001 && t <= 0.999 {
+                    var mGrid = Path()
+                    mGrid.move(to: CGPoint(x: plot.minX, y: py))
+                    mGrid.addLine(to: CGPoint(x: plot.maxX, y: py))
+                    context.stroke(mGrid, with: .color(.secondary.opacity(0.16)), style: StrokeStyle(lineWidth: 0.6, dash: [1, 2]))
+                }
+            }
+        }
+
+        for val in xNice.tickValues where xSpan > 0 {
+            let t = (val - xRange.lowerBound) / xSpan
+            guard t >= -0.001 && t <= 1.001 else { continue }
+            let px = plot.minX + CGFloat(t) * plot.width
+            var xTick = Path()
+            xTick.move(to: CGPoint(x: px, y: plot.maxY))
+            xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
+            context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
+            let label = formatLabel(val, xScale, xScaleInfo, xNice.precision)
+            context.draw(Text(label).font(plotFont(tickLabelSize, false)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
+        }
+
+        for (idx, val) in yNice.tickValues.enumerated() where ySpan > 0 {
+            let t = (val - yRange.lowerBound) / ySpan
+            guard t >= -0.001 && t <= 1.001 else { continue }
+            let py = plot.maxY - CGFloat(t) * plot.height
+            var yTick = Path()
+            yTick.move(to: CGPoint(x: plot.minX, y: py))
+            yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
+            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
+            let label = idx < yLabels.count ? yLabels[idx] : formatLabel(val, yScale, yScaleInfo, yNice.precision)
+            context.draw(Text(label).font(plotFont(tickLabelSize, false)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
+        }
+
+        let axisLabelSize = PlotRenderingEngine.axisLabelFontSize(preset: preset, fontScale: fontScale)
+        context.draw(Text(xTitle).font(plotFont(axisLabelSize, false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + tickLabelSize + 6.0), anchor: .top)
+        let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
+        var yLabelContext = context
+        yLabelContext.translateBy(x: yTitleX, y: plot.midY)
+        yLabelContext.rotate(by: .degrees(-90))
+        yLabelContext.draw(Text(yTitle).font(plotFont(axisLabelSize, false)), at: .zero, anchor: .center)
+
+        if axisConfig.showCursor, let loc = hoverLocation, plot.contains(loc), xSpan > 0, ySpan > 0 {
+            var hLine = Path()
+            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
+            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
+            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+            var vLine = Path()
+            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
+            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
+            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+
+            let tX = Double((loc.x - plot.minX) / plot.width)
+            let tY = Double((plot.maxY - loc.y) / plot.height)
+            let dataX = xRange.lowerBound + tX * xSpan
+            let dataY = yRange.lowerBound + tY * ySpan
+
+            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
+            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
+            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
+            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
+            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+
+            let tooltipFont = plotFont(max(9.5, 10.5 * fontScale), true)
+            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
+            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
+        }
+    }
+}
+
 struct DraggableLegendView: View {
     let items: [(color: Color, label: String, markType: PlotMarkType)]
     var fontSize: CGFloat = 10.0
@@ -98,19 +322,13 @@ struct NativePlot: View {
     var showLegend: Bool = true
     var legendScale: Double = 1.0
     var customSeriesLabels: [String: String] = [:]
+    var customSeriesColors: [String: Color] = [:]
     @Binding var legendOffset: CGSize
-    var xTickCount: Int = 0
-    var yTickCount: Int = 0
-    var minorTicksCount: Int = 0
-    var showMajorGrid: Bool = false
-    var showMinorGrid: Bool = false
-    var showZeroLine: Bool = false
-    var showCursor: Bool = false
+    var axisConfig: PlotAxisConfig = PlotAxisConfig()
+    var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
     @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
-    @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
-    @State private var dragStart = CGSize.zero
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
@@ -171,7 +389,7 @@ struct NativePlot: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .onContinuousHover { phase in
-                        if showCursor {
+                        if axisConfig.showCursor {
                             switch phase {
                             case .active(let loc): hoverLocation = loc
                             case .ended: hoverLocation = nil
@@ -180,8 +398,6 @@ struct NativePlot: View {
                             hoverLocation = nil
                         }
                     }
-                    .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
-                    .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
 
                 if isProgressionContinuous && colorBySweepProgress {
                     SweepColorbarView()
@@ -197,17 +413,19 @@ struct NativePlot: View {
                     let isMultiSeries = data.1.count > 1
 
                     if isMultiSeries || hasCustomLabel || hasProgressionSegmentation {
+                        let customColor = customSeriesColors[measurement.source.path]
                         let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = {
                             if progressionFilterEnabled && !isProgressionContinuous && progSegments.count > 1 {
                                 return progSegments.enumerated().map { segIndex, seg in
-                                    let c = colorByCycle ? NativeOverlayPalette.color(segIndex) : palette(0)
+                                    let c = colorByCycle ? NativeOverlayPalette.color(segIndex) : (customColor ?? palette(0))
                                     return (c, "Cycle \(seg.name)", markType)
                                 }
                             } else {
                                 return data.1.enumerated().map { index, item in
                                     let custom = customSeriesLabels[item.0]?.trimmingCharacters(in: .whitespacesAndNewlines)
                                     let name = (custom != nil && !custom!.isEmpty) ? custom! : item.0
-                                    return (palette(index), name, markType)
+                                    let c = (index == 0 ? customColor : nil) ?? palette(index)
+                                    return (c, name, markType)
                                 }
                             }
                         }()
@@ -226,7 +444,7 @@ struct NativePlot: View {
                 }
             }
             .onChange(of: resetTrigger) { _, _ in
-                zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
+                zoom = 1; pan = .zero
             }
         }
     }
@@ -242,9 +460,12 @@ struct NativePlot: View {
         let xScaleInfo = AxisFormatter.scaleInfo(for: finiteX, baseUnit: xChannel?.unit ?? "")
         let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
 
-        let yRangeTemp = viewport(expanded(finiteY), pan: pan.height, dimension: size.height, vertical: true)
-        let yTicksTarget = yTickCount > 0 ? yTickCount : 5
-        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: yTicksTarget)
+        let autoXRange = expanded(finiteX)
+        let autoYRange = expanded(finiteY)
+        let xRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoXRange, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
+        let yRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoYRange, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+
+        let yNice = AxisFormatter.ticks(lower: yRange.lowerBound, upper: yRange.upperBound, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
         let yLabels: [String] = yNice.tickValues.map { val in
             axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
@@ -273,143 +494,49 @@ struct NativePlot: View {
 
         PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
-        let xRange = viewport(expanded(finiteX), pan: pan.width, dimension: plot.width, vertical: false)
-        let yRange = viewport(expanded(finiteY), pan: pan.height, dimension: plot.height, vertical: true)
-        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
-        let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
-        let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
-        let xSpan = xRange.upperBound - xRange.lowerBound
-        let ySpan = yRange.upperBound - yRange.lowerBound
+        let xNice = AxisFormatter.ticks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
 
-        let xTicksTarget = xTickCount > 0 ? xTickCount : 5
-        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: xTicksTarget)
-
-        // Zero Reference Lines (x = 0 / y = 0)
-        if showZeroLine {
-            if yRange.lowerBound <= 0 && yRange.upperBound >= 0, ySpan > 0 {
-                let zeroT = (0.0 - yRange.lowerBound) / ySpan
-                let zeroY = plot.maxY - CGFloat(zeroT) * plot.height
-                var zeroH = Path()
-                zeroH.move(to: CGPoint(x: plot.minX, y: zeroY))
-                zeroH.addLine(to: CGPoint(x: plot.maxX, y: zeroY))
-                context.stroke(zeroH, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
-            }
-            if xRange.lowerBound <= 0 && xRange.upperBound >= 0, xSpan > 0 {
-                let zeroT = (0.0 - xRange.lowerBound) / xSpan
-                let zeroX = plot.minX + CGFloat(zeroT) * plot.width
-                var zeroV = Path()
-                zeroV.move(to: CGPoint(x: zeroX, y: plot.minY))
-                zeroV.addLine(to: CGPoint(x: zeroX, y: plot.maxY))
-                context.stroke(zeroV, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
-            }
+        if let onMetricsUpdate {
+            let latest = PlotLiveMetrics(
+                xRange: xRange,
+                yRange: yRange,
+                xTickCount: xNice.tickValues.count,
+                yTickCount: yNice.tickValues.count
+            )
+            DispatchQueue.main.async { onMetricsUpdate(latest) }
         }
 
-        // Major Gridlines
-        if showMajorGrid {
-            for val in xNice.tickValues {
-                guard xSpan > 0 else { continue }
-                let t = (val - xRange.lowerBound) / xSpan
-                guard t >= 0.001 && t <= 0.999 else { continue }
-                let px = plot.minX + CGFloat(t) * plot.width
-                var gridLine = Path()
-                gridLine.move(to: CGPoint(x: px, y: plot.minY))
-                gridLine.addLine(to: CGPoint(x: px, y: plot.maxY))
-                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
-            }
-            for val in yNice.tickValues {
-                guard ySpan > 0 else { continue }
-                let t = (val - yRange.lowerBound) / ySpan
-                guard t >= 0.001 && t <= 0.999 else { continue }
-                let py = plot.maxY - CGFloat(t) * plot.height
-                var gridLine = Path()
-                gridLine.move(to: CGPoint(x: plot.minX, y: py))
-                gridLine.addLine(to: CGPoint(x: plot.maxX, y: py))
-                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
-            }
-        }
-
-        // Minor Ticks & Minor Gridlines
-        if minorTicksCount > 1 {
-            let xMinors = AxisFormatter.minorTicks(majorTicks: xNice.tickValues, step: xNice.step, subdivisions: minorTicksCount)
-            for val in xMinors {
-                guard xSpan > 0 else { continue }
-                let t = (val - xRange.lowerBound) / xSpan
-                guard t >= -0.001 && t <= 1.001 else { continue }
-                let px = plot.minX + CGFloat(t) * plot.width
-                var minorTick = Path()
-                minorTick.move(to: CGPoint(x: px, y: plot.maxY))
-                minorTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen * 0.55))
-                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
-
-                if showMinorGrid && t >= 0.001 && t <= 0.999 {
-                    var mGrid = Path()
-                    mGrid.move(to: CGPoint(x: px, y: plot.minY))
-                    mGrid.addLine(to: CGPoint(x: px, y: plot.maxY))
-                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
-                }
-            }
-
-            let yMinors = AxisFormatter.minorTicks(majorTicks: yNice.tickValues, step: yNice.step, subdivisions: minorTicksCount)
-            for val in yMinors {
-                guard ySpan > 0 else { continue }
-                let t = (val - yRange.lowerBound) / ySpan
-                guard t >= -0.001 && t <= 1.001 else { continue }
-                let py = plot.maxY - CGFloat(t) * plot.height
-                var minorTick = Path()
-                minorTick.move(to: CGPoint(x: plot.minX, y: py))
-                minorTick.addLine(to: CGPoint(x: plot.minX - tickLen * 0.55, y: py))
-                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
-
-                if showMinorGrid && t >= 0.001 && t <= 0.999 {
-                    var mGrid = Path()
-                    mGrid.move(to: CGPoint(x: plot.minX, y: py))
-                    mGrid.addLine(to: CGPoint(x: plot.maxX, y: py))
-                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
-                }
-            }
-        }
-
-        for val in xNice.tickValues {
-            guard xSpan > 0 else { continue }
-            let t = (val - xRange.lowerBound) / xSpan
-            guard t >= -0.001 && t <= 1.001 else { continue }
-            let px = plot.minX + CGFloat(t) * plot.width
-            var xTick = Path()
-            xTick.move(to: CGPoint(x: px, y: plot.maxY))
-            xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
-            context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
-            let label = axisLabel(val, scale: xScale, scaleInfo: xScaleInfo, precision: xNice.precision)
-            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-        }
-
-        for (idx, val) in yNice.tickValues.enumerated() {
-            guard ySpan > 0 else { continue }
-            let t = (val - yRange.lowerBound) / ySpan
-            guard t >= -0.001 && t <= 1.001 else { continue }
-            let py = plot.maxY - CGFloat(t) * plot.height
-            var yTick = Path()
-            yTick.move(to: CGPoint(x: plot.minX, y: py))
-            yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
-            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
-            let label = idx < yLabels.count ? yLabels[idx] : axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
-            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
-        }
         let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        let axisLabelSize = PlotRenderingEngine.axisLabelFontSize(preset: preset, fontScale: fontScale)
-        context.draw(Text(xTitle).font(plotFont(size: axisLabelSize, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + tickLabelSize + 6.0), anchor: .top)
-        let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
-        var yLabelContext = context
-        yLabelContext.translateBy(x: yTitleX, y: plot.midY)
-        yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(plotFont(size: axisLabelSize, bold: false)), at: .zero, anchor: .center)
+        PlotAxisDrawHelper.drawGridTicksAndCursor(
+            context: &context,
+            plot: plot,
+            xRange: xRange,
+            yRange: yRange,
+            xNice: xNice,
+            yNice: yNice,
+            xScaleInfo: xScaleInfo,
+            yScaleInfo: yScaleInfo,
+            xScale: xScale,
+            yScale: yScale,
+            xTitle: xTitle,
+            yTitle: yTitle,
+            axisConfig: axisConfig,
+            preset: preset,
+            fontScale: fontScale,
+            maxLabelWidth: maxLabelWidth,
+            yLabels: yLabels,
+            hoverLocation: hoverLocation,
+            formatLabel: { val, scale, info, prec in axisLabel(val, scale: scale, scaleInfo: info, precision: prec) }
+        )
 
         var plotContext = context
         plotContext.clip(to: Path(plot))
+        let customColor = customSeriesColors[measurement.source.path]
         for (seriesIndex, item) in data.1.enumerated() {
             guard item.1.count == data.0.count else { continue }
-            let color = palette(seriesIndex)
+            let color = (seriesIndex == 0 ? customColor : nil) ?? palette(seriesIndex)
 
             let progChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? measurement.progressionChannel
             let isContinuous = progChannel?.quantity == "time" && !(progChannel?.name.lowercased().contains("scan") ?? false)
@@ -477,34 +604,6 @@ struct NativePlot: View {
                 }
             }
         }
-
-        // Interactive Crosshair Cursor
-        if showCursor, let loc = hoverLocation, plot.contains(loc) {
-            var hLine = Path()
-            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
-            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
-            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
-
-            var vLine = Path()
-            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
-            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
-            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
-
-            let tX = Double((loc.x - plot.minX) / plot.width)
-            let tY = Double((plot.maxY - loc.y) / plot.height)
-            let dataX = xRange.lowerBound + tX * xSpan
-            let dataY = yRange.lowerBound + tY * ySpan
-
-            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
-            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
-            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
-            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
-            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
-
-            let tooltipFont = plotFont(size: max(9.5, 10.5 * fontScale), bold: true)
-            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
-            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
-        }
     }
 
     private func gapCount(_ data: ([Double?], [(String, [Double?])])) -> Int {
@@ -568,20 +667,15 @@ struct OverlayPlot: View {
     var showLegend: Bool = true
     var legendScale: Double = 1.0
     var customSeriesLabels: [String: String] = [:]
+    var customSeriesColors: [String: Color] = [:]
+    var orderedSourceIDs: [String] = []
     var resetTrigger: Int = 0
     @Binding var legendOffset: CGSize
-    var xTickCount: Int = 0
-    var yTickCount: Int = 0
-    var minorTicksCount: Int = 0
-    var showMajorGrid: Bool = false
-    var showMinorGrid: Bool = false
-    var showZeroLine: Bool = false
-    var showCursor: Bool = false
+    var axisConfig: PlotAxisConfig = PlotAxisConfig()
+    var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
     @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
-    @State private var gestureZoomStart = 1.0
     @State private var pan = CGSize.zero
-    @State private var dragStart = CGSize.zero
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
@@ -596,13 +690,26 @@ struct OverlayPlot: View {
         var id: String { sourcePath + "|" + label }
     }
 
+    private var effectiveOrder: [String] {
+        let fallback = selectedSourceIDs.sorted()
+        guard !orderedSourceIDs.isEmpty else { return fallback }
+        let kept = orderedSourceIDs.filter { selectedSourceIDs.contains($0) }
+        let missing = fallback.filter { !kept.contains($0) }
+        return kept + missing
+    }
+
     private var transformed: Result<(xChannel: (label: String, unit: String), yChannel: (label: String, unit: String), series: [Series]), OverlayPlotFailure> {
         guard !measurements.isEmpty else { return .failure(.message("No measurements selected")) }
         var series: [Series] = []
         var xChannelInfo = ("", "")
         var yChannelInfo = ("", "")
         var first = true
-        let sortedMeasurements = measurements.sorted(by: { $0.source.path < $1.source.path })
+        let order = effectiveOrder
+        let sortedMeasurements = measurements.sorted { a, b in
+            let ia = order.firstIndex(of: a.source.path) ?? Int.max
+            let ib = order.firstIndex(of: b.source.path) ?? Int.max
+            return ia != ib ? ia < ib : a.source.path < b.source.path
+        }
         let basenames = sortedMeasurements.reduce(into: [String: Int]()) { counts, item in
             counts[URL(fileURLWithPath: item.source.path).lastPathComponent, default: 0] += 1
         }
@@ -661,15 +768,19 @@ struct OverlayPlot: View {
                                    markerSize: markerSize,
                                    colorBySweepProgress: colorBySweepProgress,
                                    resetTrigger: resetTrigger,
+                                   preset: preset,
                                    showLegend: showLegend,
                                    legendScale: legendScale,
                                    customSeriesLabels: customSeriesLabels,
-                                   legendOffset: $legendOffset)
+                                   customSeriesColors: customSeriesColors,
+                                   legendOffset: $legendOffset,
+                                   axisConfig: axisConfig,
+                                   onMetricsUpdate: onMetricsUpdate)
                     }
                 }
             }
         case .success(let data):
-            let sourceOrder = selectedSourceIDs.sorted()
+            let sourceOrder = effectiveOrder
             let accessibleSummary = data.series.map {
                 "\($0.label): \($0.x.count) points, \(gapCount($0)) gaps"
             }.joined(separator: ". ")
@@ -680,7 +791,7 @@ struct OverlayPlot: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .onContinuousHover { phase in
-                    if showCursor {
+                    if axisConfig.showCursor {
                         switch phase {
                         case .active(let loc): hoverLocation = loc
                         case .ended: hoverLocation = nil
@@ -689,8 +800,6 @@ struct OverlayPlot: View {
                         hoverLocation = nil
                     }
                 }
-                .simultaneousGesture(DragGesture().onChanged { pan = CGSize(width: dragStart.width + $0.translation.width, height: dragStart.height + $0.translation.height) }.onEnded { _ in dragStart = pan })
-                .simultaneousGesture(MagnifyGesture().onChanged { zoom = min(max(gestureZoomStart * $0.magnification, 0.5), 12) }.onEnded { _ in gestureZoomStart = zoom })
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Overlay plot with \(data.series.count) series")
                 .accessibilityValue(accessibleSummary)
@@ -706,7 +815,8 @@ struct OverlayPlot: View {
                     let legendItems: [(color: Color, label: String, markType: PlotMarkType)] = data.series.map { item in
                         let custom = customSeriesLabels[item.sourcePath]?.trimmingCharacters(in: .whitespacesAndNewlines)
                         let name = (custom != nil && !custom!.isEmpty) ? custom! : item.label
-                        return (palette(item.sourcePath, order: sourceOrder), name, markType)
+                        let color = customSeriesColors[item.sourcePath] ?? palette(item.sourcePath, order: sourceOrder)
+                        return (color, name, markType)
                     }
                     DraggableLegendView(
                         items: legendItems,
@@ -722,7 +832,7 @@ struct OverlayPlot: View {
                 }
             }
             .onChange(of: resetTrigger) { _, _ in
-                zoom = 1; gestureZoomStart = 1; pan = .zero; dragStart = .zero
+                zoom = 1; pan = .zero
             }
         }
     }
@@ -735,9 +845,12 @@ struct OverlayPlot: View {
         let xScaleInfo = AxisFormatter.scaleInfo(for: allX, baseUnit: xUnit)
         let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
 
-        let yRangeTemp = viewport(expanded(yBounds), pan: pan.height, dimension: size.height, vertical: true)
-        let yTicksTarget = yTickCount > 0 ? yTickCount : 5
-        let yNice = AxisFormatter.niceTicks(lower: yRangeTemp.lowerBound, upper: yRangeTemp.upperBound, factor: yScaleInfo.factor, maxTicks: yTicksTarget)
+        let autoXRange = expanded(xBounds)
+        let autoYRange = expanded(yBounds)
+        let xRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoXRange, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
+        let yRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoYRange, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+
+        let yNice = AxisFormatter.ticks(lower: yRange.lowerBound, upper: yRange.upperBound, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
         let yLabels: [String] = yNice.tickValues.map { val in
             axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
@@ -766,143 +879,48 @@ struct OverlayPlot: View {
 
         PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
-        let xRange = viewport(expanded(xBounds), pan: pan.width, dimension: plot.width, vertical: false)
-        let yRange = viewport(expanded(yBounds), pan: pan.height, dimension: plot.height, vertical: true)
-        let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
-        let tickLabelSize = PlotRenderingEngine.tickLabelFontSize(preset: preset, fontScale: fontScale)
-        let spineWidth = PlotRenderingEngine.spineThickness(preset: preset)
-        let xSpan = xRange.upperBound - xRange.lowerBound
-        let ySpan = yRange.upperBound - yRange.lowerBound
+        let xNice = AxisFormatter.ticks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
 
-        let xTicksTarget = xTickCount > 0 ? xTickCount : 5
-        let xNice = AxisFormatter.niceTicks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, maxTicks: xTicksTarget)
-
-        // Zero Reference Lines (x = 0 / y = 0)
-        if showZeroLine {
-            if yRange.lowerBound <= 0 && yRange.upperBound >= 0, ySpan > 0 {
-                let zeroT = (0.0 - yRange.lowerBound) / ySpan
-                let zeroY = plot.maxY - CGFloat(zeroT) * plot.height
-                var zeroH = Path()
-                zeroH.move(to: CGPoint(x: plot.minX, y: zeroY))
-                zeroH.addLine(to: CGPoint(x: plot.maxX, y: zeroY))
-                context.stroke(zeroH, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
-            }
-            if xRange.lowerBound <= 0 && xRange.upperBound >= 0, xSpan > 0 {
-                let zeroT = (0.0 - xRange.lowerBound) / xSpan
-                let zeroX = plot.minX + CGFloat(zeroT) * plot.width
-                var zeroV = Path()
-                zeroV.move(to: CGPoint(x: zeroX, y: plot.minY))
-                zeroV.addLine(to: CGPoint(x: zeroX, y: plot.maxY))
-                context.stroke(zeroV, with: .color(.secondary.opacity(0.4)), style: StrokeStyle(lineWidth: spineWidth, dash: [4, 4]))
-            }
+        if let onMetricsUpdate {
+            let latest = PlotLiveMetrics(
+                xRange: xRange,
+                yRange: yRange,
+                xTickCount: xNice.tickValues.count,
+                yTickCount: yNice.tickValues.count
+            )
+            DispatchQueue.main.async { onMetricsUpdate(latest) }
         }
 
-        // Major Gridlines
-        if showMajorGrid {
-            for val in xNice.tickValues {
-                guard xSpan > 0 else { continue }
-                let t = (val - xRange.lowerBound) / xSpan
-                guard t >= 0.001 && t <= 0.999 else { continue }
-                let px = plot.minX + CGFloat(t) * plot.width
-                var gridLine = Path()
-                gridLine.move(to: CGPoint(x: px, y: plot.minY))
-                gridLine.addLine(to: CGPoint(x: px, y: plot.maxY))
-                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
-            }
-            for val in yNice.tickValues {
-                guard ySpan > 0 else { continue }
-                let t = (val - yRange.lowerBound) / ySpan
-                guard t >= 0.001 && t <= 0.999 else { continue }
-                let py = plot.maxY - CGFloat(t) * plot.height
-                var gridLine = Path()
-                gridLine.move(to: CGPoint(x: plot.minX, y: py))
-                gridLine.addLine(to: CGPoint(x: plot.maxX, y: py))
-                context.stroke(gridLine, with: .color(.secondary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
-            }
-        }
-
-        // Minor Ticks & Minor Gridlines
-        if minorTicksCount > 1 {
-            let xMinors = AxisFormatter.minorTicks(majorTicks: xNice.tickValues, step: xNice.step, subdivisions: minorTicksCount)
-            for val in xMinors {
-                guard xSpan > 0 else { continue }
-                let t = (val - xRange.lowerBound) / xSpan
-                guard t >= -0.001 && t <= 1.001 else { continue }
-                let px = plot.minX + CGFloat(t) * plot.width
-                var minorTick = Path()
-                minorTick.move(to: CGPoint(x: px, y: plot.maxY))
-                minorTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen * 0.55))
-                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
-
-                if showMinorGrid && t >= 0.001 && t <= 0.999 {
-                    var mGrid = Path()
-                    mGrid.move(to: CGPoint(x: px, y: plot.minY))
-                    mGrid.addLine(to: CGPoint(x: px, y: plot.maxY))
-                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
-                }
-            }
-
-            let yMinors = AxisFormatter.minorTicks(majorTicks: yNice.tickValues, step: yNice.step, subdivisions: minorTicksCount)
-            for val in yMinors {
-                guard ySpan > 0 else { continue }
-                let t = (val - yRange.lowerBound) / ySpan
-                guard t >= -0.001 && t <= 1.001 else { continue }
-                let py = plot.maxY - CGFloat(t) * plot.height
-                var minorTick = Path()
-                minorTick.move(to: CGPoint(x: plot.minX, y: py))
-                minorTick.addLine(to: CGPoint(x: plot.minX - tickLen * 0.55, y: py))
-                context.stroke(minorTick, with: .color(.primary), lineWidth: spineWidth * 0.8)
-
-                if showMinorGrid && t >= 0.001 && t <= 0.999 {
-                    var mGrid = Path()
-                    mGrid.move(to: CGPoint(x: plot.minX, y: py))
-                    mGrid.addLine(to: CGPoint(x: plot.maxX, y: py))
-                    context.stroke(mGrid, with: .color(.secondary.opacity(0.08)), style: StrokeStyle(lineWidth: 0.5, dash: [1, 3]))
-                }
-            }
-        }
-
-        for val in xNice.tickValues {
-            guard xSpan > 0 else { continue }
-            let t = (val - xRange.lowerBound) / xSpan
-            guard t >= -0.001 && t <= 1.001 else { continue }
-            let px = plot.minX + CGFloat(t) * plot.width
-            var xTick = Path()
-            xTick.move(to: CGPoint(x: px, y: plot.maxY))
-            xTick.addLine(to: CGPoint(x: px, y: plot.maxY + tickLen))
-            context.stroke(xTick, with: .color(.primary), lineWidth: spineWidth)
-            let label = axisLabel(val, scale: xScale, scaleInfo: xScaleInfo, precision: xNice.precision)
-            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: px, y: plot.maxY + tickLen + 3.0), anchor: .top)
-        }
-
-        for (idx, val) in yNice.tickValues.enumerated() {
-            guard ySpan > 0 else { continue }
-            let t = (val - yRange.lowerBound) / ySpan
-            guard t >= -0.001 && t <= 1.001 else { continue }
-            let py = plot.maxY - CGFloat(t) * plot.height
-            var yTick = Path()
-            yTick.move(to: CGPoint(x: plot.minX, y: py))
-            yTick.addLine(to: CGPoint(x: plot.minX - tickLen, y: py))
-            context.stroke(yTick, with: .color(.primary), lineWidth: spineWidth)
-            let label = idx < yLabels.count ? yLabels[idx] : axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
-            context.draw(Text(label).font(plotFont(size: tickLabelSize)), at: CGPoint(x: plot.minX - tickLen - 3.0, y: py), anchor: .trailing)
-        }
         let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
         let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
-        let axisLabelSize = PlotRenderingEngine.axisLabelFontSize(preset: preset, fontScale: fontScale)
-        context.draw(Text(xTitle).font(plotFont(size: axisLabelSize, bold: false)), at: CGPoint(x: plot.midX, y: plot.maxY + tickLen + 3.0 + tickLabelSize + 6.0), anchor: .top)
-        let yTitleX = max(14 * fontScale, plot.minX - tickLen - 3.0 - maxLabelWidth - (12 * fontScale))
-        var yLabelContext = context
-        yLabelContext.translateBy(x: yTitleX, y: plot.midY)
-        yLabelContext.rotate(by: .degrees(-90))
-        yLabelContext.draw(Text(yTitle).font(plotFont(size: axisLabelSize, bold: false)), at: .zero, anchor: .center)
+        PlotAxisDrawHelper.drawGridTicksAndCursor(
+            context: &context,
+            plot: plot,
+            xRange: xRange,
+            yRange: yRange,
+            xNice: xNice,
+            yNice: yNice,
+            xScaleInfo: xScaleInfo,
+            yScaleInfo: yScaleInfo,
+            xScale: xScale,
+            yScale: yScale,
+            xTitle: xTitle,
+            yTitle: yTitle,
+            axisConfig: axisConfig,
+            preset: preset,
+            fontScale: fontScale,
+            maxLabelWidth: maxLabelWidth,
+            yLabels: yLabels,
+            hoverLocation: hoverLocation,
+            formatLabel: { val, scale, info, prec in axisLabel(val, scale: scale, scaleInfo: info, precision: prec) }
+        )
 
         var plotContext = context
         plotContext.clip(to: Path(plot))
-        let sourceOrder = selectedSourceIDs.sorted()
+        let sourceOrder = effectiveOrder
         for item in series {
-            let color = palette(item.sourcePath, order: sourceOrder)
+            let color = customSeriesColors[item.sourcePath] ?? palette(item.sourcePath, order: sourceOrder)
             var currentRun: [CGPoint] = []
             for index in item.x.indices {
                 guard index < item.y.count, let rawX = item.x[index], let rawY = item.y[index] else {
@@ -939,34 +957,6 @@ struct OverlayPlot: View {
                     in: &plotContext
                 )
             }
-        }
-
-        // Interactive Crosshair Cursor
-        if showCursor, let loc = hoverLocation, plot.contains(loc) {
-            var hLine = Path()
-            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
-            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
-            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
-
-            var vLine = Path()
-            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
-            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
-            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
-
-            let tX = Double((loc.x - plot.minX) / plot.width)
-            let tY = Double((plot.maxY - loc.y) / plot.height)
-            let dataX = xRange.lowerBound + tX * xSpan
-            let dataY = yRange.lowerBound + tY * ySpan
-
-            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
-            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
-            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
-            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
-            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
-
-            let tooltipFont = plotFont(size: max(9.5, 10.5 * fontScale), bold: true)
-            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
-            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
         }
     }
 
@@ -1179,14 +1169,11 @@ struct ProjectGallery: View {
     @Binding var showLegend: Bool
     @Binding var legendScale: Double
     var customSeriesLabels: [String: String] = [:]
+    var customSeriesColors: [String: Color] = [:]
+    var orderedSourceIDs: [String] = []
     @Binding var legendOffset: CGSize
-    var xTickCount: Int = 0
-    var yTickCount: Int = 0
-    var minorTicksCount: Int = 0
-    var showMajorGrid: Bool = false
-    var showMinorGrid: Bool = false
-    var showZeroLine: Bool = false
-    var showCursor: Bool = false
+    var axisConfig: PlotAxisConfig = PlotAxisConfig()
+    @Binding var liveMetrics: PlotLiveMetrics
     var snapshotDPI: Int = 300
     @State private var plotResetTrigger: Int = 0
     @ObservedObject private var updateChecker = AppUpdateChecker.shared
@@ -1560,15 +1547,14 @@ struct ProjectGallery: View {
                                 showLegend: showLegend,
                                 legendScale: legendScale,
                                 customSeriesLabels: customSeriesLabels,
+                                customSeriesColors: customSeriesColors,
+                                orderedSourceIDs: orderedSourceIDs,
                                 resetTrigger: plotResetTrigger,
                                 legendOffset: $legendOffset,
-                                xTickCount: xTickCount,
-                                yTickCount: yTickCount,
-                                minorTicksCount: minorTicksCount,
-                                showMajorGrid: showMajorGrid,
-                                showMinorGrid: showMinorGrid,
-                                showZeroLine: showZeroLine,
-                                showCursor: showCursor)
+                                axisConfig: axisConfig,
+                                onMetricsUpdate: { next in
+                                    if liveMetrics != next { liveMetrics = next }
+                                })
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -1617,15 +1603,14 @@ struct ProjectGallery: View {
                                     showLegend: showLegend,
                                     legendScale: legendScale,
                                     customSeriesLabels: customSeriesLabels,
+                                    customSeriesColors: customSeriesColors,
+                                    orderedSourceIDs: orderedSourceIDs,
                                     resetTrigger: plotResetTrigger,
                                     legendOffset: $legendOffset,
-                                    xTickCount: xTickCount,
-                                    yTickCount: yTickCount,
-                                    minorTicksCount: minorTicksCount,
-                                    showMajorGrid: showMajorGrid,
-                                    showMinorGrid: showMinorGrid,
-                                    showZeroLine: showZeroLine,
-                                    showCursor: showCursor)
+                                    axisConfig: axisConfig,
+                                    onMetricsUpdate: { next in
+                                        if liveMetrics != next { liveMetrics = next }
+                                    })
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1665,14 +1650,12 @@ struct ProjectGallery: View {
                                showLegend: showLegend,
                                legendScale: legendScale,
                                customSeriesLabels: customSeriesLabels,
+                               customSeriesColors: customSeriesColors,
                                legendOffset: $legendOffset,
-                               xTickCount: xTickCount,
-                               yTickCount: yTickCount,
-                               minorTicksCount: minorTicksCount,
-                               showMajorGrid: showMajorGrid,
-                               showMinorGrid: showMinorGrid,
-                               showZeroLine: showZeroLine,
-                               showCursor: showCursor)
+                               axisConfig: axisConfig,
+                               onMetricsUpdate: { next in
+                                   if liveMetrics != next { liveMetrics = next }
+                               })
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

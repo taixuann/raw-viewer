@@ -121,7 +121,8 @@ public struct AxisFormatter: Sendable {
             return NiceTicksResult(tickValues: [lower], step: 1.0, precision: 0)
         }
 
-        let rawStep = span / Double(max(2, maxTicks))
+        let intervals = max(1, maxTicks - 1)
+        let rawStep = span / Double(intervals)
         let exponent = floor(log10(rawStep))
         let mag = pow(10.0, exponent)
         let fraction = rawStep / mag
@@ -139,8 +140,8 @@ public struct AxisFormatter: Sendable {
         let scaledStep = niceFraction * mag
         let rawStepActual = scaledStep * effectiveFactor
 
-        let firstScaled = ceil(sLo / scaledStep) * scaledStep
-        let lastScaled = floor(sHi / scaledStep) * scaledStep
+        let firstScaled = ceil((sLo - 1e-12 * scaledStep) / scaledStep) * scaledStep
+        let lastScaled = floor((sHi + 1e-12 * scaledStep) / scaledStep) * scaledStep
 
         var rawTicks: [Double] = []
         var currScaled = firstScaled
@@ -152,7 +153,7 @@ public struct AxisFormatter: Sendable {
             }
         }()
 
-        while currScaled <= lastScaled + scaledStep * 0.5 {
+        while currScaled <= lastScaled + scaledStep * 1e-6 {
             var rawVal = currScaled * effectiveFactor
             if abs(currScaled) < 1e-12 {
                 rawVal = 0.0
@@ -168,22 +169,107 @@ public struct AxisFormatter: Sendable {
         return NiceTicksResult(tickValues: rawTicks, step: rawStepActual, precision: displayPrecision)
     }
 
-    /// Generates minor tick values in original raw data coordinates between major ticks.
+    /// Computes exactly `count` evenly-spaced ticks across `[lower, upper]` (`count - 1` equal intervals).
+    public static func exactUniformTicks(
+        lower: Double,
+        upper: Double,
+        factor: Double = 1.0,
+        count: Int
+    ) -> NiceTicksResult {
+        guard lower.isFinite, upper.isFinite, lower < upper else {
+            let single = lower.isFinite ? lower : 0.0
+            return NiceTicksResult(tickValues: [single], step: 1.0, precision: 0)
+        }
+        let n = max(2, count)
+        let effectiveFactor = (factor != 0 && factor.isFinite) ? factor : 1.0
+        let step = (upper - lower) / Double(n - 1)
+        let scaledStep = abs(step / effectiveFactor)
+
+        let displayPrecision: Int = {
+            guard scaledStep > 0 else { return 0 }
+            let exp = floor(log10(scaledStep))
+            let base = max(0, Int(-exp))
+            let scaledCheck = scaledStep * pow(10.0, Double(base))
+            let frac = abs(scaledCheck - scaledCheck.rounded())
+            return min(4, frac > 1e-3 ? base + 1 : base)
+        }()
+
+        var ticks: [Double] = []
+        ticks.reserveCapacity(n)
+        for i in 0..<n {
+            var val = lower + Double(i) * step
+            if abs(val) < step * 1e-9 {
+                val = 0.0
+            }
+            ticks.append(val)
+        }
+        return NiceTicksResult(tickValues: ticks, step: step, precision: displayPrecision)
+    }
+
+    /// Dispatches between Auto nice ticks (`requestedCount <= 0`) and exact uniform ticks (`requestedCount >= 2`).
+    public static func ticks(
+        lower: Double,
+        upper: Double,
+        factor: Double = 1.0,
+        requestedCount: Int
+    ) -> NiceTicksResult {
+        if requestedCount >= 2 {
+            return exactUniformTicks(lower: lower, upper: upper, factor: factor, count: requestedCount)
+        }
+        return niceTicks(lower: lower, upper: upper, factor: factor, maxTicks: 5)
+    }
+
+    /// Generates minor tick values in original raw data coordinates between major ticks
+    /// and optionally extending into outer margins within `[lower, upper]`.
     public static func minorTicks(
         majorTicks: [Double],
         step: Double,
-        subdivisions: Int
+        subdivisions: Int,
+        lower: Double? = nil,
+        upper: Double? = nil
     ) -> [Double] {
-        guard subdivisions > 1, majorTicks.count >= 2, step > 0 else { return [] }
+        guard subdivisions > 1, !majorTicks.isEmpty, step > 0 else { return [] }
         let subStep = step / Double(subdivisions)
         var result: [Double] = []
-        for i in 0..<(majorTicks.count - 1) {
-            let start = majorTicks[i]
-            for k in 1..<subdivisions {
-                let val = start + Double(k) * subStep
-                result.append(val)
+        let firstAnchor = majorTicks.first!
+        let lastAnchor = majorTicks.last!
+
+        if let lo = lower, lo < firstAnchor {
+            var base = firstAnchor - step
+            while base + step > lo {
+                for k in 1..<subdivisions {
+                    let val = base + Double(k) * subStep
+                    if val > lo + subStep * 1e-6 && val < firstAnchor - subStep * 1e-6 {
+                        result.append(val)
+                    }
+                }
+                base -= step
             }
         }
-        return result
+
+        if majorTicks.count >= 2 {
+            for i in 0..<(majorTicks.count - 1) {
+                let start = majorTicks[i]
+                for k in 1..<subdivisions {
+                    let val = start + Double(k) * subStep
+                    result.append(val)
+                }
+            }
+        }
+
+        if let hi = upper, hi > lastAnchor {
+            var base = lastAnchor
+            while base < hi {
+                for k in 1..<subdivisions {
+                    let val = base + Double(k) * subStep
+                    if val > lastAnchor + subStep * 1e-6 && val < hi - subStep * 1e-6 {
+                        result.append(val)
+                    }
+                }
+                base += step
+            }
+        }
+
+        return result.sorted()
     }
 }

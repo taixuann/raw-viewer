@@ -346,21 +346,32 @@ pub fn run(check: bool, json_output: bool) -> CliResult {
 
     let _ = fs::remove_dir_all(&tmp_dir);
 
+    let skills_refreshed = Command::new(&current_exe)
+        .args(["skills", "repair"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+
     if json_output {
         CliResult::ok(json!({
             "status": "updated",
             "previous_version": current_tag,
             "current_version": latest_tag,
             "path": current_exe.display().to_string(),
+            "skills_refreshed": skills_refreshed,
         }))
     } else {
         println!(
             "Successfully updated raw-viewer from {current_tag} to {latest_tag} at {}!",
             current_exe.display()
         );
+        if skills_refreshed {
+            println!("Refreshed installed RawView skills (setup-rawviewer).");
+        }
         CliResult::ok(json!({
             "status": "updated",
             "version": latest_tag,
+            "skills_refreshed": skills_refreshed,
         }))
     }
 }
