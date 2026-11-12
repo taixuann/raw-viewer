@@ -15,6 +15,8 @@ struct PlotAxisConfig: Equatable {
     var xRegionMax: Double? = nil
     var yRegionMin: Double? = nil
     var yRegionMax: Double? = nil
+    var xPaddingPercent: Double = 4.0
+    var yPaddingPercent: Double = 4.0
 }
 
 struct PlotLiveMetrics: Equatable {
@@ -25,13 +27,60 @@ struct PlotLiveMetrics: Equatable {
 }
 
 enum PlotAxisDrawHelper {
-    static func resolvedRange(autoRange: ClosedRange<Double>, minOverride: Double?, maxOverride: Double?) -> ClosedRange<Double> {
-        let lo = minOverride ?? autoRange.lowerBound
-        let hi = maxOverride ?? autoRange.upperBound
+    static func dataRegion(
+        bounds: (lower: Double, upper: Double),
+        minOverride: Double?,
+        maxOverride: Double?
+    ) -> ClosedRange<Double> {
+        let lo = minOverride ?? bounds.lower
+        let hi = maxOverride ?? bounds.upper
         if lo.isFinite && hi.isFinite && lo < hi {
             return lo...hi
         }
-        return autoRange
+        if bounds.lower.isFinite && bounds.upper.isFinite && bounds.lower < bounds.upper {
+            return bounds.lower...bounds.upper
+        }
+        let center = bounds.lower.isFinite ? bounds.lower : 0.0
+        let delta = max(abs(center) * 0.05, 1.0)
+        return (center - delta)...(center + delta)
+    }
+
+    static func paddedViewport(_ region: ClosedRange<Double>, paddingPercent: Double) -> ClosedRange<Double> {
+        let pct = max(0.0, min(50.0, paddingPercent)) / 100.0
+        let span = region.upperBound - region.lowerBound
+        let delta = span > 0 ? span * pct : max(abs(region.lowerBound) * 0.05, 1.0)
+        return (region.lowerBound - delta)...(region.upperBound + delta)
+    }
+
+    static func curveClipRect(
+        plot: CGRect,
+        xRegion: ClosedRange<Double>,
+        yRegion: ClosedRange<Double>,
+        xViewport: ClosedRange<Double>,
+        yViewport: ClosedRange<Double>,
+        clipToXRegion: Bool,
+        clipToYRegion: Bool
+    ) -> CGRect {
+        let xSpan = xViewport.upperBound - xViewport.lowerBound
+        let ySpan = yViewport.upperBound - yViewport.lowerBound
+        var minX = plot.minX
+        var maxX = plot.maxX
+        var minY = plot.minY
+        var maxY = plot.maxY
+
+        if clipToXRegion && xSpan > 0 {
+            let t0 = (xRegion.lowerBound - xViewport.lowerBound) / xSpan
+            let t1 = (xRegion.upperBound - xViewport.lowerBound) / xSpan
+            minX = plot.minX + CGFloat(t0) * plot.width
+            maxX = plot.minX + CGFloat(t1) * plot.width
+        }
+        if clipToYRegion && ySpan > 0 {
+            let t0 = (yRegion.lowerBound - yViewport.lowerBound) / ySpan
+            let t1 = (yRegion.upperBound - yViewport.lowerBound) / ySpan
+            maxY = plot.maxY - CGFloat(t0) * plot.height
+            minY = plot.maxY - CGFloat(t1) * plot.height
+        }
+        return CGRect(x: minX, y: minY, width: max(0, maxX - minX), height: max(0, maxY - minY)).intersection(plot)
     }
 
     static func effectiveMinorSubdivisions(minorCount: Int, showMinorGrid: Bool) -> Int {
@@ -44,6 +93,8 @@ enum PlotAxisDrawHelper {
         plot: CGRect,
         xRange: ClosedRange<Double>,
         yRange: ClosedRange<Double>,
+        xRegion: ClosedRange<Double>,
+        yRegion: ClosedRange<Double>,
         xNice: AxisFormatter.NiceTicksResult,
         yNice: AxisFormatter.NiceTicksResult,
         xScaleInfo: AxisFormatter.ScaleInfo,
@@ -115,8 +166,8 @@ enum PlotAxisDrawHelper {
                 majorTicks: xNice.tickValues,
                 step: xNice.step,
                 subdivisions: xSub,
-                lower: xRange.lowerBound,
-                upper: xRange.upperBound
+                lower: xRegion.lowerBound,
+                upper: xRegion.upperBound
             )
             for val in xMinors {
                 let t = (val - xRange.lowerBound) / xSpan
@@ -143,8 +194,8 @@ enum PlotAxisDrawHelper {
                 majorTicks: yNice.tickValues,
                 step: yNice.step,
                 subdivisions: ySub,
-                lower: yRange.lowerBound,
-                upper: yRange.upperBound
+                lower: yRegion.lowerBound,
+                upper: yRegion.upperBound
             )
             for val in yMinors {
                 let t = (val - yRange.lowerBound) / ySpan
@@ -460,12 +511,16 @@ struct NativePlot: View {
         let xScaleInfo = AxisFormatter.scaleInfo(for: finiteX, baseUnit: xChannel?.unit ?? "")
         let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
 
-        let autoXRange = expanded(finiteX)
-        let autoYRange = expanded(finiteY)
-        let xRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoXRange, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
-        let yRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoYRange, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+        let xRawBounds = (lower: finiteX.min() ?? 0.0, upper: finiteX.max() ?? 1.0)
+        let yRawBounds = (lower: finiteY.min() ?? 0.0, upper: finiteY.max() ?? 1.0)
+        let xRegion = PlotAxisDrawHelper.dataRegion(bounds: xRawBounds, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
+        let yRegion = PlotAxisDrawHelper.dataRegion(bounds: yRawBounds, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+        let xRange = PlotAxisDrawHelper.paddedViewport(xRegion, paddingPercent: axisConfig.xPaddingPercent)
+        let yRange = PlotAxisDrawHelper.paddedViewport(yRegion, paddingPercent: axisConfig.yPaddingPercent)
 
-        let yNice = AxisFormatter.ticks(lower: yRange.lowerBound, upper: yRange.upperBound, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
+        let yTickLo = axisConfig.yTickCount >= 2 ? yRegion.lowerBound : yRange.lowerBound
+        let yTickHi = axisConfig.yTickCount >= 2 ? yRegion.upperBound : yRange.upperBound
+        let yNice = AxisFormatter.ticks(lower: yTickLo, upper: yTickHi, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
         let yLabels: [String] = yNice.tickValues.map { val in
             axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
@@ -494,12 +549,14 @@ struct NativePlot: View {
 
         PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
-        let xNice = AxisFormatter.ticks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
+        let xTickLo = axisConfig.xTickCount >= 2 ? xRegion.lowerBound : xRange.lowerBound
+        let xTickHi = axisConfig.xTickCount >= 2 ? xRegion.upperBound : xRange.upperBound
+        let xNice = AxisFormatter.ticks(lower: xTickLo, upper: xTickHi, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
 
         if let onMetricsUpdate {
             let latest = PlotLiveMetrics(
-                xRange: xRange,
-                yRange: yRange,
+                xRange: xRegion,
+                yRange: yRegion,
                 xTickCount: xNice.tickValues.count,
                 yTickCount: yNice.tickValues.count
             )
@@ -514,6 +571,8 @@ struct NativePlot: View {
             plot: plot,
             xRange: xRange,
             yRange: yRange,
+            xRegion: xRegion,
+            yRegion: yRegion,
             xNice: xNice,
             yNice: yNice,
             xScaleInfo: xScaleInfo,
@@ -532,7 +591,16 @@ struct NativePlot: View {
         )
 
         var plotContext = context
-        plotContext.clip(to: Path(plot))
+        let clipRect = PlotAxisDrawHelper.curveClipRect(
+            plot: plot,
+            xRegion: xRegion,
+            yRegion: yRegion,
+            xViewport: xRange,
+            yViewport: yRange,
+            clipToXRegion: axisConfig.xRegionMin != nil || axisConfig.xRegionMax != nil,
+            clipToYRegion: axisConfig.yRegionMin != nil || axisConfig.yRegionMax != nil
+        )
+        plotContext.clip(to: Path(clipRect))
         let customColor = customSeriesColors[measurement.source.path]
         for (seriesIndex, item) in data.1.enumerated() {
             guard item.1.count == data.0.count else { continue }
@@ -845,12 +913,14 @@ struct OverlayPlot: View {
         let xScaleInfo = AxisFormatter.scaleInfo(for: allX, baseUnit: xUnit)
         let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
 
-        let autoXRange = expanded(xBounds)
-        let autoYRange = expanded(yBounds)
-        let xRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoXRange, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
-        let yRange = PlotAxisDrawHelper.resolvedRange(autoRange: autoYRange, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+        let xRegion = PlotAxisDrawHelper.dataRegion(bounds: xBounds, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
+        let yRegion = PlotAxisDrawHelper.dataRegion(bounds: yBounds, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+        let xRange = PlotAxisDrawHelper.paddedViewport(xRegion, paddingPercent: axisConfig.xPaddingPercent)
+        let yRange = PlotAxisDrawHelper.paddedViewport(yRegion, paddingPercent: axisConfig.yPaddingPercent)
 
-        let yNice = AxisFormatter.ticks(lower: yRange.lowerBound, upper: yRange.upperBound, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
+        let yTickLo = axisConfig.yTickCount >= 2 ? yRegion.lowerBound : yRange.lowerBound
+        let yTickHi = axisConfig.yTickCount >= 2 ? yRegion.upperBound : yRange.upperBound
+        let yNice = AxisFormatter.ticks(lower: yTickLo, upper: yTickHi, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
         let yLabels: [String] = yNice.tickValues.map { val in
             axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
         }
@@ -879,12 +949,14 @@ struct OverlayPlot: View {
 
         PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
-        let xNice = AxisFormatter.ticks(lower: xRange.lowerBound, upper: xRange.upperBound, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
+        let xTickLo = axisConfig.xTickCount >= 2 ? xRegion.lowerBound : xRange.lowerBound
+        let xTickHi = axisConfig.xTickCount >= 2 ? xRegion.upperBound : xRange.upperBound
+        let xNice = AxisFormatter.ticks(lower: xTickLo, upper: xTickHi, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
 
         if let onMetricsUpdate {
             let latest = PlotLiveMetrics(
-                xRange: xRange,
-                yRange: yRange,
+                xRange: xRegion,
+                yRange: yRegion,
                 xTickCount: xNice.tickValues.count,
                 yTickCount: yNice.tickValues.count
             )
@@ -899,6 +971,8 @@ struct OverlayPlot: View {
             plot: plot,
             xRange: xRange,
             yRange: yRange,
+            xRegion: xRegion,
+            yRegion: yRegion,
             xNice: xNice,
             yNice: yNice,
             xScaleInfo: xScaleInfo,
@@ -917,7 +991,16 @@ struct OverlayPlot: View {
         )
 
         var plotContext = context
-        plotContext.clip(to: Path(plot))
+        let clipRect = PlotAxisDrawHelper.curveClipRect(
+            plot: plot,
+            xRegion: xRegion,
+            yRegion: yRegion,
+            xViewport: xRange,
+            yViewport: yRange,
+            clipToXRegion: axisConfig.xRegionMin != nil || axisConfig.xRegionMax != nil,
+            clipToYRegion: axisConfig.yRegionMin != nil || axisConfig.yRegionMax != nil
+        )
+        plotContext.clip(to: Path(clipRect))
         let sourceOrder = effectiveOrder
         for item in series {
             let color = customSeriesColors[item.sourcePath] ?? palette(item.sourcePath, order: sourceOrder)

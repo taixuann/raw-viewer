@@ -500,12 +500,16 @@ struct InspectorPane: View {
                     maxVal: $axisConfig.xRegionMax
                 )
 
+                paddingRow(title: "X Padding", percent: $axisConfig.xPaddingPercent)
+
                 regionRow(
                     title: "Y Region",
                     liveRange: liveMetrics.yRange,
                     minVal: $axisConfig.yRegionMin,
                     maxVal: $axisConfig.yRegionMax
                 )
+
+                paddingRow(title: "Y Padding", percent: $axisConfig.yPaddingPercent)
 
                 Divider()
 
@@ -582,6 +586,40 @@ struct InspectorPane: View {
                     .foregroundStyle(.secondary)
                 optionalNumberField(placeholder: autoMaxStr, value: maxVal)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func paddingRow(title: String, percent: Binding<Double>) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(AppTypography.body(uiFontSize: uiFontSize))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if percent.wrappedValue != 4.0 {
+                Button("Default") {
+                    percent.wrappedValue = 4.0
+                }
+                .font(AppTypography.badge(uiFontSize: uiFontSize))
+                .buttonStyle(.borderless)
+            }
+            BufferedIntField(
+                placeholder: "4",
+                value: Int(percent.wrappedValue.rounded()),
+                range: 0...30,
+                font: AppTypography.tokenCode(uiFontSize: uiFontSize),
+                onCommit: { newVal in percent.wrappedValue = Double(newVal) }
+            )
+            .frame(width: 40)
+            Text("%")
+                .font(AppTypography.helperText(uiFontSize: uiFontSize))
+                .foregroundStyle(.secondary)
+            Stepper("", value: Binding(
+                get: { Int(percent.wrappedValue.rounded()) },
+                set: { newVal in percent.wrappedValue = Double(min(max(newVal, 0), 30)) }
+            ), in: 0...30)
+            .labelsHidden()
+            .controlSize(.small)
         }
     }
 
