@@ -89,6 +89,28 @@ final class AxisFormatterTests: XCTestCase {
 
         let minors4 = AxisFormatter.minorTicks(majorTicks: majors, step: 10.0, subdivisions: 4)
         XCTAssertEqual(minors4, [2.5, 5.0, 7.5, 12.5, 15.0, 17.5])
+
+        // Outer margins included when lower/upper provided
+        let minorsOuter = AxisFormatter.minorTicks(
+            majorTicks: [2.0, 4.0],
+            step: 2.0,
+            subdivisions: 2,
+            lower: 0.5,
+            upper: 5.5
+        )
+        XCTAssertEqual(minorsOuter, [1.0, 3.0, 5.0])
+    }
+
+    func testExactUniformTicksAlwaysMatchesRequestedCount() {
+        let res5 = AxisFormatter.exactUniformTicks(lower: 0.0, upper: 10.0, factor: 1.0, count: 5)
+        XCTAssertEqual(res5.tickValues.count, 5)
+        XCTAssertEqual(res5.tickValues, [0.0, 2.5, 5.0, 7.5, 10.0])
+
+        let res7 = AxisFormatter.ticks(lower: -0.2, upper: 1.0, factor: 1.0, requestedCount: 7)
+        XCTAssertEqual(res7.tickValues.count, 7)
+        XCTAssertEqual(res7.tickValues.first!, -0.2, accuracy: 1e-9)
+        XCTAssertEqual(res7.tickValues.last!, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(res7.tickValues[1] - res7.tickValues[0], res7.tickValues[2] - res7.tickValues[1], accuracy: 1e-9)
     }
 
     func testNormalizeDateGranularities() {

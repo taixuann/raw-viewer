@@ -10,7 +10,7 @@ struct SettingsView: View {
     @AppStorage("isLazyInspectionEnabled") private var isLazyInspectionEnabled: Bool = true
     @AppStorage("maxComparisonAutoLoad") private var maxComparisonAutoLoad: Int = 15
     @AppStorage("treeDateGranularity") private var treeDateGranularity: String = "day"
-    @State private var grammarTestFilename = "100826-102100_autolab-usth.ca_sampleA_r.[test]_f.[none]_b1.txt"
+    @State private var grammarTestFilename = "110526-000000_autolab-usth.ca_[cu-ta-pda.q1-ito.1]_electrochem.protonation_r.[clean]_f.[none]_001.txt"
     @State private var builderTemplate: String = ""
     @State private var builderGrammarID: String = ""
     @State private var builderGrammarName: String = ""
@@ -100,7 +100,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(minWidth: 740, idealWidth: 780, maxWidth: 860, minHeight: 500, idealHeight: 540, maxHeight: 620)
+        .frame(minWidth: 840, idealWidth: 900, maxWidth: 1020, minHeight: 540, idealHeight: 600, maxHeight: 720)
         .onAppear {
             refreshInstalledPackages()
         }
@@ -786,11 +786,43 @@ struct SettingsView: View {
                                     .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                                     .foregroundStyle(.secondary)
                             } else {
-                                VStack(spacing: 8) {
+                                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                                    GridRow {
+                                        Text("Token")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text("Type")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text("Format / Pattern")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text("Variant")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .gridColumnAlignment(.center)
+                                        Text("Opt")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .gridColumnAlignment(.center)
+                                        Text("Facet")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .gridColumnAlignment(.center)
+                                        Text("Tree")
+                                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .gridColumnAlignment(.center)
+                                    }
+
+                                    Divider()
+                                        .gridCellUnsizedAxes(.horizontal)
+
                                     ForEach(builderFields.indices, id: \.self) { idx in
                                         tokenConfigRow(idx)
                                     }
                                 }
+                                .padding(.top, 2)
                             }
                         }
                         .padding(14)
@@ -807,15 +839,16 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first
                             if let grammar = activeGrammar {
-                                VStack(alignment: .leading, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 8) {
                                     Text("Template:")
                                         .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                                     Text(grammar.template)
                                         .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                                        .textSelection(.enabled)
                                         .padding(.vertical, 4)
                                         .foregroundStyle(.primary)
 
-                                    HStack(spacing: 6) {
+                                    AppFlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
                                         ForEach(grammar.fields) { field in
                                             AppTokenPill(
                                                 name: field.name,
@@ -892,22 +925,31 @@ struct SettingsView: View {
                                 .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                                 .foregroundStyle(.secondary)
                             Button("Autolab CA") {
-                                grammarTestFilename = "110526-000000_autolab-usth.ca_[cu-ta-pda.q1-ito.1]_ca.protonation.txt"
+                                grammarTestFilename = "110526-000000_autolab-usth.ca_[cu-ta-pda.q1-ito.1]_electrochem.protonation_r.[clean]_f.[none]_001.txt"
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
 
                             Button("Keithley IV") {
-                                grammarTestFilename = "230926-103615_keithley-2400.dual-sweep_[cu-ec-pda.c4-ito.1_r1-c5]_iv.dual-sweep_r.[reproducible]_014.txt"
+                                grammarTestFilename = "230926-103615_keithley-2400.dual-sweep_[cu-ec-pda.c4-ito.1]_iv.sweep_r.[reproducible]_f.[none]_014.txt"
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
 
                             Button("Horiba Raman") {
-                                grammarTestFilename = "150526-000000_horiba-labram.raman_[sample1]_raman_532nm.txt"
+                                grammarTestFilename = "150526-000000_horiba-labram.raman_[sample1]_raman.532nm_r.[baseline]_f.[none]_001.txt"
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
+
+                            if let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first {
+                                Button("From Active") {
+                                    grammarTestFilename = synthesizeSampleFilename(for: activeGrammar)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                                .help("Generate a matching sample filename from the active template")
+                            }
                         }
 
                         TextField("Enter filename to test...", text: $grammarTestFilename)
@@ -978,43 +1020,75 @@ struct SettingsView: View {
     }
 
     private func tokenConfigRow(_ idx: Int) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        GridRow {
             AppTokenPill(
                 name: builderFields[idx].name,
                 isOptional: builderFields[idx].isOptional,
                 uiFontSize: uiFontSize
             )
+            .gridColumnAlignment(.leading)
 
             Picker("", selection: $builderFields[idx].type) {
                 Text("String").tag(GrammarFieldType.string)
                 Text("Date/Time").tag(GrammarFieldType.datetime)
                 Text("Number").tag(GrammarFieldType.number)
             }
-            .frame(width: 110)
+            .labelsHidden()
+            .frame(width: 102)
             .controlSize(.small)
 
-            TextField("Format hint (e.g. DDMMYY-HHmmss)", text: $builderFields[idx].formatHint)
+            TextField("Format (e.g. DDMMYY-HHmmss)", text: $builderFields[idx].formatHint)
                 .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                 .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 180)
+                .frame(minWidth: 150, maxWidth: .infinity)
 
-            Toggle("Variant Key", isOn: $builderFields[idx].isVariantKey)
+            Toggle("", isOn: $builderFields[idx].isVariantKey)
+                .labelsHidden()
                 .toggleStyle(.checkbox)
-                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                .help("Use token as variant key")
 
-            Toggle("Optional", isOn: $builderFields[idx].isOptional)
+            Toggle("", isOn: $builderFields[idx].isOptional)
+                .labelsHidden()
                 .toggleStyle(.checkbox)
-                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                .help("Optional token")
 
-            Toggle("Facet", isOn: $builderFields[idx].isFacet)
+            Toggle("", isOn: $builderFields[idx].isFacet)
+                .labelsHidden()
                 .toggleStyle(.checkbox)
-                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                .help("Expose in Explorer facet filters")
 
-            Toggle("Tree", isOn: $builderFields[idx].isGroupingLevel)
+            Toggle("", isOn: $builderFields[idx].isGroupingLevel)
+                .labelsHidden()
                 .toggleStyle(.checkbox)
-                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                .help("Include in Tree grouping hierarchy")
         }
-        .padding(.vertical, 3)
+    }
+
+    private func synthesizeSampleFilename(for grammar: FilenameGrammar) -> String {
+        var sample = grammar.template
+        for field in grammar.fields {
+            let tokenPattern = "{" + field.name + "}"
+            let replacement: String
+            switch field.type {
+            case .datetime:
+                replacement = "110526-000000"
+            case .number:
+                replacement = "001"
+            case .string:
+                switch field.name.lowercased() {
+                case "device", "instrument": replacement = "autolab-usth"
+                case "application-mode", "mode", "variant": replacement = "ca"
+                case "device-id": replacement = "cu-ta-pda.q1-ito.1"
+                case "library": replacement = "electrochem"
+                case "study": replacement = "protonation"
+                case "remarks": replacement = "clean"
+                case "flags": replacement = "none"
+                default: replacement = field.name
+                }
+            }
+            sample = sample.replacingOccurrences(of: tokenPattern, with: replacement)
+        }
+        return sample.hasSuffix(".txt") ? sample : "\(sample).txt"
     }
 
     private func initBuilderFromActiveGrammar() {
@@ -1069,6 +1143,7 @@ struct SettingsView: View {
         let catalog = FilenameGrammarCatalog(grammars: [grammar], activeGrammarID: grammar.id)
         do {
             try FilenameGrammarEngine.saveToProject(catalog: catalog, project: project)
+            syncTreeGroupingFromBuilder()
             model.reloadGrammar()
             grammarActionMessage = "Saved grammar to .raw-viewer/grammar.yaml"
             grammarErrorMessage = nil
@@ -1090,12 +1165,20 @@ struct SettingsView: View {
         let catalog = FilenameGrammarCatalog(grammars: [grammar], activeGrammarID: grammar.id)
         do {
             try FilenameGrammarEngine.saveAsGlobalDefault(catalog: catalog)
+            syncTreeGroupingFromBuilder()
             model.reloadGrammar()
             grammarActionMessage = "Saved grammar as global default in ~/.config/raw-viewer/grammar.yaml"
             grammarErrorMessage = nil
         } catch {
             grammarErrorMessage = error.localizedDescription
             grammarActionMessage = nil
+        }
+    }
+
+    private func syncTreeGroupingFromBuilder() {
+        let selected = builderFields.filter(\.isGroupingLevel).map(\.name)
+        if !selected.isEmpty {
+            model.saveTreeGrouping(selected)
         }
     }
 

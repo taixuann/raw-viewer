@@ -151,13 +151,8 @@ final class RawViewModel: ObservableObject {
             }
         }
     }
-    @Published var xTickCount: Int = 0
-    @Published var yTickCount: Int = 0
-    @Published var minorTicksCount: Int = 0
-    @Published var showMajorGrid: Bool = false
-    @Published var showMinorGrid: Bool = false
-    @Published var showZeroLine: Bool = false
-    @Published var showCursor: Bool = false
+    @Published var axisConfig = PlotAxisConfig()
+    @Published var liveMetrics = PlotLiveMetrics()
     @Published var snapshotDPI: Int = 300
     @Published var studyManifests: [StudyManifest] = []
     @Published var manifestIssues: [String] = []
@@ -500,7 +495,24 @@ final class RawViewModel: ObservableObject {
     @Published var showLegend = true
     @Published var legendScale: Double = 1.0
     @Published var customSeriesLabels: [String: String] = [:]
+    @Published var customSeriesColors: [String: Color] = [:]
+    @Published var seriesOrder: [String] = []
     @Published var legendOffset: CGSize = .zero
+
+    var orderedSelectedSourceIDs: [String] {
+        let kept = seriesOrder.filter { selectedSourceIDs.contains($0) }
+        let missing = selectedSourceIDs.filter { !kept.contains($0) }.sorted()
+        return kept + missing
+    }
+
+    func moveSeries(id: String, direction: Int) {
+        var current = orderedSelectedSourceIDs
+        guard let idx = current.firstIndex(of: id) else { return }
+        let target = idx + direction
+        guard target >= 0 && target < current.count else { return }
+        current.swapAt(idx, target)
+        seriesOrder = current
+    }
 
     @Published var availablePresets: [ScientificPreset] = ScientificPreset.allCases
     @Published var selectedPreset: ScientificPreset = .natureSingle
@@ -623,13 +635,10 @@ final class RawViewModel: ObservableObject {
                 showLegend: showLegend,
                 legendScale: legendScale,
                 customSeriesLabels: customSeriesLabels,
+                customSeriesColors: customSeriesColors,
+                orderedSourceIDs: orderedSelectedSourceIDs,
                 legendOffset: .constant(.zero),
-                xTickCount: xTickCount,
-                yTickCount: yTickCount,
-                minorTicksCount: minorTicksCount,
-                showMajorGrid: showMajorGrid,
-                showMinorGrid: showMinorGrid,
-                showZeroLine: showZeroLine
+                axisConfig: axisConfig
             )
             FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize, dpi: snapshotDPI)
         } else if let focused = focusedSourceID, let measurement = effectiveMeasurement(for: focused) {
@@ -653,13 +662,9 @@ final class RawViewModel: ObservableObject {
                 showLegend: showLegend,
                 legendScale: legendScale,
                 customSeriesLabels: customSeriesLabels,
+                customSeriesColors: customSeriesColors,
                 legendOffset: .constant(.zero),
-                xTickCount: xTickCount,
-                yTickCount: yTickCount,
-                minorTicksCount: minorTicksCount,
-                showMajorGrid: showMajorGrid,
-                showMinorGrid: showMinorGrid,
-                showZeroLine: showZeroLine
+                axisConfig: axisConfig
             )
             FigureExporter.promptExportFigure(view: exportView, defaultName: name, size: exportSize, dpi: snapshotDPI)
         }
@@ -741,7 +746,10 @@ final class RawViewModel: ObservableObject {
                     showLegend: showLegend,
                     legendScale: legendScale,
                     customSeriesLabels: customSeriesLabels,
-                    legendOffset: .constant(.zero)
+                    customSeriesColors: customSeriesColors,
+                    orderedSourceIDs: orderedSelectedSourceIDs,
+                    legendOffset: .constant(.zero),
+                    axisConfig: axisConfig
                 )
                 let savedDir = try FigureExporter.exportSnapshotPackage(
                     projectRoot: project.root,
@@ -773,7 +781,9 @@ final class RawViewModel: ObservableObject {
                     showLegend: showLegend,
                     legendScale: legendScale,
                     customSeriesLabels: customSeriesLabels,
-                    legendOffset: .constant(.zero)
+                    customSeriesColors: customSeriesColors,
+                    legendOffset: .constant(.zero),
+                    axisConfig: axisConfig
                 )
                 let savedDir = try FigureExporter.exportSnapshotPackage(
                     projectRoot: project.root,
@@ -1821,14 +1831,11 @@ struct RawViewShell: View {
                        showLegend: $model.showLegend,
                        legendScale: $model.legendScale,
                        customSeriesLabels: model.customSeriesLabels,
+                       customSeriesColors: model.customSeriesColors,
+                       orderedSourceIDs: model.orderedSelectedSourceIDs,
                        legendOffset: $model.legendOffset,
-                       xTickCount: model.xTickCount,
-                       yTickCount: model.yTickCount,
-                       minorTicksCount: model.minorTicksCount,
-                       showMajorGrid: model.showMajorGrid,
-                       showMinorGrid: model.showMinorGrid,
-                       showZeroLine: model.showZeroLine,
-                       showCursor: model.showCursor,
+                       axisConfig: model.axisConfig,
+                       liveMetrics: $model.liveMetrics,
                        snapshotDPI: model.snapshotDPI)
             .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -2059,17 +2066,15 @@ struct RawViewShell: View {
                              showLegend: $model.showLegend,
                              legendScale: $model.legendScale,
                              customSeriesLabels: $model.customSeriesLabels,
+                             customSeriesColors: $model.customSeriesColors,
+                             orderedSelectedIDs: model.orderedSelectedSourceIDs,
+                             onMoveSeries: { id, dir in model.moveSeries(id: id, direction: dir) },
                              legendOffset: $model.legendOffset,
                              comparisonTitle: $model.comparisonTitle,
                              onSaveSnapshot: { model.saveSnapshot() },
                              activeSnapshotID: model.activeSnapshotID,
-                             xTickCount: $model.xTickCount,
-                             yTickCount: $model.yTickCount,
-                             minorTicksCount: $model.minorTicksCount,
-                             showMajorGrid: $model.showMajorGrid,
-                             showMinorGrid: $model.showMinorGrid,
-                             showZeroLine: $model.showZeroLine,
-                             showCursor: $model.showCursor,
+                             axisConfig: $model.axisConfig,
+                             liveMetrics: model.liveMetrics,
                              snapshotDPI: $model.snapshotDPI,
                              onSelectGenericColumns: { x, y in
                                  if let id = model.focusedSourceID {
