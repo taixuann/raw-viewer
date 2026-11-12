@@ -885,8 +885,9 @@ struct SettingsView: View {
                                     Text(gran.label).tag(gran.rawValue)
                                 }
                             }
+                            .labelsHidden()
                             .pickerStyle(.segmented)
-                            .frame(maxWidth: 420)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .onChange(of: treeDateGranularity) { _, _ in
                                 model.updateSourceTree()
                             }
@@ -920,7 +921,7 @@ struct SettingsView: View {
                             .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                             .foregroundStyle(.secondary)
 
-                        HStack(spacing: 8) {
+                        AppFlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
                             Text("Presets:")
                                 .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                                 .foregroundStyle(.secondary)
@@ -1026,6 +1027,7 @@ struct SettingsView: View {
                 isOptional: builderFields[idx].isOptional,
                 uiFontSize: uiFontSize
             )
+            .fixedSize(horizontal: true, vertical: false)
             .gridColumnAlignment(.leading)
 
             Picker("", selection: $builderFields[idx].type) {
