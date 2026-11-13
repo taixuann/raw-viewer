@@ -878,47 +878,31 @@ struct SettingsView: View {
                     }
                 }
 
-                // Section: Date Granularity & Grouping
+                // Section: Tree Grouping Hierarchy & Date Granularity
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TREE GROUPING & DATE GRANULARITY")
                         .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .foregroundStyle(.secondary)
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Date Grouping Granularity")
-                                .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
-                            Text("Groups timestamp tokens into folders by Year, Month, or Day instead of splitting each file into its own folder.")
-                                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
-                                .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 14) {
+                        let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first
+                        let available = activeGrammar?.fields.map(\.name) ?? ["device", "application-mode", "device-id", "date"]
 
-                            Picker("", selection: $treeDateGranularity) {
-                                ForEach(DateGranularity.allCases) { gran in
-                                    Text(gran.label).tag(gran.rawValue)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .onChange(of: treeDateGranularity) { _, newValue in
-                                model.updateSourceTree()
+                        TreeHierarchyEditorView(
+                            availableFields: available,
+                            selectedFields: $model.treeGroupingFields,
+                            dateGranularity: $treeDateGranularity,
+                            uiFontSize: uiFontSize,
+                            fontFamily: uiFontFamily,
+                            isCompact: false,
+                            onChanged: {
+                                model.saveTreeGrouping(model.treeGroupingFields)
                                 var updated = model.globalPreferences
-                                updated.defaultTreeDateGranularity = newValue
+                                updated.defaultTreeGrouping = model.treeGroupingFields
+                                updated.defaultTreeDateGranularity = treeDateGranularity
                                 model.saveGlobalPreferences(updated)
                             }
-                        }
-
-                        Divider()
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Active Grouping Hierarchy")
-                                .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
-                            Text(model.treeGroupingFields.joined(separator: "  →  "))
-                                .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                                .foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.1)))
-                        }
+                        )
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)

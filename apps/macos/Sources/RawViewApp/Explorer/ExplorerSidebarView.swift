@@ -1213,73 +1213,47 @@ struct HierarchyConfigPopover: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Tree Grouping Hierarchy")
-                .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: fontFamily))
-            Text("Arrange grammar variables to form the tree hierarchy:")
-                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: fontFamily))
-                .foregroundStyle(.secondary)
-
-            ForEach(availableFields, id: \.self) { field in
-                let isIncluded = selectedFields.contains(field)
-                Button {
-                    if isIncluded {
-                        selectedFields.removeAll { $0 == field }
-                    } else {
-                        selectedFields.append(field)
-                    }
-                    onSave?(selectedFields)
-                } label: {
-                    HStack {
-                        Image(systemName: isIncluded ? "checkmark.square.fill" : "square")
-                            .foregroundStyle(isIncluded ? Color.accentColor : .secondary)
-                        Text(field)
-                            .font(AppTypography.control(uiFontSize: uiFontSize, fontFamily: fontFamily))
-                        Spacer()
-                        if isIncluded, let idx = selectedFields.firstIndex(of: field) {
-                            Text("Level \(idx + 1)")
-                                .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: fontFamily))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.badge.gearshape")
+                        .foregroundStyle(Color.accentColor)
+                    Text("Tree Grouping Hierarchy")
+                        .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: fontFamily))
+                }
+                Spacer()
+                Button { onClose() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Close (Escape)")
             }
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Date Granularity")
-                    .font(AppTypography.bodySemibold(uiFontSize: uiFontSize, fontFamily: fontFamily))
-                Picker("", selection: $dateGranularity) {
-                    ForEach(DateGranularity.allCases) { gran in
-                        Text(gran.label).tag(gran.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: dateGranularity) { _, _ in
+            TreeHierarchyEditorView(
+                availableFields: availableFields,
+                selectedFields: $selectedFields,
+                dateGranularity: $dateGranularity,
+                uiFontSize: uiFontSize,
+                fontFamily: fontFamily,
+                isCompact: true,
+                onChanged: {
+                    onSave?(selectedFields)
                     onUpdateGrouping?()
                 }
-            }
+            )
 
             Divider()
 
             HStack {
-                Button("Reset Defaults") {
-                    let defaults = ["instrument", "mode", "device", "date"]
-                    let filtered = defaults.filter { availableFields.contains($0) }
-                    selectedFields = filtered.isEmpty ? Array(availableFields.prefix(3)) : filtered
-                    dateGranularity = "day"
-                    onSave?(selectedFields)
-                    onUpdateGrouping?()
-                }
-                .buttonStyle(.bordered).controlSize(.small)
                 Spacer()
                 Button("Done") { onClose() }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
             }
         }
         .padding(14)
-        .frame(width: 280)
+        .frame(width: 380)
     }
 }
