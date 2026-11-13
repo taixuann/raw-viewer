@@ -43,6 +43,7 @@ private func makeTempConfigDir() throws -> URL {
         defaultSnapshotDPI: 600,
         defaultExportFormat: "svg",
         defaultSnapshotSubdir: "exports/figures",
+        defaultTreeGrouping: ["study", "device", "date"],
         defaultTreeDateGranularity: "month",
         lazyInspectionEnabled: false,
         maxComparisonAutoLoad: 42,

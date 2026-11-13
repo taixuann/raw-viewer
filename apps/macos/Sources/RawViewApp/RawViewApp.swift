@@ -345,6 +345,9 @@ final class RawViewModel: ObservableObject {
     func saveTreeGrouping(_ fields: [String]) {
         treeGroupingFields = fields
         updateSourceTree()
+        var updatedPrefs = globalPreferences
+        updatedPrefs.defaultTreeGrouping = fields
+        saveGlobalPreferences(updatedPrefs)
         guard let project else { return }
         do {
             let current = try ProjectSettingsStore.load(projectRoot: project.root)
@@ -974,6 +977,9 @@ final class RawViewModel: ObservableObject {
         let prefs = GlobalPreferencesStore.load()
         globalPreferences = prefs
         selectedPaletteID = ColorPalettePreset.from(id: prefs.defaultPaletteID).rawValue
+        if !prefs.defaultTreeGrouping.isEmpty {
+            treeGroupingFields = prefs.defaultTreeGrouping
+        }
         let savedLimit = UserDefaults.standard.object(forKey: "rawView.cacheLimitBytes.v1") as? Int64
         cacheLimitBytes = savedLimit ?? Int64(prefs.cacheLimitMB) * 1024 * 1024
         if UserDefaults.standard.object(forKey: "treeDateGranularity") == nil {

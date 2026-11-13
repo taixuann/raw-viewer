@@ -72,6 +72,7 @@ public struct GlobalPreferences: Equatable, Sendable {
     public var defaultSnapshotSubdir: String
 
     // Workspace & Performance
+    public var defaultTreeGrouping: [String]
     public var defaultTreeDateGranularity: String
     public var lazyInspectionEnabled: Bool
     public var maxComparisonAutoLoad: Int
@@ -100,6 +101,7 @@ public struct GlobalPreferences: Equatable, Sendable {
         defaultSnapshotDPI: Int = 300,
         defaultExportFormat: String = "png",
         defaultSnapshotSubdir: String = "data/snapshot",
+        defaultTreeGrouping: [String] = ["device", "application-mode", "device-id", "date"],
         defaultTreeDateGranularity: String = "day",
         lazyInspectionEnabled: Bool = true,
         maxComparisonAutoLoad: Int = 15,
@@ -127,6 +129,7 @@ public struct GlobalPreferences: Equatable, Sendable {
         self.defaultSnapshotDPI = defaultSnapshotDPI
         self.defaultExportFormat = defaultExportFormat
         self.defaultSnapshotSubdir = defaultSnapshotSubdir
+        self.defaultTreeGrouping = defaultTreeGrouping.isEmpty ? ["device", "application-mode", "device-id", "date"] : defaultTreeGrouping
         self.defaultTreeDateGranularity = defaultTreeDateGranularity
         self.lazyInspectionEnabled = lazyInspectionEnabled
         self.maxComparisonAutoLoad = maxComparisonAutoLoad
@@ -147,6 +150,10 @@ public struct GlobalPreferences: Equatable, Sendable {
         copy.defaultSnapshotDPI = Self.clamp(defaultSnapshotDPI, to: 72...1200)
         copy.maxComparisonAutoLoad = Self.clamp(maxComparisonAutoLoad, to: 1...200)
         copy.cacheLimitMB = Self.clamp(cacheLimitMB, to: 64...8192)
+        let cleanedGrouping = defaultTreeGrouping
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        copy.defaultTreeGrouping = cleanedGrouping.isEmpty ? ["device", "application-mode", "device-id", "date"] : cleanedGrouping
         return copy
     }
 
@@ -244,6 +251,12 @@ public enum GlobalPreferencesStore {
         if let v = stringValue(root, key: "default_snapshot_subdir") { prefs.defaultSnapshotSubdir = v }
 
         // Workspace & Performance
+        if let items = root.value(for: "default_tree_grouping")?.listItems {
+            let fields = items.compactMap { $0.scalarValue?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            if !fields.isEmpty {
+                prefs.defaultTreeGrouping = fields
+            }
+        }
         if let v = stringValue(root, key: "default_tree_date_granularity") { prefs.defaultTreeDateGranularity = v }
         if let v = boolValue(root, key: "lazy_inspection_enabled") { prefs.lazyInspectionEnabled = v }
         if let v = intValue(root, key: "max_comparison_auto_load") { prefs.maxComparisonAutoLoad = v }
@@ -277,6 +290,7 @@ public enum GlobalPreferencesStore {
             "default_snapshot_dpi: \(p.defaultSnapshotDPI)",
             "default_export_format: \(quoted(p.defaultExportFormat))",
             "default_snapshot_subdir: \(quoted(p.defaultSnapshotSubdir))",
+            "default_tree_grouping: [\(p.defaultTreeGrouping.map { quoted($0) }.joined(separator: ", "))]",
             "default_tree_date_granularity: \(quoted(p.defaultTreeDateGranularity))",
             "lazy_inspection_enabled: \(p.lazyInspectionEnabled ? "true" : "false")",
             "max_comparison_auto_load: \(p.maxComparisonAutoLoad)",
