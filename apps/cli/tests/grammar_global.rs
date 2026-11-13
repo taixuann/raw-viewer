@@ -3,17 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn cli_bin() -> PathBuf {
-    let mut p = std::env::current_exe().expect("current test exe path");
-    p.pop();
-    if p.file_name().map(|n| n == "deps").unwrap_or(false) {
-        p.pop();
-    }
-    p.push(if cfg!(windows) {
-        "raw-viewer.exe"
-    } else {
-        "raw-viewer"
-    });
-    p
+    PathBuf::from(env!("CARGO_BIN_EXE_raw-viewer"))
 }
 
 fn temp_dir(name: &str) -> PathBuf {

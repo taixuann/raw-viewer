@@ -3,13 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn cli_bin() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop(); // apps
-    path.pop(); // root
-    path.push("target");
-    path.push("debug");
-    path.push("raw-viewer");
-    path
+    PathBuf::from(env!("CARGO_BIN_EXE_raw-viewer"))
 }
 
 fn fixture_usth_lab() -> PathBuf {

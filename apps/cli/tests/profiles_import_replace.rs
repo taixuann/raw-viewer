@@ -3,17 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn cli_bin() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop();
-    path.pop();
-    path.push("target");
-    path.push("debug");
-    path.push(if cfg!(windows) {
-        "raw-viewer.exe"
-    } else {
-        "raw-viewer"
-    });
-    path
+    PathBuf::from(env!("CARGO_BIN_EXE_raw-viewer"))
 }
 
 fn keithley_asset() -> PathBuf {
