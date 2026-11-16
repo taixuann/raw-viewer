@@ -734,6 +734,30 @@ fn ascii_casefold_path(path: &str) -> String {
     path.chars().flat_map(char::to_lowercase).collect()
 }
 
+/// Renders a manifest in the `package.yaml` form that `parse_package_manifest` accepts.
+pub fn render_manifest(manifest: &PackageManifest) -> String {
+    let mut out = format!(
+        "schema_version: {}\nid: {}\nversion: {}\ndisplay_name: {}\nprofiles:\n",
+        manifest.schema_version,
+        manifest.id.as_str(),
+        quote(&manifest.version),
+        quote(&manifest.display_name),
+    );
+    for entry in &manifest.profiles {
+        out.push_str(&format!(
+            "  - id: {}\n    path: {}\n    sha256: {}\n",
+            entry.id.as_str(),
+            entry.path.as_str(),
+            entry.sha256.as_str(),
+        ));
+    }
+    out
+}
+
+fn quote(text: &str) -> String {
+    serde_json::to_string(text).expect("string serializes")
+}
+
 fn is_visible_ascii(c: char) -> bool {
     c.is_ascii() && !c.is_control()
 }
