@@ -103,6 +103,8 @@ struct InspectorPane: View {
 
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @State private var selectedTab: InspectorTab = .data
+    @State private var keithleyLoad: KeithleyLoad?
+    @State private var comparisonLoad: [String: KeithleyMetadata] = [:]
 
     private var palettePreset: ColorPalettePreset {
         ColorPalettePreset.from(id: selectedPaletteID)
@@ -275,11 +277,15 @@ struct InspectorPane: View {
 
         progressionSection
 
-        if let km = keithleyMetadata {
-            keithleyMetadataSection(km)
+        Group {
+            if let km = keithleyMetadata {
+                keithleyMetadataSection(km)
+            }
         }
+        .task(id: keithleyTaskKey) { await loadKeithleyMetadata() }
 
         metadataComparisonSection
+            .task(id: keithleyComparisonIDs) { await loadComparisonMetadata() }
     }
 
     @ViewBuilder
@@ -968,11 +974,51 @@ struct InspectorPane: View {
 
     // MARK: - Keithley Programmed Sweep Metadata & Comparison
 
+    private struct KeithleyLoad: Equatable {
+        let sourceID: String
+        let metadata: KeithleyMetadata
+    }
+
+    /// Re-runs the Keithley load when the file or its matched profile changes.
+    private var keithleyTaskKey: String {
+        "\(source?.path ?? "")|\(inspection?.profileID ?? "")"
+    }
+
+    /// Only files matched to usth/keithley-2400 get the block. Filled from the cache, never read in body.
     private var keithleyMetadata: KeithleyMetadata? {
-        if let source {
-            return KeithleyMetadataParser.extract(from: source)
+        guard KeithleyMetadataParser.isKeithley2400(profileID: inspection?.profileID),
+              let source, let keithleyLoad, keithleyLoad.sourceID == (sourceID ?? source.path) else { return nil }
+        return keithleyLoad.metadata
+    }
+
+    private func loadKeithleyMetadata() async {
+        guard let source, KeithleyMetadataParser.isKeithley2400(profileID: inspection?.profileID) else {
+            keithleyLoad = nil
+            return
         }
-        return nil
+        let id = sourceID ?? source.path
+        let metadata = await KeithleyMetadataCache.shared.metadata(sourceID: id, url: source) ?? .absent
+        guard !Task.isCancelled else { return }
+        keithleyLoad = KeithleyLoad(sourceID: id, metadata: metadata)
+    }
+
+    /// Selected files matched to usth/keithley-2400, sorted. Other profiles never join the comparison.
+    private var keithleyComparisonIDs: [String] {
+        selectedIDs.filter { KeithleyMetadataParser.isKeithley2400(profileID: states[$0]?.inspection?.profileID) }.sorted()
+    }
+
+    private func loadComparisonMetadata() async {
+        let ids = keithleyComparisonIDs
+        guard ids.count >= 2 else {
+            comparisonLoad = [:]
+            return
+        }
+        var loaded: [String: KeithleyMetadata] = [:]
+        for id in ids {
+            loaded[id] = await KeithleyMetadataCache.shared.metadata(sourceID: id, url: URL(fileURLWithPath: id)) ?? .absent
+        }
+        guard !Task.isCancelled else { return }
+        comparisonLoad = loaded
     }
 
     @ViewBuilder
@@ -995,7 +1041,7 @@ struct InspectorPane: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(meta.sweepPath)
+                    Text(meta.sweepPath ?? "Null")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.primary)
                 }
@@ -1005,7 +1051,7 @@ struct InspectorPane: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(meta.voltageStep)
+                    Text(meta.voltageStep ?? "Null")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
                 }
@@ -1015,7 +1061,7 @@ struct InspectorPane: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(meta.compliance)
+                    Text(meta.compliance ?? "Null")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
                 }
@@ -1025,16 +1071,12 @@ struct InspectorPane: View {
 
     @ViewBuilder
     private var metadataComparisonSection: some View {
-        if selectedIDs.count >= 2 {
-            let items: [(id: String, meta: KeithleyMetadata?)] = selectedIDs.sorted().map { id in
-                let url = URL(fileURLWithPath: id)
-                return (id, KeithleyMetadataParser.extract(from: url))
-            }
-            let validMetas = items.compactMap(\.meta)
+        if keithleyComparisonIDs.count >= 2 {
+            let validMetas = keithleyComparisonIDs.compactMap { comparisonLoad[$0] }
             if !validMetas.isEmpty {
-                let allSamePath = Set(validMetas.map(\.sweepPath)).count <= 1
-                let allSameStep = Set(validMetas.map(\.voltageStep)).count <= 1
-                let allSameCompliance = Set(validMetas.map(\.compliance)).count <= 1
+                let allSamePath = KeithleyMetadataParser.allSame(validMetas.map(\.sweepPath))
+                let allSameStep = KeithleyMetadataParser.allSame(validMetas.map(\.voltageStep))
+                let allSameCompliance = KeithleyMetadataParser.allSame(validMetas.map(\.compliance))
 
                 InspectorSection(title: "METADATA COMPARISON", badge: "\(validMetas.count) files") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1043,7 +1085,7 @@ struct InspectorPane: View {
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(allSamePath ? (validMetas.first?.sweepPath ?? "—") : "Varies across files")
+                            Text(allSamePath ? (validMetas.first?.sweepPath ?? "Null") : "Varies across files")
                                 .font(.system(size: 10.5, weight: allSamePath ? .medium : .bold, design: .monospaced))
                                 .foregroundStyle(allSamePath ? Color.primary : Color.orange)
                         }
@@ -1053,7 +1095,7 @@ struct InspectorPane: View {
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(allSameStep ? (validMetas.first?.voltageStep ?? "—") : "Varies across files")
+                            Text(allSameStep ? (validMetas.first?.voltageStep ?? "Null") : "Varies across files")
                                 .font(.system(size: 10.5, weight: allSameStep ? .medium : .bold))
                                 .foregroundStyle(allSameStep ? Color.primary : Color.orange)
                         }
@@ -1063,7 +1105,7 @@ struct InspectorPane: View {
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(allSameCompliance ? (validMetas.first?.compliance ?? "—") : "Varies across files")
+                            Text(allSameCompliance ? (validMetas.first?.compliance ?? "Null") : "Varies across files")
                                 .font(.system(size: 10.5, weight: allSameCompliance ? .medium : .bold))
                                 .foregroundStyle(allSameCompliance ? Color.primary : Color.orange)
                         }
