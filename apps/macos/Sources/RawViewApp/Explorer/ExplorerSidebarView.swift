@@ -9,6 +9,8 @@ struct ProjectSourcesSidebar: View {
     @Binding var focusedSourceID: String?
     @Binding var selectedSourceIDs: Set<String>
     var sourceTree: SourceTree? = nil
+    /// Grammar facts per source basename, built off the main thread with the tree.
+    var facetIndex: FacetIndex = .empty
     var inventoryIssues: [InventoryIssue] = []
     var dataRoot: String = "data/raw"
     var projectRoot: URL? = nil
@@ -59,6 +61,7 @@ struct ProjectSourcesSidebar: View {
         focusedSourceID: Binding<String?>,
         selectedSourceIDs: Binding<Set<String>>,
         sourceTree: SourceTree? = nil,
+        facetIndex: FacetIndex = .empty,
         inventoryIssues: [InventoryIssue] = [],
         dataRoot: String = "data/raw",
         projectRoot: URL? = nil,
@@ -83,6 +86,7 @@ struct ProjectSourcesSidebar: View {
         self._focusedSourceID = focusedSourceID
         self._selectedSourceIDs = selectedSourceIDs
         self.sourceTree = sourceTree
+        self.facetIndex = facetIndex
         self.inventoryIssues = inventoryIssues
         self.dataRoot = dataRoot
         self.projectRoot = projectRoot
@@ -127,7 +131,7 @@ struct ProjectSourcesSidebar: View {
     private func groups(for key: String) -> [SourceGroup] {
         guard let ref = RawViewModel.explorerViewReference(forKey: key),
               let grammar = catalog?.grammars.first(where: { $0.id == ref.grammarID }) else { return [] }
-        let base = SourceGrouping.groups(sources: sources, grammar: grammar, variable: ref.variable)
+        let base = SourceGrouping.groups(sources: sources, grammar: grammar, variable: ref.variable, index: facetIndex)
         let allowed = Set(filteredSources.map(\.id))
         return base.compactMap { group -> SourceGroup? in
             let ids = group.sourceIDs.filter { allowed.contains($0) && matches($0, label: group.label) }
@@ -492,15 +496,7 @@ struct ProjectSourcesSidebar: View {
 
     private func distinctValues(for variable: String) -> [String] {
         guard let grammar = catalog?.activeGrammar ?? catalog?.grammars.first else { return [] }
-        var vals = Set<String>()
-        for source in sources {
-            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
-            if facts.isMatched, let val = facts.extractedFields[variable]?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
-                vals.insert(val)
-                if vals.count >= 250 { break }
-            }
-        }
-        return vals.sorted()
+        return facetIndex.distinctValues(field: variable, grammar: grammar)
     }
 
     private var filterMenu: some View {
@@ -820,25 +816,10 @@ struct ProjectSourcesSidebar: View {
     private func matchesFilter(for source: RawSource) -> Bool {
         if filter.isEmpty { return true }
         guard let grammar = catalog?.activeGrammar ?? catalog?.grammars.first else { return true }
-        let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
-        for (facetKey, selected) in filter.selections where !selected.isEmpty {
-            let variableName: String = {
-                if let ref = RawViewModel.explorerViewReference(forKey: facetKey) {
-                    return ref.variable
-                }
-                return facetKey
-            }()
-            if facts.isMatched {
-                if let value = facts.extractedFields[variableName]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
-                    guard selected.contains(value) else { return false }
-                } else {
-                    guard selected.contains(SourceGrouping.missingValueBucketLabel) else { return false }
-                }
-            } else {
-                guard selected.contains(SourceGrouping.unmatchedBucketLabel) else { return false }
-            }
+        let facts = facetIndex.facts(forFilename: source.url.lastPathComponent, grammar: grammar)
+        return FacetIndex.matches(filter, facts: facts) { facetKey in
+            RawViewModel.explorerViewReference(forKey: facetKey)?.variable ?? facetKey
         }
-        return true
     }
 
     private func matches(_ id: String, label: String) -> Bool {
