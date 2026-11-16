@@ -98,31 +98,29 @@ public struct TreeHierarchyEditorView: View {
         }
     }
 
+    /// Folders wrap onto more lines rather than scrolling, so narrow popovers still show every name.
     private func previewRow(_ path: [String]) -> some View {
         let folders = path.dropLast()
         let file = path.last ?? ""
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(Array(folders.enumerated()), id: \.offset) { _, folder in
-                    HStack(spacing: 3) {
-                        Image(systemName: "folder.fill")
-                            .font(AppTypography.chevron(uiFontSize: uiFontSize, fontFamily: fontFamily))
-                            .foregroundStyle(Color.accentColor)
-                        Text(folder)
-                            .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                            .foregroundStyle(.primary)
-                    }
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.12)))
-                    Text("/")
+        return AppFlowLayout(horizontalSpacing: 4, verticalSpacing: 4) {
+            ForEach(Array(folders.enumerated()), id: \.offset) { _, folder in
+                HStack(spacing: 3) {
+                    Image(systemName: "folder.fill")
+                        .font(AppTypography.chevron(uiFontSize: uiFontSize, fontFamily: fontFamily))
+                        .foregroundStyle(Color.accentColor)
+                    Text(folder)
                         .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                 }
-                Text(file)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.12)))
+                Text("/")
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
+            Text(file)
+                .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                .foregroundStyle(.secondary)
         }
     }
 
