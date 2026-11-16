@@ -525,10 +525,12 @@ struct ProjectSourcesSidebar: View {
                             filter.remove(facet: chip.0, value: chip.1)
                         } label: {
                             HStack(spacing: 4) {
+                                // A filter key is a grammar field name or a saved view key; the chip shows the variable.
+                                let variable = RawViewModel.explorerViewReference(forKey: chip.0)?.variable ?? chip.0
                                 AppTokenPill(
-                                    name: chip.0,
-                                    role: grammarField(named: chip.0)?.role,
-                                    type: grammarField(named: chip.0)?.type,
+                                    name: variable,
+                                    role: grammarField(named: variable)?.role,
+                                    type: grammarField(named: variable)?.type,
                                     uiFontSize: uiFontSize
                                 )
                                 Text(chip.1)
@@ -667,7 +669,7 @@ struct ProjectSourcesSidebar: View {
         .help("Tree grouping: Grammar, Folder, or Flat")
         .popover(isPresented: $showHierarchyConfig) {
             HierarchyConfigPopover(
-                grammar: catalog?.activeGrammar,
+                grammar: catalog?.activeGrammar ?? catalog?.grammars.first,
                 sources: sources,
                 selectedFields: $treeGroupingFields,
                 dateGranularity: $treeDateGranularity,
