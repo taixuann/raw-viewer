@@ -97,20 +97,23 @@ public struct StudioSegmentPicker<SelectionValue: Hashable, Content: View>: View
 /// The one grammar token style, used by the Settings Grammar tab, the hierarchy editor
 /// and the Explorer. Color comes from the token's family (type and role), never its name.
 extension GrammarTokenFamily {
-    /// One hue per family. The label stays primary, so contrast holds in light and dark mode.
+    /// One hue per role family. The label stays primary, so contrast holds in light and dark mode.
     var tint: Color {
         switch self {
         case .time: return .orange
         case .instrument: return .blue
-        case .method: return .teal
-        case .sample: return .purple
+        case .device: return .indigo
+        case .mode: return .teal
+        case .category: return .green
+        case .batch: return .purple
         case .remarks: return .brown
         case .neutral: return .secondary
         }
     }
 }
 
-/// Grammar token chip. Shows `{name}`, wrapped in `[ ]` when optional.
+/// Grammar token chip. Shows `{name}`. An optional token gets a trailing `?` and a dashed
+/// border, because square brackets are literal characters in a filename, not markers.
 public struct AppTokenPill: View {
     let name: String
     var family: GrammarTokenFamily = .neutral
@@ -146,19 +149,14 @@ public struct AppTokenPill: View {
 
     public var body: some View {
         HStack(spacing: 1) {
-            if isOptional {
-                Text("[")
-                    .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                    .foregroundStyle(.secondary)
-            }
             Text("{\(name)}")
                 .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                 .foregroundStyle(isHighlighted ? Color.white : Color.primary)
                 .lineLimit(1)
             if isOptional {
-                Text("]")
+                Text("?")
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isHighlighted ? Color.white : Color.secondary)
             }
         }
         .lineLimit(1)
@@ -171,7 +169,10 @@ public struct AppTokenPill: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 4)
-                .stroke(isHighlighted ? Color.accentColor : family.tint.opacity(0.55), lineWidth: 0.75)
+                .strokeBorder(
+                    isHighlighted ? Color.accentColor : family.tint.opacity(0.55),
+                    style: StrokeStyle(lineWidth: 0.75, dash: isOptional ? [3, 2] : [])
+                )
         )
     }
 }

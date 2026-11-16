@@ -5,8 +5,10 @@ import Foundation
 public enum GrammarTokenFamily: String, Sendable, CaseIterable {
     case time
     case instrument
-    case method
-    case sample
+    case device
+    case mode
+    case category
+    case batch
     case remarks
     case neutral
 
@@ -15,12 +17,16 @@ public enum GrammarTokenFamily: String, Sendable, CaseIterable {
             self = .time
             return
         }
-        switch role?.trimmingCharacters(in: .whitespaces).lowercased() {
-        case "instrument", "device": self = .instrument
-        case "mode", "application-mode", "category": self = .method
-        case "batch": self = .sample
+        // Stored roles are labels such as "Device ID"; the engine maps them to stable keys.
+        let key = role.map { FilenameGrammarEngine.canonicalRoleKey(for: $0.trimmingCharacters(in: .whitespaces)) }
+        switch key {
+        case "instrument": self = .instrument
+        case "device": self = .device
+        case "mode", "application-mode": self = .mode
+        case "category": self = .category
+        case "batch": self = .batch
         case "remarks", "remark": self = .remarks
-        default: self = type == .number ? .sample : .neutral
+        default: self = type == .number ? .batch : .neutral
         }
     }
 }
