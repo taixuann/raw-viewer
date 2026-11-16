@@ -885,11 +885,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 14) {
-                        let activeGrammar = model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first
-                        let available = activeGrammar?.fields.map(\.name) ?? ["device", "application-mode", "device-id", "date"]
-
                         TreeHierarchyEditorView(
-                            availableFields: available,
+                            grammar: model.explorerCatalog?.activeGrammar ?? model.explorerCatalog?.grammars.first,
+                            sources: Array(model.sources.prefix(400)),
                             selectedFields: $model.treeGroupingFields,
                             dateGranularity: $treeDateGranularity,
                             uiFontSize: uiFontSize,

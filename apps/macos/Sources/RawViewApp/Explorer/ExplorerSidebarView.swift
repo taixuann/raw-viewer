@@ -607,9 +607,9 @@ struct ProjectSourcesSidebar: View {
         .fixedSize()
         .help("Tree grouping: Grammar, Folder, or Flat")
         .popover(isPresented: $showHierarchyConfig) {
-            let available = catalog?.activeGrammar?.fields.map(\.name) ?? ["device", "application-mode", "device-id", "date"]
             HierarchyConfigPopover(
-                availableFields: available,
+                grammar: catalog?.activeGrammar,
+                sources: sources,
                 selectedFields: $treeGroupingFields,
                 dateGranularity: $treeDateGranularity,
                 uiFontSize: uiFontSize,
@@ -1184,7 +1184,8 @@ private struct FlowLayout: Layout {
 
 /// Popover to configure the ordered filename-grammar variables for tree grouping.
 struct HierarchyConfigPopover: View {
-    let availableFields: [String]
+    let grammar: FilenameGrammar?
+    let sources: [RawSource]
     @Binding var selectedFields: [String]
     @Binding var dateGranularity: String
     var uiFontSize: Double = AppTypography.baselineFontSize
@@ -1213,7 +1214,8 @@ struct HierarchyConfigPopover: View {
             }
 
             TreeHierarchyEditorView(
-                availableFields: availableFields,
+                grammar: grammar,
+                sources: sources,
                 selectedFields: $selectedFields,
                 dateGranularity: $dateGranularity,
                 uiFontSize: uiFontSize,
