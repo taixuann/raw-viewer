@@ -401,6 +401,8 @@ struct SettingsView: View {
                                 }
                             }
 
+                            LabPackagesUpdateView(package: pkg, projectRoot: model.project?.root, onChanged: { refreshInstalledPackages() })
+
                             Text("Profiles: \(pkg.profiles.map(\.id).joined(separator: ", "))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
