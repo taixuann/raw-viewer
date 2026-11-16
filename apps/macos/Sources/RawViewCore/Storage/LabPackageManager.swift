@@ -262,14 +262,15 @@ public enum LabPackageManager {
     }
 
     /// Profile ids to write. An empty `only` means the whole package. A named profile that cannot
-    /// be written throws before anything is written.
-    public static func selectWrites(plan: UpdatePlan, only: Set<String>, replace: Set<String>) throws -> [String] {
+    /// be written throws before anything is written. A `keepBoth` id skips that throw, because
+    /// keeping both never replaces the edited file.
+    public static func selectWrites(plan: UpdatePlan, only: Set<String>, replace: Set<String>, keepBoth: Set<String> = []) throws -> [String] {
         for id in only.sorted() {
             guard let update = plan.profiles.first(where: { $0.id == id }) else { continue }
             switch update.state {
             case .projectOverride:
                 throw LabPackageError.upgradeRefused("\(id) is overridden by a project-local profile and is not changed")
-            case .locallyEdited where !replace.contains(id):
+            case .locallyEdited where !replace.contains(id) && !keepBoth.contains(id):
                 throw LabPackageError.upgradeRefused("\(id) was edited locally; pass --replace \(id) to replace it")
             default:
                 continue
@@ -354,12 +355,14 @@ public enum LabPackageManager {
 
     /// Upgrades the installed USTH package. `only` limits the upgrade to named profiles, and
     /// `replace` consents to replacing edited profiles. An edited profile without consent stays in
-    /// place, and its bundled copy is staged under `usth-lab/staged/`.
+    /// place, and its bundled copy is staged under `usth-lab/staged/`. `keepBoth` names edited
+    /// profiles to keep and stage on purpose, which lets a single-profile upgrade stage one copy.
     public static func upgradeUSTHLabPackage(
         globalConfigDir: URL? = nil,
         projectRoot: URL? = nil,
         only: Set<String> = [],
-        replace: Set<String> = []
+        replace: Set<String> = [],
+        keepBoth: Set<String> = []
     ) throws -> UpgradeOutcome {
         let inputs = try loadUpgradeInputs(globalConfigDir: globalConfigDir, projectRoot: projectRoot)
         let plan = planUpdate(
@@ -370,7 +373,7 @@ public enum LabPackageManager {
             bundled: inputs.bundled,
             projectOverrides: inputs.overrides
         )
-        let writes = try selectWrites(plan: plan, only: only, replace: replace)
+        let writes = try selectWrites(plan: plan, only: only, replace: replace, keepBoth: keepBoth)
         let kept = plan.profiles
             .filter { $0.state == .locallyEdited && !writes.contains($0.id) && (only.isEmpty || only.contains($0.id)) }
             .map(\.id)
