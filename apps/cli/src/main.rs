@@ -252,6 +252,33 @@ enum PackagesCommands {
         #[arg(help = "Package ID to remove (e.g. usth-lab)")]
         id: String,
     },
+
+    #[command(about = "Upgrade an installed package or selected profiles")]
+    Upgrade {
+        #[arg(help = "Package ID to upgrade (e.g. usth-lab)")]
+        id: String,
+
+        #[arg(long, help = "Show the plan without writing anything")]
+        dry_run: bool,
+
+        #[arg(
+            long = "profile",
+            help = "Limit the upgrade to this profile ID (repeatable)"
+        )]
+        profile: Vec<String>,
+
+        #[arg(
+            long,
+            help = "Profile ID whose local edits may be replaced (repeatable)"
+        )]
+        replace: Vec<String>,
+
+        #[arg(
+            long,
+            help = "Project path whose project-local profiles take precedence"
+        )]
+        project: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -434,6 +461,16 @@ fn main() {
                 commands::packages::install(*usth, from.as_deref(), *replace),
             ),
             PackagesCommands::Remove { id } => ("packages.remove", commands::packages::remove(id)),
+            PackagesCommands::Upgrade {
+                id,
+                dry_run,
+                profile,
+                replace,
+                project,
+            } => (
+                "packages.upgrade",
+                commands::packages::upgrade(id, *dry_run, profile, replace, project.as_deref()),
+            ),
         },
         Commands::Files { cmd } => match cmd {
             FilesCommands::Inspect { project, file } => {
