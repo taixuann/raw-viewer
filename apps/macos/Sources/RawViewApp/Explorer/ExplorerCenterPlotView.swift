@@ -853,7 +853,7 @@ struct NativePlot: View {
                         }
                     }()
                     PlotRenderingEngine.renderRun(
-                        points: runPoints,
+                        points: PlotRenderingEngine.reducedForDrawing(runPoints, mark: markType, plotWidth: plot.width),
                         mark: markType,
                         interpolation: interpolation,
                         color: segColor,
@@ -874,7 +874,7 @@ struct NativePlot: View {
                         runPoints.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
                     }
                     PlotRenderingEngine.renderRun(
-                        points: runPoints,
+                        points: PlotRenderingEngine.reducedForDrawing(runPoints, mark: markType, plotWidth: plot.width),
                         mark: markType,
                         interpolation: interpolation,
                         color: color,
@@ -1214,7 +1214,7 @@ struct OverlayPlot: View {
                 guard index < item.y.count, let x = item.x[index], let y = item.y[index] else {
                     if !currentRun.isEmpty {
                         PlotRenderingEngine.renderRun(
-                            points: currentRun,
+                            points: PlotRenderingEngine.reducedForDrawing(currentRun, mark: markType, plotWidth: plot.width),
                             mark: markType,
                             interpolation: interpolation,
                             color: color,
@@ -1233,7 +1233,7 @@ struct OverlayPlot: View {
             }
             if !currentRun.isEmpty {
                 PlotRenderingEngine.renderRun(
-                    points: currentRun,
+                    points: PlotRenderingEngine.reducedForDrawing(currentRun, mark: markType, plotWidth: plot.width),
                     mark: markType,
                     interpolation: interpolation,
                     color: color,

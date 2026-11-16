@@ -149,6 +149,20 @@ enum PlotRenderingEngine {
         return Color(red: 239.0 / 255.0, green: 68.0 / 255.0, blue: 68.0 / 255.0)
     }
 
+    /// Dense line runs keep only the extremes of each pixel column. Dots and
+    /// short runs keep every point, so small series render exactly as before.
+    static func reducedForDrawing(_ points: [CGPoint], mark: PlotMarkType, plotWidth: CGFloat) -> [CGPoint] {
+        guard mark == .line, plotWidth.isFinite, plotWidth >= 1 else { return points }
+        let columns = Int(plotWidth)
+        guard PlotDownsampler.needsDownsampling(pointCount: points.count, plotWidth: columns) else { return points }
+        let kept = PlotDownsampler.keptIndices(
+            x: points.map { Double($0.x) },
+            y: points.map { Double($0.y) },
+            columns: columns
+        )
+        return kept.map { points[$0] }
+    }
+
     /// Render circular markers for scatter points.
     static func drawMarkers(points: [CGPoint], markerSize: CGFloat, color: Color, colorBySweepProgress: Bool = false, in context: inout GraphicsContext) {
         let r = markerSize / 2.0
