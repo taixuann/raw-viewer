@@ -94,35 +94,54 @@ public struct StudioSegmentPicker<SelectionValue: Hashable, Content: View>: View
 
 // MARK: - AppTokenPill
 
-/// Reusable grammar token pill with syntax tint and dynamic typography scaling.
+/// The one grammar token style, used by the Settings Grammar tab, the hierarchy editor
+/// and the Explorer. Color comes from the token's family (type and role), never its name.
+extension GrammarTokenFamily {
+    /// One hue per family. The label stays primary, so contrast holds in light and dark mode.
+    var tint: Color {
+        switch self {
+        case .time: return .orange
+        case .instrument: return .blue
+        case .method: return .teal
+        case .sample: return .purple
+        case .remarks: return .brown
+        case .neutral: return .secondary
+        }
+    }
+}
+
+/// Grammar token chip. Shows `{name}`, wrapped in `[ ]` when optional.
 public struct AppTokenPill: View {
     let name: String
+    var family: GrammarTokenFamily = .neutral
     var isOptional: Bool = false
     var isHighlighted: Bool = false
     var uiFontSize: Double = 12.0
 
-    public init(name: String, isOptional: Bool = false, isHighlighted: Bool = false, uiFontSize: Double = 12.0) {
+    public init(
+        name: String,
+        role: String? = nil,
+        type: GrammarFieldType? = nil,
+        isOptional: Bool = false,
+        isHighlighted: Bool = false,
+        uiFontSize: Double = 12.0
+    ) {
         self.name = name
+        self.family = GrammarTokenFamily(role: role, type: type)
         self.isOptional = isOptional
         self.isHighlighted = isHighlighted
         self.uiFontSize = uiFontSize
     }
 
-    private var tokenColor: Color {
-        let lower = name.lowercased()
-        if lower.contains("date") || lower.contains("time") {
-            return .orange
-        } else if lower.contains("device") || lower.contains("instrument") {
-            return .blue
-        } else if lower.contains("mode") || lower.contains("application") {
-            return .teal
-        } else if lower.contains("study") || lower.contains("batch") {
-            return .purple
-        } else if isOptional {
-            return .secondary
-        } else {
-            return .primary
-        }
+    public init(field: GrammarField, isHighlighted: Bool = false, uiFontSize: Double = 12.0) {
+        self.init(
+            name: field.name,
+            role: field.role,
+            type: field.type,
+            isOptional: field.isOptional,
+            isHighlighted: isHighlighted,
+            uiFontSize: uiFontSize
+        )
     }
 
     public var body: some View {
@@ -130,16 +149,16 @@ public struct AppTokenPill: View {
             if isOptional {
                 Text("[")
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                    .foregroundStyle(.secondary.opacity(0.8))
+                    .foregroundStyle(.secondary)
             }
             Text("{\(name)}")
                 .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                .foregroundStyle(isHighlighted ? Color.white : tokenColor)
+                .foregroundStyle(isHighlighted ? Color.white : Color.primary)
                 .lineLimit(1)
             if isOptional {
                 Text("]")
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
-                    .foregroundStyle(.secondary.opacity(0.8))
+                    .foregroundStyle(.secondary)
             }
         }
         .lineLimit(1)
@@ -148,11 +167,11 @@ public struct AppTokenPill: View {
         .padding(.vertical, 2.5)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(isHighlighted ? Color.accentColor : tokenColor.opacity(0.12))
+                .fill(isHighlighted ? Color.accentColor : family.tint.opacity(0.14))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 4)
-                .stroke(isHighlighted ? Color.accentColor : tokenColor.opacity(0.3), lineWidth: 0.8)
+                .stroke(isHighlighted ? Color.accentColor : family.tint.opacity(0.55), lineWidth: 0.75)
         )
     }
 }
