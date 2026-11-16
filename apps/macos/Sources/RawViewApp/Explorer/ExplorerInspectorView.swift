@@ -995,7 +995,7 @@ struct InspectorPane: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(meta.sweepPath)
+                    Text(meta.sweepPath ?? "Unknown")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.primary)
                 }
@@ -1005,7 +1005,7 @@ struct InspectorPane: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(meta.voltageStep)
+                    Text(meta.voltageStep ?? "Unknown")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
                 }
@@ -1015,7 +1015,7 @@ struct InspectorPane: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(meta.compliance)
+                    Text(meta.compliance ?? "Unknown")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
                 }

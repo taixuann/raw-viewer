@@ -3,17 +3,18 @@ import Foundation
 /// Parsed programmed sweep metadata for Keithley instruments.
 /// Extracted from file comment / header without altering raw files.
 public struct KeithleyMetadata: Sendable, Equatable {
-    public let sweepPath: String
-    public let voltageStep: String
-    public let compliance: String
+    /// nil when the file does not carry that field. Views show the gap, not a guessed value.
+    public let sweepPath: String?
+    public let voltageStep: String?
+    public let compliance: String?
     public let rawVoltageCount: Int
     public let isValid: Bool
     public let warning: String?
 
     public init(
-        sweepPath: String,
-        voltageStep: String,
-        compliance: String,
+        sweepPath: String?,
+        voltageStep: String?,
+        compliance: String?,
         rawVoltageCount: Int = 0,
         isValid: Bool = true,
         warning: String? = nil
@@ -28,38 +29,59 @@ public struct KeithleyMetadata: Sendable, Equatable {
 }
 
 public enum KeithleyMetadataParser {
-    /// Maximum bytes to scan from file head for Comment line
-    public static let maxScanBytes = 8192
+    /// Longest line read while looking for the Comment cell. A longer line gives a warning, never a partial sweep.
+    public static let maxCommentLineBytes = 4 * 1024 * 1024
+    public static let lineTooLongWarning = "Keithley comment line exceeds 4 MB; sweep not read"
 
     /// Extracts Keithley programmed sweep metadata from file URL.
+    /// Streams from the file start and stops at the first cell carrying the sweep, so long sweeps are read whole.
     public static func extract(from url: URL) -> KeithleyMetadata? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: maxScanBytes),
-              let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .ascii) else {
+        switch firstCommentCell(in: handle) {
+        case .cell(let cell):
+            return parseLine(cell)
+        case .absent:
             return nil
+        case .lineTooLong:
+            return KeithleyMetadata(sweepPath: nil, voltageStep: nil, compliance: nil, isValid: false, warning: lineTooLongWarning)
         }
-        return extract(fromText: text)
     }
 
     /// Extracts Keithley programmed sweep metadata from header text or full text.
     public static func extract(fromText text: String) -> KeithleyMetadata? {
-        // Look for "Voltage list:" or "Compliance level:"
-        guard text.contains("Voltage list:") || text.contains("Compliance level:") else {
-            return nil
-        }
-
-        // Find the line containing "Voltage list:"
-        var targetLine = ""
         for line in text.components(separatedBy: .newlines) {
-            if line.contains("Voltage list:") || line.contains("Compliance level:") {
-                targetLine = line
-                break
+            if let cell = commentCell(inLine: line) { return parseLine(cell) }
+        }
+        return nil
+    }
+
+    private enum CommentScan {
+        case cell(String)
+        case absent
+        case lineTooLong
+    }
+
+    private static func firstCommentCell(in handle: FileHandle) -> CommentScan {
+        var line: [UInt8] = []
+        while let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            for byte in chunk {
+                if byte == 0x0A || byte == 0x0D {
+                    if let cell = commentCell(inLine: String(decoding: line, as: UTF8.self)) { return .cell(cell) }
+                    line.removeAll(keepingCapacity: true)
+                } else {
+                    line.append(byte)
+                    if line.count > maxCommentLineBytes { return .lineTooLong }
+                }
             }
         }
-        guard !targetLine.isEmpty else { return nil }
+        if let cell = commentCell(inLine: String(decoding: line, as: UTF8.self)) { return .cell(cell) }
+        return .absent
+    }
 
-        return parseLine(targetLine)
+    /// The tab-separated cell that holds "Voltage list:" or "Compliance level:", if any.
+    private static func commentCell(inLine line: String) -> String? {
+        line.components(separatedBy: "\t").first { $0.contains("Voltage list:") || $0.contains("Compliance level:") }
     }
 
     public static func parseLine(_ line: String) -> KeithleyMetadata {

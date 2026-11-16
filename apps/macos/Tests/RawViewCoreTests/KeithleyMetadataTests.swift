@@ -73,4 +73,19 @@ struct KeithleyMetadataTests {
         #expect(meta.rawVoltageCount == 5001)
         #expect(meta.compliance == "100 µA")
     }
+
+    @Test func commentLongerThanSafetyLimitWarnsInsteadOfWrongValue() throws {
+        // About 4.5 MB on one line, above the 4 MB per-line limit.
+        let oversized = "Voltage list: " + String(repeating: "0.00;", count: 900_000) + "0.00 | Compliance level: 0.000100"
+        let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: oversized))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let meta = try #require(KeithleyMetadataParser.extract(from: url))
+        #expect(meta.isValid == false)
+        #expect(meta.sweepPath == nil)
+        #expect(meta.voltageStep == nil)
+        #expect(meta.compliance == nil)
+        #expect(meta.rawVoltageCount == 0)
+        #expect(meta.warning == "Keithley comment line exceeds 4 MB; sweep not read")
+    }
 }
