@@ -141,6 +141,29 @@ public struct SourceTree: Sendable, Equatable {
             }
         }
 
+        /// One token's folder part for a source, or nil when the source has no value for it.
+        func tokenValue(_ field: String, facts: ExtractedGrammarFacts) -> String? {
+            var rawVal = facts.extractedFields[field]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Field alias resolution (e.g. instrument <-> device, or match field by role)
+            if rawVal == nil || rawVal!.isEmpty {
+                if field == "instrument" {
+                    rawVal = facts.extractedFields["device"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                } else if field == "device" {
+                    rawVal = facts.extractedFields["instrument"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if rawVal == nil || rawVal!.isEmpty {
+                    if let matchedByRole = grammar.fields.first(where: { $0.role?.lowercased() == field.lowercased() }) {
+                        rawVal = facts.extractedFields[matchedByRole.name]?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+            }
+            guard let v = rawVal, !v.isEmpty else { return nil }
+            let fieldDef = grammar.fields.first(where: { $0.name == field })
+            let isDateField = (field == "date" || fieldDef?.type == .datetime || fieldDef?.role?.lowercased().contains("date") == true)
+            guard isDateField else { return v }
+            return FilenameGrammarEngine.normalizeDate(v, formatHint: fieldDef?.formatHint, granularity: dateGranularity)
+        }
+
         func buildLevel(items: [(source: RawSource, facts: ExtractedGrammarFacts)], fieldIndex: Int, pathPrefix: String) -> [SourceTreeNode] {
             guard fieldIndex < groupingFields.count else {
                 return items.sorted { $0.source.relativePath < $1.source.relativePath }.map { item in
@@ -153,38 +176,15 @@ public struct SourceTree: Sendable, Equatable {
                 }
             }
 
-            let currentField = groupingFields[fieldIndex]
-            let fieldDef = grammar.fields.first(where: { $0.name == currentField })
-            let isDateField = (currentField == "date" || fieldDef?.type == .datetime || fieldDef?.role?.lowercased().contains("date") == true)
-            let formatHint = fieldDef?.formatHint
+            // Ids keep the whole level string, so a combined level never shares an id with a one-token level.
+            let level = groupingFields[fieldIndex]
+            let tokens = Self.groupingTokens(level: level) ?? []
 
             var buckets: [String: [(source: RawSource, facts: ExtractedGrammarFacts)]] = [:]
             for item in items {
-                var rawVal = item.facts.extractedFields[currentField]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Field alias resolution (e.g. instrument <-> device, or match field by role)
-                if rawVal == nil || rawVal!.isEmpty {
-                    if currentField == "instrument" {
-                        rawVal = item.facts.extractedFields["device"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    } else if currentField == "device" {
-                        rawVal = item.facts.extractedFields["instrument"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                    if rawVal == nil || rawVal!.isEmpty {
-                        if let matchedByRole = grammar.fields.first(where: { $0.role?.lowercased() == currentField.lowercased() }) {
-                            rawVal = item.facts.extractedFields[matchedByRole.name]?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        }
-                    }
-                }
-
-                let key: String
-                if let v = rawVal, !v.isEmpty {
-                    if isDateField {
-                        key = FilenameGrammarEngine.normalizeDate(v, formatHint: formatHint, granularity: dateGranularity)
-                    } else {
-                        key = v
-                    }
-                } else {
-                    key = SourceGrouping.missingValueBucketLabel
-                }
+                // A missing token is skipped in the folder name. Missing value applies only when no token has a value.
+                let parts = tokens.compactMap { tokenValue($0, facts: item.facts) }
+                let key = parts.isEmpty ? SourceGrouping.missingValueBucketLabel : parts.joined(separator: ".")
                 buckets[key, default: []].append(item)
             }
 
@@ -196,8 +196,8 @@ public struct SourceTree: Sendable, Equatable {
 
             return sortedKeys.map { key in
                 let subItems = buckets[key] ?? []
-                let nodeID = "group:\(pathPrefix)/\(currentField):\(key)"
-                let childNodes = buildLevel(items: subItems, fieldIndex: fieldIndex + 1, pathPrefix: "\(pathPrefix)/\(currentField):\(key)")
+                let nodeID = "group:\(pathPrefix)/\(level):\(key)"
+                let childNodes = buildLevel(items: subItems, fieldIndex: fieldIndex + 1, pathPrefix: "\(pathPrefix)/\(level):\(key)")
                 return SourceTreeNode(id: nodeID, name: key, sourceID: nil, children: childNodes)
             }
         }
@@ -223,6 +223,15 @@ public struct SourceTree: Sendable, Equatable {
         }
 
         self.root = SourceTreeNode(id: "root:grammar", name: rootName, sourceID: nil, children: rootChildren)
+    }
+
+    /// Splits one grouping level into its grammar tokens. A level joins tokens
+    /// with '+'. Returns nil when any token is empty, so a stray or doubled '+'
+    /// never names a folder.
+    public static func groupingTokens(level: String) -> [String]? {
+        let tokens = level.split(separator: "+", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return tokens.contains(where: \.isEmpty) ? nil : tokens
     }
 
     private static func parent(of path: String) -> String {

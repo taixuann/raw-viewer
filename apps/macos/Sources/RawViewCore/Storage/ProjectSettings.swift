@@ -610,6 +610,9 @@ public enum ProjectSettingsStore {
                 guard let field = item.scalarValue, !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw ProjectSettingsError(reason: "tree_grouping entries must be non-empty strings.")
                 }
+                guard SourceTree.groupingTokens(level: field) != nil else {
+                    throw ProjectSettingsError(reason: "tree_grouping level \"\(field)\" has an empty token; join grammar tokens with '+' and name each one.")
+                }
                 fields.append(field)
             }
             treeGrouping = fields
@@ -637,6 +640,9 @@ public enum ProjectSettingsStore {
                 for item in items {
                     guard let field = item.scalarValue, !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         throw ProjectSettingsError(reason: "explorer.grouping_fields entries must be non-empty strings.")
+                    }
+                    guard SourceTree.groupingTokens(level: field) != nil else {
+                        throw ProjectSettingsError(reason: "explorer.grouping_fields level \"\(field)\" has an empty token; join grammar tokens with '+' and name each one.")
                     }
                     fields.append(field)
                 }
