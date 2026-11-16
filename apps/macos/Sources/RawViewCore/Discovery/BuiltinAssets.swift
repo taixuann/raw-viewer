@@ -111,7 +111,7 @@ variants:
     public static let autolabUsthYAML: String = """
 schema_version: 4
 id: usth/autolab-usth
-revision: 1
+revision: 2
 instrument:
   id: autolab-usth
   name: Autolab USTH
@@ -136,60 +136,48 @@ variants:
       data_start: 2
     metadata: []
     columns:
-      applied_voltage:
-        role: skip
-        header: Potential applied (V)
-        aliases: ["Potential_applied_(V)", "Potential_applied(V)"]
+      electrode_potential:
+        role: channel
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
         quantity: voltage
         unit: V
-      time:
-        role: skip
-        header: Time (s)
-        aliases: ["Time_(s)"]
-        quantity: time
-        unit: s
+        label: Voltage
       current:
         role: channel
-        header: WE(1).Current (A)
-        aliases: ["WE(1)_Current(A)", "WE(1).Current(A)", "WE(1)_Current (A)"]
+        header: "WE(1).Current (A)"
+        aliases: ["WE(1).Current_(A)"]
         quantity: current
         unit: A
         label: Current
-      electrode_potential:
-        role: channel
-        header: WE(1).Potential (V)
-        aliases: ["WE(1)_Potential(V)", "WE(1).Potential(V)", "WE(1)_Potential (V)"]
-        quantity: voltage
-        unit: V
-        label: Potential
       scan:
         role: progression
         type: custom
         behavior: discrete
         header: Scan
         quantity: index
-        unit: ""
+        unit: "1"
         label: Scan
+      applied_voltage:
+        role: skip
+        header: "Potential applied (V)"
+        aliases: ["Potential_applied_(V)", "Potential_applied(V)"]
+      time:
+        role: skip
+        header: "Time (s)"
+        aliases: ["Time_(s)"]
       index:
         role: skip
         header: Index
-        quantity: index
-        unit: ""
       q_plus:
         role: skip
         header: Q+
-        quantity: charge
-        unit: C
       q_minus:
         role: skip
         header: Q-
-        quantity: charge
-        unit: C
       current_range:
         role: skip
         header: Current range
-        quantity: current
-        unit: A
     plot:
       x: electrode_potential
       y: [current]
@@ -205,6 +193,7 @@ variants:
       kind: first-row-header
       extensions: [".txt"]
       delimiter: ";"
+      decimal: ","
       encoding: [utf-8, windows-1252, iso-8859-1]
     rows:
       header: 1
@@ -213,45 +202,35 @@ variants:
     columns:
       time:
         role: channel
-        header: Time (s)
+        header: "Time (s)"
         aliases: ["Time_(s)"]
         quantity: time
         unit: s
         label: Time
-      electrode_potential:
-        role: skip
-        header: WE(1).Potential (V)
-        aliases: ["WE(1)_Potential(V)", "WE(1).Potential(V)"]
-        quantity: voltage
-        unit: V
       current:
         role: channel
-        header: WE(1).Current (A)
-        aliases: ["WE(1)_Current(A)", "WE(1).Current(A)"]
+        header: "WE(1).Current (A)"
+        aliases: ["WE(1).Current_(A)"]
         quantity: current
         unit: A
         label: Current
+      electrode_potential:
+        role: skip
+        header: "WE(1).Potential (V)"
+        aliases: ["WE(1).Potential_(V)"]
       corrected_time:
         role: skip
-        header: Corrected time (s)
+        header: "Corrected time (s)"
         aliases: ["Corrected_time_(s)"]
-        quantity: time
-        unit: s
       index:
         role: skip
         header: Index
-        quantity: index
-        unit: ""
       current_range:
         role: skip
         header: Current range
-        quantity: current
-        unit: A
       overload:
         role: skip
         header: Overload
-        quantity: flag
-        unit: ""
     plot:
       x: time
       y: [current]
@@ -267,58 +246,50 @@ variants:
       extensions: [".txt"]
       delimiter: ";"
       decimal: ","
-      encoding: [utf-8, windows-1252, iso-8859-1]
+      encoding: [utf-8]
     rows:
       header: 1
       data_start: 2
     metadata: []
     columns:
-      index:
-        role: skip
-        header: Index
-        quantity: index
-        unit: ""
       frequency:
         role: channel
-        header: Frequency (Hz)
-        aliases: ["Frequency_(Hz)"]
+        header: "Frequency (Hz)"
         quantity: frequency
         unit: Hz
         label: Frequency
       z_prime:
         role: channel
-        header: Z' (Ω)
-        aliases: ["Z'_(Ω)", "Z'_(\\u03a9)"]
+        header: "Z' (Ω)"
         quantity: impedance_real
         unit: ohm
-        label: Z'
+        label: "Z′"
       z_double_prime:
         role: channel
-        header: -Z'' (Ω)
-        aliases: ["-Z''_(Ω)", "-Z''_(\\u03a9)"]
+        header: "-Z'' (Ω)"
         quantity: impedance
         unit: ohm
-        label: -Z''
+        label: "−Z″"
       z_magnitude:
         role: channel
-        header: Z (Ω)
-        aliases: ["Z_(Ω)", "Z_(\\u03a9)"]
+        header: "Z (Ω)"
         quantity: impedance
         unit: ohm
-        label: |Z|
+        label: "|Z|"
       phase:
         role: channel
-        header: -Phase (°)
-        aliases: ["-Phase_(°)", "-Phase_(\\u00b0)"]
+        header: "-Phase (°)"
         quantity: phase
         unit: deg
-        label: -Phase
+        label: "−Phase"
+        required: false
+      index:
+        role: skip
+        header: Index
       time:
         role: skip
-        header: Time (s)
+        header: "Time (s)"
         aliases: ["Time_(s)"]
-        quantity: time
-        unit: s
     plot:
       x: z_prime
       y: [z_double_prime]
@@ -334,28 +305,27 @@ variants:
       kind: first-row-header
       extensions: [".txt"]
       delimiter: ";"
+      decimal: ","
       encoding: [utf-8, windows-1252, iso-8859-1]
     rows:
       header: 1
       data_start: 2
     metadata: []
     columns:
-      electrode_potential:
+      potential:
         role: channel
         header: WE(1)_potential(V)
-        aliases: ["WE(1).Potential (V)", "WE(1).Potential(V)"]
         quantity: voltage
         unit: V
-        label: Potential
+        label: Voltage
       current:
         role: channel
         header: WE(1)_current(A)
-        aliases: ["WE(1).Current (A)", "WE(1).Current(A)"]
         quantity: current
         unit: A
         label: Current
     plot:
-      x: electrode_potential
+      x: potential
       y: [current]
 """
 

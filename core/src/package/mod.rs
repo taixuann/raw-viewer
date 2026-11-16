@@ -12,7 +12,7 @@ pub use manifest::{
 };
 
 pub const USTH_LAB_PACKAGE_ID: &str = "usth-lab";
-pub const USTH_LAB_PACKAGE_VERSION: &str = "0.1.0";
+pub const USTH_LAB_PACKAGE_VERSION: &str = "0.1.1";
 
 /// One row of the committed table that pins each bundled profile to its revision and sha256.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]

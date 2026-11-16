@@ -61,7 +61,7 @@ final class LabPackageManagerTests: XCTestCase {
         let installed = LabPackageManager.listInstalledPackages(globalConfigDir: fakeGlobal)
         XCTAssertEqual(installed.count, 1)
         XCTAssertEqual(installed.first?.id, "usth-lab")
-        XCTAssertEqual(installed.first?.version, "0.1.0")
+        XCTAssertEqual(installed.first?.version, LabPackageManager.usthPackageVersion)
         XCTAssertEqual(installed.first?.profiles.count, 4)
 
         // Verify profiles written
@@ -260,7 +260,7 @@ final class LabPackageManagerTests: XCTestCase {
 
         XCTAssertEqual(outcome.written, [keithleyID])
         let installed = try LabPackageManager.readInstalledUSTHManifest(globalConfigDir: global)
-        XCTAssertEqual(installed.version, "0.1.0")
+        XCTAssertEqual(installed.version, LabPackageManager.usthPackageVersion)
         let keithleyBundled = LabPackageManager.bundledText(BuiltinAssets.keithley2400YAML)
         XCTAssertEqual(
             installed.entries.first { $0.id == keithleyID }?.sha256,

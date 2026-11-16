@@ -17,7 +17,7 @@ final class BundledRevisionTableTests: XCTestCase {
 
     /// Swift copies that differ from `assets/profiles/usth/` today. Each entry is drift the table
     /// cannot express yet. Remove the entry when the copy is synced in a revision-bumped change.
-    private let knownDrift: Set<String> = ["usth/autolab-usth"]
+    private let knownDrift: Set<String> = []
 
     private static func repoRoot() -> URL {
         var url = URL(fileURLWithPath: #filePath)

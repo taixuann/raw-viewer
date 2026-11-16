@@ -1,6 +1,6 @@
 {
   "package_id": "usth-lab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "profiles": [
     {
       "id": "usth/keithley-2400",
@@ -9,8 +9,8 @@
     },
     {
       "id": "usth/autolab-usth",
-      "revision": 1,
-      "sha256": "800407435b74837ed0eb81030e2b4adc432de1c67230d1a2fb18e5fffe7c60ae"
+      "revision": 2,
+      "sha256": "586f895ae4c7c9ee8625ec42a05bf41fed4b974adde54749eb69bb78cc61da73"
     },
     {
       "id": "usth/horiba-labram",

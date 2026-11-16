@@ -757,7 +757,7 @@ mod upgrade_tests {
 
         assert_eq!(
             out["plan"]["package_update"],
-            json!({"installed_version": "0.0.9", "bundled_version": "0.1.0"})
+            json!({"installed_version": "0.0.9", "bundled_version": "0.1.1"})
         );
         assert_eq!(
             out["plan"]["profiles"],

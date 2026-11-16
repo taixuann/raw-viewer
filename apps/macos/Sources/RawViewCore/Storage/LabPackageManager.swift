@@ -65,7 +65,7 @@ public enum LabPackageError: LocalizedError, Equatable {
 public enum LabPackageManager {
     public static let manifestFileName = "manifest.yaml"
     public static let usthPackageID = "usth-lab"
-    public static let usthPackageVersion = "0.1.0"
+    public static let usthPackageVersion = "0.1.1"
     public static let usthDisplayName = "USTH Clean Energy Lab Profiles"
 
     /// Profiles bundled with the USTH lab package.
