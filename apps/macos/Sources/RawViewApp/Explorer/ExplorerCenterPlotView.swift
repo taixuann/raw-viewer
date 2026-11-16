@@ -127,7 +127,6 @@ enum PlotAxisDrawHelper {
         fontScale: CGFloat,
         maxLabelWidth: CGFloat,
         yLabels: [String],
-        hoverLocation: CGPoint?,
         formatLabel: (Double, AxisScale, AxisFormatter.ScaleInfo, Int?) -> String
     ) {
         let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
@@ -267,31 +266,80 @@ enum PlotAxisDrawHelper {
         yLabelContext.rotate(by: .degrees(-90))
         yLabelContext.draw(Text(yTitle).font(plotFont(axisLabelSize, false)), at: .zero, anchor: .center)
 
-        if axisConfig.showCursor, let loc = hoverLocation, plot.contains(loc), xSpan > 0, ySpan > 0 {
-            var hLine = Path()
-            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
-            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
-            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+    }
 
-            var vLine = Path()
-            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
-            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
-            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+    static func drawCursor(
+        context: inout GraphicsContext,
+        frame: PlotFrame,
+        axes: PlotAxes,
+        preset: ScientificPreset,
+        hoverLocation loc: CGPoint
+    ) {
+        let plot = frame.plot
+        let xRange = axes.xRange
+        let yRange = axes.yRange
+        let xSpan = xRange.upperBound - xRange.lowerBound
+        let ySpan = yRange.upperBound - yRange.lowerBound
+        guard plot.contains(loc), xSpan > 0, ySpan > 0 else { return }
 
-            let tX = Double((loc.x - plot.minX) / plot.width)
-            let tY = Double((plot.maxY - loc.y) / plot.height)
-            let dataX = xRange.lowerBound + tX * xSpan
-            let dataY = yRange.lowerBound + tY * ySpan
+        var hLine = Path()
+        hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
+        hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
+        context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
 
-            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
-            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
-            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
-            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
-            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+        var vLine = Path()
+        vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
+        vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
+        context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
 
-            let tooltipFont = plotFont(max(9.5, 10.5 * fontScale), true)
-            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
-            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
+        let tX = Double((loc.x - plot.minX) / plot.width)
+        let tY = Double((plot.maxY - loc.y) / plot.height)
+        let dataX = xRange.lowerBound + tX * xSpan
+        let dataY = yRange.lowerBound + tY * ySpan
+
+        let xStr = AxisFormatter.formatTick(dataX, factor: axes.xScaleInfo.factor, precision: max(2, axes.xNice.precision))
+        let yStr = AxisFormatter.formatTick(dataY, factor: axes.yScaleInfo.factor, precision: max(2, axes.yNice.precision))
+        let xUnitStr = axes.xScaleInfo.displayUnit.isEmpty ? "" : " \(axes.xScaleInfo.displayUnit)"
+        let yUnitStr = axes.yScaleInfo.displayUnit.isEmpty ? "" : " \(axes.yScaleInfo.displayUnit)"
+        let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+
+        let tooltipFont = PlotRenderingEngine.plotFont(preset: preset, size: max(9.5, 10.5 * frame.fontScale), bold: true)
+        let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
+        context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
+    }
+}
+
+/// Crosshair and value readout. It owns the hover position, so a mouse move
+/// redraws only this layer. The data canvas underneath does not re-run.
+struct PlotCursorOverlay: View {
+    let axes: PlotAxes?
+    let preset: ScientificPreset
+    let showCursor: Bool
+    @State private var hoverLocation: CGPoint? = nil
+
+    var body: some View {
+        GeometryReader { _ in
+            Canvas { context, size in
+                guard showCursor, let loc = hoverLocation, let axes else { return }
+                PlotAxisDrawHelper.drawCursor(
+                    context: &context,
+                    frame: axes.frame(size: size, preset: preset),
+                    axes: axes,
+                    preset: preset,
+                    hoverLocation: loc
+                )
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard showCursor else {
+                    hoverLocation = nil
+                    return
+                }
+                switch phase {
+                case .active(let loc): hoverLocation = loc
+                case .ended: hoverLocation = nil
+                }
+            }
         }
     }
 }
@@ -556,7 +604,6 @@ struct NativePlot: View {
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
     var palettePreset: ColorPalettePreset = .classicScientific
     var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
-    @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
     @State private var pan = CGSize.zero
     @State private var preparedCache = PlotMemo<NativePlotInputs, Result<PreparedNativePlot, PlotFailure>>()
@@ -607,17 +654,8 @@ struct NativePlot: View {
             ZStack(alignment: .topTrailing) {
                 Canvas { context, size in draw(prepared, in: &context, size: size) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        if axisConfig.showCursor {
-                            switch phase {
-                            case .active(let loc): hoverLocation = loc
-                            case .ended: hoverLocation = nil
-                            }
-                        } else {
-                            hoverLocation = nil
-                        }
-                    }
+
+                PlotCursorOverlay(axes: prepared.axes, preset: preset, showCursor: axisConfig.showCursor)
 
                 if isProgressionContinuous && colorBySweepProgress {
                     SweepColorbarView()
@@ -774,7 +812,6 @@ struct NativePlot: View {
             fontScale: frame.fontScale,
             maxLabelWidth: frame.maxLabelWidth,
             yLabels: axes.yLabels,
-            hoverLocation: hoverLocation,
             formatLabel: { val, scale, info, prec in axisLabel(val, scale: scale, scaleInfo: info, precision: prec) }
         )
 
@@ -908,7 +945,6 @@ struct OverlayPlot: View {
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
     var palettePreset: ColorPalettePreset = .classicScientific
     var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
-    @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
     @State private var pan = CGSize.zero
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
@@ -1017,20 +1053,11 @@ struct OverlayPlot: View {
                     draw(data, in: &context, size: size)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onContinuousHover { phase in
-                    if axisConfig.showCursor {
-                        switch phase {
-                        case .active(let loc): hoverLocation = loc
-                        case .ended: hoverLocation = nil
-                        }
-                    } else {
-                        hoverLocation = nil
-                    }
-                }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Overlay plot with \(data.series.count) series")
                 .accessibilityValue(accessibleSummary)
+
+                PlotCursorOverlay(axes: data.axes, preset: preset, showCursor: axisConfig.showCursor)
 
                 if colorBySweepProgress {
                     SweepColorbarView()
@@ -1165,7 +1192,6 @@ struct OverlayPlot: View {
             fontScale: frame.fontScale,
             maxLabelWidth: frame.maxLabelWidth,
             yLabels: axes.yLabels,
-            hoverLocation: hoverLocation,
             formatLabel: { val, scale, info, prec in axisLabel(val, scale: scale, scaleInfo: info, precision: prec) }
         )
 
