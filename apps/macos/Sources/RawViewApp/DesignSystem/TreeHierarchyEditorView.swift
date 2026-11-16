@@ -67,9 +67,12 @@ public struct TreeHierarchyEditorView: View {
 
     // MARK: - Folder preview
 
+    /// The preview rebuilds a tree on each redraw, so it reads only a bounded sample of files.
+    private static let previewSourceLimit = 400
+
     private var folderPreview: some View {
         let paths = TreeLevels.previewPaths(
-            sources: sources,
+            sources: Array(sources.prefix(Self.previewSourceLimit)),
             grammar: grammar,
             groupingFields: selectedFields,
             dateGranularity: granularity,

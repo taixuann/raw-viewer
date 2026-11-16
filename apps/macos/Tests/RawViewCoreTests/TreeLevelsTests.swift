@@ -78,6 +78,27 @@ import Testing
     ])
 }
 
+@Test func savingKeepsCombinedLevelWhenBothTokensStayTicked() {
+    let saved = TreeLevels.reconciled(
+        stored: ["instrument+application-mode", "date"],
+        ticked: ["instrument", "application-mode", "date"]
+    )
+    #expect(saved == ["instrument+application-mode", "date"])
+}
+
+@Test func savingDropsUntickedTokenFromItsCombinedLevel() {
+    let saved = TreeLevels.reconciled(
+        stored: ["instrument+application-mode", "date"],
+        ticked: ["instrument", "date"]
+    )
+    #expect(saved == ["instrument", "date"])
+}
+
+@Test func savingAppendsNewlyTickedTokenAsItsOwnLevel() {
+    let saved = TreeLevels.reconciled(stored: ["date"], ticked: ["date", "mode"])
+    #expect(saved == ["date", "mode"])
+}
+
 @Test func previewPathsStopAtLimit() {
     let sources = (1...4).map { index in
         RawSource(relativePath: "file\(index).csv", url: URL(fileURLWithPath: "/tmp/file\(index).csv"), byteSize: 1)

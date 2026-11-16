@@ -27,6 +27,19 @@ public enum TreeLevels {
         }
     }
 
+    /// Stored levels after the grammar is saved. The Tree flags decide membership: unticked or
+    /// removed tokens leave their level, and newly ticked tokens become their own levels at the
+    /// end. Existing combined levels keep their shape.
+    public static func reconciled(stored: [String], ticked: [String]) -> [String] {
+        let allowed = Set(ticked)
+        var kept = levels(stored: stored)
+            .map { $0.filter { allowed.contains($0) } }
+            .filter { !$0.isEmpty }
+        let placed = Set(kept.flatMap { $0 })
+        kept += ticked.filter { !placed.contains($0) }.map { [$0] }
+        return TreeLevels.stored(levels: kept)
+    }
+
     /// Moves a token to one destination. A token sits in at most one level, so any
     /// earlier occurrence is removed first. Levels left empty are dropped.
     public static func move(_ token: String, in levels: [[String]], to destination: TreeLevelDestination) -> [[String]] {

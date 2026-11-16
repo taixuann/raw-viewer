@@ -1005,7 +1005,7 @@ struct SettingsView: View {
 
             TreeHierarchyEditorView(
                 grammar: testerGrammar,
-                sources: Array(model.sources.prefix(400)),
+                sources: model.sources,
                 selectedFields: $model.treeGroupingFields,
                 dateGranularity: $treeDateGranularity,
                 uiFontSize: uiFontSize,
@@ -1114,7 +1114,7 @@ struct SettingsView: View {
                 let isDate = name.contains("date") || name.contains("time")
                 let isNum = name.contains("batch") || name.contains("index") || name.contains("num")
                 let isMode = name == "mode" || name == "application-mode" || name == "variant"
-                let isOptional = builderTemplate.contains("[{\(name)}]")
+                // Brackets are literal filename characters, so a bracketed token is not optional by default.
                 let type: GrammarFieldType = isDate ? .datetime : (isNum ? .number : .string)
                 let hint = isDate ? "DDMMYY-HHmmss" : (isNum ? "001" : "")
                 updated.append(GrammarField(
@@ -1122,7 +1122,7 @@ struct SettingsView: View {
                     role: name.capitalized,
                     type: type,
                     formatHint: hint,
-                    isOptional: isOptional,
+                    isOptional: false,
                     isFacet: true,
                     isVariantKey: isMode,
                     isGroupingLevel: true
@@ -1180,10 +1180,14 @@ struct SettingsView: View {
         }
     }
 
+    /// Keeps the hierarchy the user built, including combined levels. The Tree flag decides
+    /// membership: unticked or removed tokens leave their level, and newly ticked tokens are
+    /// appended as their own levels.
     private func syncTreeGroupingFromBuilder() {
-        let selected = builderFields.filter(\.isGroupingLevel).map(\.name)
-        if !selected.isEmpty {
-            model.saveTreeGrouping(selected)
+        let ticked = builderFields.filter(\.isGroupingLevel).map(\.name)
+        let next = TreeLevels.reconciled(stored: model.treeGroupingFields, ticked: ticked)
+        if !next.isEmpty {
+            model.saveTreeGrouping(next)
         }
     }
 
