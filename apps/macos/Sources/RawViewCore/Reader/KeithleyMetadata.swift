@@ -28,6 +28,35 @@ public struct KeithleyMetadata: Sendable, Equatable {
     }
 }
 
+/// One metadata read per source and file version. The inspector reads this cache
+/// off the main thread instead of re-reading the file on every body evaluation.
+public actor KeithleyMetadataCache {
+    public static let shared = KeithleyMetadataCache()
+
+    private struct Entry {
+        let modificationDate: Date?
+        let task: Task<KeithleyMetadata?, Never>
+    }
+
+    private var entries: [String: Entry] = [:]
+    /// Reads started so far. A test asserts that repeated lookups read the file once.
+    private(set) var extractionCount = 0
+
+    public init() {}
+
+    public func metadata(sourceID: String, url: URL) async -> KeithleyMetadata? {
+        // FileManager reads fresh; URL.resourceValues can return a value cached on the URL object.
+        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        if let entry = entries[sourceID], entry.modificationDate == modified {
+            return await entry.task.value
+        }
+        extractionCount += 1
+        let task = Task.detached(priority: .utility) { KeithleyMetadataParser.extract(from: url) }
+        entries[sourceID] = Entry(modificationDate: modified, task: task)
+        return await task.value
+    }
+}
+
 public enum KeithleyMetadataParser {
     /// Longest line read while looking for the Comment cell. A longer line gives a warning, never a partial sweep.
     public static let maxCommentLineBytes = 4 * 1024 * 1024

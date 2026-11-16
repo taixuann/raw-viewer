@@ -5,7 +5,7 @@ import Foundation
 enum KeithleySweepFixtures {
     /// Sweep of 0 → +1.5 → -1.5 → 0 V in 0.02 V steps: 301 points.
     static func sampleVoltageTokens() -> [String] {
-        voltageTokens(stepIndices: Array(0...75) + Array((-74...74).reversed()) + Array(-74...0))
+        voltageTokens(stepIndices: Array(0...75) + Array((-75...74).reversed()) + Array(-74...0))
     }
 
     /// Sweep of 0 → +25 → -25 → 0 V in 0.02 V steps: 5,001 points (over 8 KB as text).

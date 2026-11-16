@@ -103,6 +103,8 @@ struct InspectorPane: View {
 
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
     @State private var selectedTab: InspectorTab = .data
+    @State private var keithleyLoad: KeithleyLoad?
+    @State private var comparisonLoad: [String: KeithleyMetadata] = [:]
 
     private var palettePreset: ColorPalettePreset {
         ColorPalettePreset.from(id: selectedPaletteID)
@@ -275,11 +277,15 @@ struct InspectorPane: View {
 
         progressionSection
 
-        if let km = keithleyMetadata {
-            keithleyMetadataSection(km)
+        Group {
+            if let km = keithleyMetadata {
+                keithleyMetadataSection(km)
+            }
         }
+        .task(id: source) { await loadKeithleyMetadata() }
 
         metadataComparisonSection
+            .task(id: selectedIDs) { await loadComparisonMetadata() }
     }
 
     @ViewBuilder
@@ -968,11 +974,41 @@ struct InspectorPane: View {
 
     // MARK: - Keithley Programmed Sweep Metadata & Comparison
 
+    private struct KeithleyLoad: Equatable {
+        let sourceID: String
+        let metadata: KeithleyMetadata?
+    }
+
+    /// Filled by `loadKeithleyMetadata` from the cache. Body never reads the file.
     private var keithleyMetadata: KeithleyMetadata? {
-        if let source {
-            return KeithleyMetadataParser.extract(from: source)
+        guard let source, let keithleyLoad, keithleyLoad.sourceID == (sourceID ?? source.path) else { return nil }
+        return keithleyLoad.metadata
+    }
+
+    private func loadKeithleyMetadata() async {
+        guard let source else {
+            keithleyLoad = nil
+            return
         }
-        return nil
+        let id = sourceID ?? source.path
+        let metadata = await KeithleyMetadataCache.shared.metadata(sourceID: id, url: source)
+        guard !Task.isCancelled else { return }
+        keithleyLoad = KeithleyLoad(sourceID: id, metadata: metadata)
+    }
+
+    private func loadComparisonMetadata() async {
+        guard selectedIDs.count >= 2 else {
+            comparisonLoad = [:]
+            return
+        }
+        var loaded: [String: KeithleyMetadata] = [:]
+        for id in selectedIDs.sorted() {
+            if let meta = await KeithleyMetadataCache.shared.metadata(sourceID: id, url: URL(fileURLWithPath: id)) {
+                loaded[id] = meta
+            }
+        }
+        guard !Task.isCancelled else { return }
+        comparisonLoad = loaded
     }
 
     @ViewBuilder
@@ -1026,11 +1062,7 @@ struct InspectorPane: View {
     @ViewBuilder
     private var metadataComparisonSection: some View {
         if selectedIDs.count >= 2 {
-            let items: [(id: String, meta: KeithleyMetadata?)] = selectedIDs.sorted().map { id in
-                let url = URL(fileURLWithPath: id)
-                return (id, KeithleyMetadataParser.extract(from: url))
-            }
-            let validMetas = items.compactMap(\.meta)
+            let validMetas = selectedIDs.sorted().compactMap { comparisonLoad[$0] }
             if !validMetas.isEmpty {
                 let allSamePath = Set(validMetas.map(\.sweepPath)).count <= 1
                 let allSameStep = Set(validMetas.map(\.voltageStep)).count <= 1

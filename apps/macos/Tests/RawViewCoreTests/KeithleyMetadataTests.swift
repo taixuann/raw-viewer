@@ -88,4 +88,52 @@ struct KeithleyMetadataTests {
         #expect(meta.rawVoltageCount == 0)
         #expect(meta.warning == "Keithley comment line exceeds 4 MB; sweep not read")
     }
+
+    @Test func cacheReadsSourceOnceAcrossRepeatedLookups() async throws {
+        let comment = KeithleySweepFixtures.comment(tokens: KeithleySweepFixtures.sampleVoltageTokens())
+        let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: comment))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let cache = KeithleyMetadataCache()
+
+        // Five lookups stand in for repeated view body evaluations.
+        var results: [KeithleyMetadata] = []
+        for _ in 0..<5 {
+            let meta = await cache.metadata(sourceID: url.path, url: url)
+            results.append(try #require(meta))
+        }
+
+        let reads = await cache.extractionCount
+        #expect(reads == 1)
+        for meta in results {
+            #expect(meta.sweepPath == "0 → 1.5 → -1.5 → 0 V")
+            #expect(meta.voltageStep == "0.02 V")
+            #expect(meta.compliance == "100 µA")
+            #expect(meta.rawVoltageCount == 301)
+            #expect(meta.isValid == true)
+            #expect(meta.warning == nil)
+        }
+    }
+
+    @Test func changedModificationTimeInvalidatesCachedSweep() async throws {
+        let tokens = KeithleySweepFixtures.sampleVoltageTokens()
+        let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: KeithleySweepFixtures.comment(tokens: tokens)))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let cache = KeithleyMetadataCache()
+
+        let before = try #require(await cache.metadata(sourceID: url.path, url: url))
+        #expect(before.compliance == "100 µA")
+
+        // Rewrite the export with a new compliance and a later modification time.
+        let edited = KeithleySweepFixtures.comment(tokens: tokens, compliance: "0.001")
+        try KeithleySweepFixtures.lvmText(comment: edited).write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: url.path)
+
+        let after = try #require(await cache.metadata(sourceID: url.path, url: url))
+        let reads = await cache.extractionCount
+        #expect(reads == 2)
+        #expect(after.sweepPath == "0 → 1.5 → -1.5 → 0 V")
+        #expect(after.voltageStep == "0.02 V")
+        #expect(after.compliance == "1 mA")
+        #expect(after.rawVoltageCount == 301)
+    }
 }
