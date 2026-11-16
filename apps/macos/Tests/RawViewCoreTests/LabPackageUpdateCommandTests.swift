@@ -169,6 +169,31 @@ final class LabPackageUpdateCommandTests: XCTestCase {
         )
     }
 
+    func testUpdatePackageInstallsBundledProfileThatWasNeverInstalled() throws {
+        let global = tempDirectory.appendingPathComponent("global")
+        try LabPackageTestFixtures.makeInstall(global: global, version: "0.1.0")
+        let profiles = LabPackageTestFixtures.profilesDirectory(global: global)
+        let iopID = "usth/iop-hanoi"
+        try FileManager.default.removeItem(at: profiles.appendingPathComponent("iop-hanoi.yaml"))
+        let installed = try LabPackageManager.readInstalledUSTHManifest(globalConfigDir: global)
+        try LabPackageManager.renderUSTHManifest(
+            version: "0.1.0",
+            entries: installed.entries.filter { $0.id != iopID }
+        ).write(to: LabPackageTestFixtures.packageDirectory(global: global).appendingPathComponent("manifest.yaml"), atomically: true, encoding: .utf8)
+        let package = try XCTUnwrap(LabPackageManager.listInstalledPackages(globalConfigDir: global).first)
+
+        let section = LabPackagePresentation.section(for: package, plan: try LabPackagePresentation.plan(globalConfigDir: global))
+        XCTAssertFalse(section.rows.contains { $0.profileID == iopID })
+
+        let outcome = try LabPackagePresentation.run(.updatePackage, globalConfigDir: global)
+
+        XCTAssertEqual(outcome.written, [iopID])
+        XCTAssertEqual(try read(profiles.appendingPathComponent("iop-hanoi.yaml")), LabPackageManager.bundledText(BuiltinAssets.iopHanoiYAML))
+        XCTAssertEqual(try LabPackageManager.readInstalledUSTHManifest(globalConfigDir: global).entries.map(\.id).sorted(), [
+            keithley, autolab, "usth/horiba-labram", iopID
+        ].sorted())
+    }
+
     func testSectionBuiltFromDiskShowsPackageAndProfileUpdates() throws {
         let global = tempDirectory.appendingPathComponent("global")
         try LabPackageTestFixtures.makeInstall(
