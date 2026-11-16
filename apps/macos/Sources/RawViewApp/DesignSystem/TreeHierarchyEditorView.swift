@@ -121,9 +121,13 @@ public struct TreeHierarchyEditorView: View {
                     .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                     .foregroundStyle(.secondary)
             }
+            // A flow layout measures children unbounded, so the width cap is what makes long names wrap.
             Text(file)
                 .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .frame(maxWidth: 420, alignment: .leading)
         }
     }
 
