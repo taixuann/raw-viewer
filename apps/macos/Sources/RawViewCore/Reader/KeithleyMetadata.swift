@@ -12,9 +12,9 @@ public struct KeithleyMetadata: Sendable, Equatable {
     public let warning: String?
 
     public init(
-        sweepPath: String?,
-        voltageStep: String?,
-        compliance: String?,
+        sweepPath: String? = nil,
+        voltageStep: String? = nil,
+        compliance: String? = nil,
         rawVoltageCount: Int = 0,
         isValid: Bool = true,
         warning: String? = nil
@@ -26,6 +26,9 @@ public struct KeithleyMetadata: Sendable, Equatable {
         self.isValid = isValid
         self.warning = warning
     }
+
+    /// A file whose comment carries no sweep. Every field is Null, and that is not a warning.
+    public static let absent = KeithleyMetadata()
 }
 
 /// One metadata read per source and file version. The inspector reads this cache
@@ -71,18 +74,30 @@ public enum KeithleyMetadataParser {
         case .cell(let cell):
             return parseLine(cell)
         case .absent:
-            return nil
+            return KeithleyMetadata.absent
         case .lineTooLong:
             return KeithleyMetadata(sweepPath: nil, voltageStep: nil, compliance: nil, isValid: false, warning: lineTooLongWarning)
         }
     }
 
     /// Extracts Keithley programmed sweep metadata from header text or full text.
-    public static func extract(fromText text: String) -> KeithleyMetadata? {
+    public static func extract(fromText text: String) -> KeithleyMetadata {
         for line in text.components(separatedBy: .newlines) {
             if let cell = commentCell(inLine: line) { return parseLine(cell) }
         }
-        return nil
+        return KeithleyMetadata.absent
+    }
+
+    /// Profile whose files get the programmed-sweep block. Other profiles never show it.
+    public static let keithley2400ProfileID = "usth/keithley-2400"
+
+    public static func isKeithley2400(profileID: String?) -> Bool {
+        profileID == keithley2400ProfileID
+    }
+
+    /// True when every value is the same. The comparison view shows "Varies across files" otherwise.
+    public static func allSame<Value: Hashable>(_ values: [Value]) -> Bool {
+        Set(values).count <= 1
     }
 
     private enum CommentScan {
@@ -129,10 +144,9 @@ public enum KeithleyMetadataParser {
             }
         }
 
-        var sweepPath = ""
-        var stepString = ""
+        var sweepPath: String? = nil
+        var stepString: String? = nil
         var rawCount = 0
-        var isVoltageValid = true
         var voltageWarning: String? = nil
 
         if let vPart = voltageListPart {
@@ -149,7 +163,6 @@ public enum KeithleyMetadataParser {
             }
 
             if parseFailed || doubles.isEmpty {
-                isVoltageValid = false
                 voltageWarning = "Malformed Voltage list tokens in comment"
                 sweepPath = "Invalid path"
                 stepString = "Invalid step"
@@ -158,34 +171,27 @@ public enum KeithleyMetadataParser {
                 sweepPath = deriveSweepPath(from: doubles)
                 stepString = deriveVoltageStep(from: doubles)
             }
-        } else {
-            isVoltageValid = false
-            voltageWarning = "Missing Voltage list in Keithley comment"
-            sweepPath = "Unknown path"
-            stepString = "Unknown step"
         }
 
-        var complianceString = "Unknown"
-        var isComplianceValid = true
+        // A missing field stays nil (Null). Only a malformed token raises a warning.
+        var complianceString: String? = nil
+        var complianceWarning: String? = nil
         if let cPart = compliancePart {
             if let val = Double(cPart) {
                 complianceString = formatCompliance(val)
             } else {
-                isComplianceValid = false
                 complianceString = "Invalid (\(cPart))"
+                complianceWarning = "Malformed Compliance level in comment"
             }
         }
-
-        let overallValid = isVoltageValid && isComplianceValid
-        let overallWarning = voltageWarning ?? (!isComplianceValid ? "Malformed Compliance level in comment" : nil)
 
         return KeithleyMetadata(
             sweepPath: sweepPath,
             voltageStep: stepString,
             compliance: complianceString,
             rawVoltageCount: rawCount,
-            isValid: overallValid,
-            warning: overallWarning
+            isValid: voltageWarning == nil && complianceWarning == nil,
+            warning: voltageWarning ?? complianceWarning
         )
     }
 
@@ -193,7 +199,7 @@ public enum KeithleyMetadataParser {
     /// E.g. [0, 0.5, 1.5, 1.0, -1.5, -0.5, 0] -> "0 → 1.5 → -1.5 → 0 V"
     public static func deriveSweepPath(from values: [Double]) -> String {
         guard !values.isEmpty else { return "0 V" }
-        guard values.count > 1 else { return "\(formatVoltage(values[0])) V" }
+        guard values.count > 1 else { return "\(formatPathVoltage(values[0])) V" }
 
         // Remove immediate consecutive identical values
         var deduped: [Double] = [values[0]]
@@ -202,7 +208,7 @@ public enum KeithleyMetadataParser {
                 deduped.append(v)
             }
         }
-        guard deduped.count > 1 else { return "\(formatVoltage(deduped[0])) V" }
+        guard deduped.count > 1 else { return "\(formatPathVoltage(deduped[0])) V" }
 
         var turningPoints: [Double] = [deduped[0]]
 
@@ -222,8 +228,14 @@ public enum KeithleyMetadataParser {
 
         turningPoints.append(deduped.last!)
 
-        let pathString = turningPoints.map(formatVoltage).joined(separator: " → ")
+        let pathString = turningPoints.map(formatPathVoltage).joined(separator: " → ")
         return "\(pathString) V"
+    }
+
+    /// Path labels show an explicit plus on positive voltages, e.g. "+1.5". Zero and negatives get no plus.
+    static func formatPathVoltage(_ val: Double) -> String {
+        let text = formatVoltage(val)
+        return (val > 0 && text != "0") ? "+\(text)" : text
     }
 
     /// Derives voltage step from consecutive differences.
