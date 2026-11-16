@@ -76,7 +76,7 @@ struct ProjectSourcesSidebar: View {
         onSaveSourceLabels: (([SourceLabelLayout]) -> String?)? = nil,
         filter: Binding<SourceFilter> = .constant(SourceFilter()),
         treeGroupingMode: Binding<String> = .constant("grammar"),
-        treeGroupingFields: Binding<[String]> = .constant(["device", "application-mode", "device-id", "date"]),
+        treeGroupingFields: Binding<[String]> = .constant([]),
         onUpdateGrouping: (() -> Void)? = nil,
         onSaveGrouping: (([String]) -> Void)? = nil
     ) {
@@ -118,6 +118,19 @@ struct ProjectSourcesSidebar: View {
         guard let ref = RawViewModel.explorerViewReference(forKey: key) else { return key }
         let collisions = explorerViews.filter { $0.variable == ref.variable }.count > 1
         return collisions ? "\(ref.variable) · \(ref.grammarID)" : ref.variable
+    }
+
+    /// Grouping levels as one readable line: tokens in a level join with " + ", levels with " › ".
+    static func levelSummary(_ stored: [String]) -> String {
+        TreeLevels.levels(stored: stored)
+            .map { $0.joined(separator: " + ") }
+            .joined(separator: " › ")
+    }
+
+    /// The active grammar's field with this name, for chip roles and types.
+    func grammarField(named name: String) -> GrammarField? {
+        let grammar = catalog?.activeGrammar ?? catalog?.grammars.first
+        return grammar?.fields.first(where: { $0.name == name })
     }
 
     static func clean(_ value: String?) -> String? {
@@ -203,7 +216,7 @@ struct ProjectSourcesSidebar: View {
         let duplicate = explorerViews.contains(where: { $0.grammarID == addGrammarID && $0.variable == addVariable })
         return VStack(alignment: .leading, spacing: 10) {
             Text("Add View from Filename…")
-                .font(.system(size: 12, weight: .semibold))
+                .font(AppTypography.sectionHeadline(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
             Picker("Grammar", selection: $addGrammarID) {
                 ForEach(grammars) { grammar in Text(grammar.name).tag(grammar.id) }
             }
@@ -212,10 +225,19 @@ struct ProjectSourcesSidebar: View {
                 ForEach(fields) { field in Text(field.name).tag(field.name) }
             }
             .pickerStyle(.menu)
+            if let field = fields.first(where: { $0.name == addVariable }) {
+                HStack(spacing: 6) {
+                    Text("Groups by")
+                        .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                        .foregroundStyle(.secondary)
+                    AppTokenPill(field: field, uiFontSize: uiFontSize)
+                }
+            }
             addViewPreview
             if duplicate {
                 Text("This view is already added.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                    .foregroundStyle(.secondary)
             }
             HStack {
                 Spacer()
@@ -240,20 +262,35 @@ struct ProjectSourcesSidebar: View {
     }
 
     private var addViewPreview: some View {
+        let helper = AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily)
         guard let grammar = catalog?.grammars.first(where: { $0.id == addGrammarID }),
               !addVariable.isEmpty else {
             return AnyView(Text("Choose a grammar and variable to preview its groups.")
-                .font(.caption).foregroundStyle(.secondary))
+                .font(helper).foregroundStyle(.secondary))
         }
         let groups = SourceGrouping.groups(sources: sources, grammar: grammar, variable: addVariable)
         guard !groups.isEmpty else {
-            return AnyView(Text("No sources.").font(.caption).foregroundStyle(.secondary))
+            return AnyView(Text("No sources.").font(helper).foregroundStyle(.secondary))
         }
-        let summary = groups.map { "\($0.label) (\($0.sourceIDs.count))" }.joined(separator: ", ")
-        return AnyView(VStack(alignment: .leading, spacing: 2) {
-            Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+        // One row per group keeps long values readable; a joined line truncated them.
+        let shownRows = 8
+        return AnyView(VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(groups.prefix(shownRows).enumerated()), id: \.offset) { _, group in
+                HStack(spacing: 6) {
+                    Text(group.label)
+                        .font(AppTypography.tokenCode(uiFontSize: uiFontSize))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    AppCountBadge(count: group.sourceIDs.count, uiFontSize: uiFontSize)
+                }
+            }
+            if groups.count > shownRows {
+                Text("and \(groups.count - shownRows) more groups")
+                    .font(helper).foregroundStyle(.secondary)
+            }
             Text("\(groups.flatMap(\.sourceIDs).count) of \(sources.count) sources shown.")
-                .font(.caption2).foregroundStyle(.tertiary)
+                .font(helper).foregroundStyle(.tertiary)
         })
     }
 
@@ -326,24 +363,34 @@ struct ProjectSourcesSidebar: View {
             }
             filterChips
             if currentViewUnavailable, let ref = currentViewReference {
-                Text("Explorer view “\(ref.variable)” is unavailable (renamed or deleted grammar reference).")
-                    .font(.caption).foregroundStyle(.orange)
-                    .padding(.horizontal, 10).padding(.vertical, 2)
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("View unavailable: \(ref.variable)", systemImage: "exclamationmark.triangle.fill")
+                        .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily).weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Text("Its grammar or variable was renamed or deleted. Pick another view, or add this one again from Add View from Filename.")
+                        .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 2)
+                .textSelection(.enabled)
             } else if let viewError {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text("Grammar unavailable ·")
-                            .font(.caption).foregroundStyle(.orange)
+                        Label("Filename grammar unavailable: filename views show no groups", systemImage: "exclamationmark.triangle.fill")
+                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                            .foregroundStyle(.orange)
                         Button("Details") {
                             showGrammarDetails.toggle()
                         }
-                        .font(.caption).buttonStyle(.plain)
+                        .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                        .buttonStyle(.plain)
                         .foregroundStyle(Color.accentColor)
                     }
                     if showGrammarDetails {
                         Text(viewError)
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                 }
@@ -477,15 +524,27 @@ struct ProjectSourcesSidebar: View {
                         Button {
                             filter.remove(facet: chip.0, value: chip.1)
                         } label: {
-                            Text("\(chip.0): \(chip.1) ✕")
-                                .font(.caption)
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(Capsule().fill(.quaternary))
+                            HStack(spacing: 4) {
+                                AppTokenPill(
+                                    name: chip.0,
+                                    role: grammarField(named: chip.0)?.role,
+                                    type: grammarField(named: chip.0)?.type,
+                                    uiFontSize: uiFontSize
+                                )
+                                Text(chip.1)
+                                    .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    .foregroundStyle(.primary)
+                                Image(systemName: "xmark")
+                                    .font(AppTypography.chevron(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .buttonStyle(.plain)
+                        .help("Remove this filter")
+                        .accessibilityLabel("Remove filter \(chip.0) \(chip.1)")
                     }
                     Button("Clear filters") { filter.clear() }
-                        .font(.caption)
+                        .font(AppTypography.helperText(uiFontSize: uiFontSize, fontFamily: uiFontFamily))
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                 }
@@ -501,7 +560,7 @@ struct ProjectSourcesSidebar: View {
 
     private var filterMenu: some View {
         let grammar = catalog?.activeGrammar ?? catalog?.grammars.first
-        let fields = grammar?.fields.map(\.name) ?? ["device", "application-mode", "device-id", "date"]
+        let fields = grammar?.fields.map(\.name) ?? []
         let activeFacetCount = filter.selections.values.filter { !$0.isEmpty }.count
         return Menu {
             Text("Filter by Grammar Variable:").font(.caption)
@@ -557,7 +616,7 @@ struct ProjectSourcesSidebar: View {
                 onUpdateGrouping?()
             } label: {
                 if treeGroupingMode == "grammar" {
-                    Label("Grammar Tree (\(treeGroupingFields.joined(separator: " > ")))", systemImage: "checkmark")
+                    Label(treeGroupingFields.isEmpty ? "Grammar Tree" : "Grammar Tree: \(Self.levelSummary(treeGroupingFields))", systemImage: "checkmark")
                 } else {
                     Text("Grammar Tree")
                 }
