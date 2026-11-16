@@ -1015,6 +1015,8 @@ struct InspectorPane: View {
         }
         var loaded: [String: KeithleyMetadata] = [:]
         for id in ids {
+            // Selected ids are project-relative, so a bare path may not resolve; skip those instead of showing Null.
+            guard FileManager.default.fileExists(atPath: id) else { continue }
             loaded[id] = await KeithleyMetadataCache.shared.metadata(sourceID: id, url: URL(fileURLWithPath: id)) ?? .absent
         }
         guard !Task.isCancelled else { return }
