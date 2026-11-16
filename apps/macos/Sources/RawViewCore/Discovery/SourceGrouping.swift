@@ -171,12 +171,12 @@ extension SourceGrouping {
     /// source occurs exactly once. A matched literal equal to a bucket label
     /// is qualified so it never collides with the bucket identity. Variant
     /// routing keys are unrelated: grouping reads extraction only.
-    public static func groups(sources: [RawSource], grammar: FilenameGrammar, variable: String) -> [SourceGroup] {
+    public static func groups(sources: [RawSource], grammar: FilenameGrammar, variable: String, index: FacetIndex = .empty) -> [SourceGroup] {
         var byValue: [String: [String]] = [:]
         var missing: [String] = []
         var unmatched: [String] = []
         for source in sources {
-            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
+            let facts = index.facts(forFilename: source.url.lastPathComponent, grammar: grammar)
             guard facts.isMatched else { unmatched.append(source.id); continue }
             guard let value = facts.extractedFields[variable],
                   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

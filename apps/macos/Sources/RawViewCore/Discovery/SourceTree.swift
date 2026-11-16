@@ -109,6 +109,7 @@ public struct SourceTree: Sendable, Equatable {
         grammar: FilenameGrammar?,
         groupingFields: [String],
         dateGranularity: DateGranularity = .day,
+        index: FacetIndex = .empty,
         rootName: String = "Sources"
     ) {
         let visibleSources = sources.filter { source in
@@ -133,7 +134,7 @@ public struct SourceTree: Sendable, Equatable {
         var unmatchedSources: [RawSource] = []
 
         for source in visibleSources {
-            let facts = FilenameGrammarEngine.extract(from: source.url.lastPathComponent, grammar: grammar)
+            let facts = index.facts(forFilename: source.url.lastPathComponent, grammar: grammar)
             if facts.isMatched {
                 matchedSources.append((source, facts))
             } else {
