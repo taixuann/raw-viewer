@@ -59,4 +59,18 @@ struct KeithleyMetadataTests {
         #expect(meta.compliance == "100 µA")
         #expect(meta.rawVoltageCount == 121)
     }
+
+    @Test func longSweepFiveThousandPointsKeepsPathStepCountAndCompliance() throws {
+        let comment = KeithleySweepFixtures.comment(tokens: KeithleySweepFixtures.longVoltageTokens())
+        let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: comment))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let meta = try #require(KeithleyMetadataParser.extract(from: url))
+        #expect(meta.isValid == true)
+        #expect(meta.warning == nil)
+        #expect(meta.sweepPath == "0 → 25 → -25 → 0 V")
+        #expect(meta.voltageStep == "0.02 V")
+        #expect(meta.rawVoltageCount == 5001)
+        #expect(meta.compliance == "100 µA")
+    }
 }
