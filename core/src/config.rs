@@ -257,7 +257,9 @@ fn parse_project_yaml(
                 config.recent_projects = expect_string_array(path, "recent_projects", value)?;
             }
             "tree_grouping" => {
-                config.tree_grouping = Some(expect_string_array(path, "tree_grouping", value)?);
+                let levels = expect_string_array(path, "tree_grouping", value)?;
+                validate_tree_grouping(path, "tree_grouping", &levels)?;
+                config.tree_grouping = Some(levels);
             }
             "explorer" => {
                 let map = value.map_entries().ok_or_else(|| {
@@ -274,8 +276,9 @@ fn parse_project_yaml(
                                 expect_string(path, "explorer.grouping_mode", ev)?;
                         }
                         "grouping_fields" => {
-                            config.tree_grouping =
-                                Some(expect_string_array(path, "explorer.grouping_fields", ev)?);
+                            let levels = expect_string_array(path, "explorer.grouping_fields", ev)?;
+                            validate_tree_grouping(path, "explorer.grouping_fields", &levels)?;
+                            config.tree_grouping = Some(levels);
                         }
                         _ => {
                             return Err(ConfigError::malformed(
@@ -461,6 +464,33 @@ fn expect_string(path: &Path, field: &str, value: &YamlNode) -> Result<String, C
             format!("expected a string, found {}", yaml_kind(value)),
         )),
     }
+}
+
+/// Splits one tree_grouping level into its grammar tokens. A level joins
+/// tokens with '+'. Returns None when any token is empty, which also covers a
+/// '+' that does not join two names.
+fn tree_grouping_tokens(level: &str) -> Option<Vec<&str>> {
+    let tokens: Vec<&str> = level.split('+').map(str::trim).collect();
+    if tokens.iter().any(|token| token.is_empty()) {
+        None
+    } else {
+        Some(tokens)
+    }
+}
+
+fn validate_tree_grouping(path: &Path, field: &str, levels: &[String]) -> Result<(), ConfigError> {
+    for level in levels {
+        if tree_grouping_tokens(level).is_none() {
+            return Err(ConfigError::malformed(
+                path,
+                Some(field.into()),
+                format!(
+                    "tree_grouping level {level:?} has an empty token; join grammar tokens with '+' and name each one"
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn expect_string_array(
