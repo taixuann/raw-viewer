@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import RawViewCore
 
+@Suite(.serialized)
 struct BuiltinAssetsTests {
     private static var repoRoot: URL {
         var url = URL(fileURLWithPath: #filePath)
@@ -25,9 +26,41 @@ struct BuiltinAssetsTests {
         return dir
     }
 
+    private func prepareIsolatedXdgConfig() throws -> () -> Void {
+        let xdgDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rawview-swift-xdg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: xdgDir.appendingPathComponent("raw-viewer"),
+            withIntermediateDirectories: true
+        )
+        let prev = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+        setenv("XDG_CONFIG_HOME", xdgDir.path, 1)
+        return {
+            if let prev {
+                setenv("XDG_CONFIG_HOME", prev, 1)
+            } else {
+                unsetenv("XDG_CONFIG_HOME")
+            }
+            try? FileManager.default.removeItem(at: xdgDir)
+        }
+    }
+
+    private func withIsolatedXdgConfig<T>(_ body: () throws -> T) throws -> T {
+        let restore = try prepareIsolatedXdgConfig()
+        defer { restore() }
+        return try body()
+    }
+
+    private func withIsolatedXdgConfig<T>(_ body: () async throws -> T) async throws -> T {
+        let restore = try prepareIsolatedXdgConfig()
+        defer { restore() }
+        return try await body()
+    }
+
     @Test func freshProjectLoadsBuiltinsAndResolvesFiles() async throws {
-        let tmp = try tempProject()
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        try await withIsolatedXdgConfig {
+            let tmp = try tempProject()
+            defer { try? FileManager.default.removeItem(at: tmp) }
 
         let project = try ProjectContext.open(tmp)
         let v3ctx = V3Reader.context(project: project)
@@ -60,11 +93,13 @@ struct BuiltinAssetsTests {
         let nonStandardMeasurement = try await InstrumentReader.load(nonStandardURL, project: project)
         #expect(nonStandardMeasurement.instrument.id == "keithley-2400")
         #expect(nonStandardMeasurement.channel(named: "voltage")?.values.count == 121)
+        }
     }
 
     @Test func disablingProfileInConfigStopsItMatching() async throws {
-        let tmp = try tempProject()
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        try await withIsolatedXdgConfig {
+            let tmp = try tempProject()
+            defer { try? FileManager.default.removeItem(at: tmp) }
 
         let configURL = tmp.appendingPathComponent(".raw-viewer/config.yaml")
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -82,11 +117,13 @@ struct BuiltinAssetsTests {
 
         let fallback = try await InstrumentReader.load(nonStandardURL, project: project)
         #expect(fallback.instrument.id == "generic-table")
+        }
     }
 
     @Test func overridingOneBuiltinKeepsTheRest() throws {
-        let tmp = try tempProject()
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        try withIsolatedXdgConfig {
+            let tmp = try tempProject()
+            defer { try? FileManager.default.removeItem(at: tmp) }
 
         let customProfile = """
 schema_version: 4
@@ -135,11 +172,13 @@ variants:
         #expect(profileCat.profiles.contains { $0.profileID == "usth/autolab-usth" })
         #expect(profileCat.profiles.contains { $0.profileID == "usth/horiba-labram" })
         #expect(profileCat.profiles.contains { $0.profileID == "usth/iop-hanoi" })
+        }
     }
 
     @Test func olderRevisionEmitsWarning() throws {
-        let tmp = try tempProject()
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        try withIsolatedXdgConfig {
+            let tmp = try tempProject()
+            defer { try? FileManager.default.removeItem(at: tmp) }
 
         let oldProfile = """
 schema_version: 4
@@ -185,6 +224,7 @@ variants:
         #expect(profileCat.issues.contains {
             $0.contains("usth/keithley-2400") && $0.contains("older than built-in revision")
         })
+        }
     }
 
     @Test func duplicateEnabledAndDisabledThrows() throws {
