@@ -83,6 +83,25 @@ enum PlotAxisDrawHelper {
         return CGRect(x: minX, y: minY, width: max(0, maxX - minX), height: max(0, maxY - minY)).intersection(plot)
     }
 
+    static func axisTitle(_ label: String, unit: String, absolute: Bool, scale: AxisScale) -> String {
+        let physical = label + (unit.isEmpty ? "" : " (\(unit))")
+        let magnitude = absolute ? "|\(physical)|" : physical
+        return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
+    }
+
+    static func tickLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, precision: Int? = nil, span: Double = 1.0) -> String {
+        if scale == .logarithmic {
+            return "10^\(AxisFormatter.formatTick(value, factor: 1.0, precision: 1))"
+        }
+        let prec: Int = precision ?? {
+            let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
+            if scaledSpan < 0.05 { return 3 }
+            if scaledSpan < 0.5 { return 2 }
+            return 1
+        }()
+        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
+    }
+
     static func effectiveMinorSubdivisions(minorCount: Int, showMinorGrid: Bool) -> Int {
         if minorCount > 0 { return minorCount + 1 }
         return showMinorGrid ? 5 : 0
@@ -108,7 +127,6 @@ enum PlotAxisDrawHelper {
         fontScale: CGFloat,
         maxLabelWidth: CGFloat,
         yLabels: [String],
-        hoverLocation: CGPoint?,
         formatLabel: (Double, AxisScale, AxisFormatter.ScaleInfo, Int?) -> String
     ) {
         let tickLen = PlotRenderingEngine.tickLength(fontScale: fontScale, preset: preset)
@@ -248,31 +266,80 @@ enum PlotAxisDrawHelper {
         yLabelContext.rotate(by: .degrees(-90))
         yLabelContext.draw(Text(yTitle).font(plotFont(axisLabelSize, false)), at: .zero, anchor: .center)
 
-        if axisConfig.showCursor, let loc = hoverLocation, plot.contains(loc), xSpan > 0, ySpan > 0 {
-            var hLine = Path()
-            hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
-            hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
-            context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+    }
 
-            var vLine = Path()
-            vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
-            vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
-            context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
+    static func drawCursor(
+        context: inout GraphicsContext,
+        frame: PlotFrame,
+        axes: PlotAxes,
+        preset: ScientificPreset,
+        hoverLocation loc: CGPoint
+    ) {
+        let plot = frame.plot
+        let xRange = axes.xRange
+        let yRange = axes.yRange
+        let xSpan = xRange.upperBound - xRange.lowerBound
+        let ySpan = yRange.upperBound - yRange.lowerBound
+        guard plot.contains(loc), xSpan > 0, ySpan > 0 else { return }
 
-            let tX = Double((loc.x - plot.minX) / plot.width)
-            let tY = Double((plot.maxY - loc.y) / plot.height)
-            let dataX = xRange.lowerBound + tX * xSpan
-            let dataY = yRange.lowerBound + tY * ySpan
+        var hLine = Path()
+        hLine.move(to: CGPoint(x: plot.minX, y: loc.y))
+        hLine.addLine(to: CGPoint(x: plot.maxX, y: loc.y))
+        context.stroke(hLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
 
-            let xStr = AxisFormatter.formatTick(dataX, factor: xScaleInfo.factor, precision: max(2, xNice.precision))
-            let yStr = AxisFormatter.formatTick(dataY, factor: yScaleInfo.factor, precision: max(2, yNice.precision))
-            let xUnitStr = xScaleInfo.displayUnit.isEmpty ? "" : " \(xScaleInfo.displayUnit)"
-            let yUnitStr = yScaleInfo.displayUnit.isEmpty ? "" : " \(yScaleInfo.displayUnit)"
-            let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+        var vLine = Path()
+        vLine.move(to: CGPoint(x: loc.x, y: plot.minY))
+        vLine.addLine(to: CGPoint(x: loc.x, y: plot.maxY))
+        context.stroke(vLine, with: .color(Color.accentColor.opacity(0.7)), style: StrokeStyle(lineWidth: 1.0, dash: [3, 3]))
 
-            let tooltipFont = plotFont(max(9.5, 10.5 * fontScale), true)
-            let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
-            context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
+        let tX = Double((loc.x - plot.minX) / plot.width)
+        let tY = Double((plot.maxY - loc.y) / plot.height)
+        let dataX = xRange.lowerBound + tX * xSpan
+        let dataY = yRange.lowerBound + tY * ySpan
+
+        let xStr = AxisFormatter.formatTick(dataX, factor: axes.xScaleInfo.factor, precision: max(2, axes.xNice.precision))
+        let yStr = AxisFormatter.formatTick(dataY, factor: axes.yScaleInfo.factor, precision: max(2, axes.yNice.precision))
+        let xUnitStr = axes.xScaleInfo.displayUnit.isEmpty ? "" : " \(axes.xScaleInfo.displayUnit)"
+        let yUnitStr = axes.yScaleInfo.displayUnit.isEmpty ? "" : " \(axes.yScaleInfo.displayUnit)"
+        let tooltipText = "X: \(xStr)\(xUnitStr)\nY: \(yStr)\(yUnitStr)"
+
+        let tooltipFont = PlotRenderingEngine.plotFont(preset: preset, size: max(9.5, 10.5 * frame.fontScale), bold: true)
+        let tooltipPos = CGPoint(x: min(loc.x + 12, plot.maxX - 90), y: max(loc.y - 25, plot.minY + 20))
+        context.draw(Text(tooltipText).font(tooltipFont).foregroundStyle(.primary), at: tooltipPos, anchor: .leading)
+    }
+}
+
+/// Crosshair and value readout. It owns the hover position, so a mouse move
+/// redraws only this layer. The data canvas underneath does not re-run.
+struct PlotCursorOverlay: View {
+    let axes: PlotAxes?
+    let preset: ScientificPreset
+    let showCursor: Bool
+    @State private var hoverLocation: CGPoint? = nil
+
+    var body: some View {
+        GeometryReader { _ in
+            Canvas { context, size in
+                guard showCursor, let loc = hoverLocation, let axes else { return }
+                PlotAxisDrawHelper.drawCursor(
+                    context: &context,
+                    frame: axes.frame(size: size, preset: preset),
+                    axes: axes,
+                    preset: preset,
+                    hoverLocation: loc
+                )
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard showCursor else {
+                    hoverLocation = nil
+                    return
+                }
+                switch phase {
+                case .active(let loc): hoverLocation = loc
+                case .ended: hoverLocation = nil
+                }
+            }
         }
     }
 }
@@ -350,6 +417,165 @@ struct DraggableLegendView: View {
     }
 }
 
+/// Value copy of one channel. Memo keys compare these, so prepared plot data is
+/// reused until the data or an axis setting changes.
+struct PlotChannelSnapshot: Equatable {
+    let name: String
+    let label: String
+    let unit: String
+    let quantity: String?
+    let values: [Double?]
+
+    init(_ channel: MeasurementChannel) {
+        name = channel.name
+        label = channel.label
+        unit = channel.unit
+        quantity = channel.quantity
+        values = channel.values
+    }
+}
+
+/// Axis ranges, ticks and labels. Independent of the view size, so it is built
+/// once per data or axis change instead of on every redraw.
+struct PlotAxes {
+    let xRegion: ClosedRange<Double>
+    let yRegion: ClosedRange<Double>
+    let xRange: ClosedRange<Double>
+    let yRange: ClosedRange<Double>
+    let xNice: AxisFormatter.NiceTicksResult
+    let yNice: AxisFormatter.NiceTicksResult
+    let yLabels: [String]
+    let maxChars: Int
+    let xScaleInfo: AxisFormatter.ScaleInfo
+    let yScaleInfo: AxisFormatter.ScaleInfo
+    let xTitle: String
+    let yTitle: String
+
+    init(
+        xBounds: (lower: Double, upper: Double),
+        yBounds: (lower: Double, upper: Double),
+        xScaleInfo: AxisFormatter.ScaleInfo,
+        yScaleInfo: AxisFormatter.ScaleInfo,
+        xTitle: String,
+        yTitle: String,
+        yScale: AxisScale,
+        axisConfig: PlotAxisConfig
+    ) {
+        let xRegion = PlotAxisDrawHelper.dataRegion(bounds: xBounds, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
+        let yRegion = PlotAxisDrawHelper.dataRegion(bounds: yBounds, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
+        let xRange = PlotAxisDrawHelper.paddedViewport(xRegion, paddingPercent: axisConfig.xPaddingPercent)
+        let yRange = PlotAxisDrawHelper.paddedViewport(yRegion, paddingPercent: axisConfig.yPaddingPercent)
+        let xTickLo = axisConfig.xTickCount >= 2 ? xRegion.lowerBound : xRange.lowerBound
+        let xTickHi = axisConfig.xTickCount >= 2 ? xRegion.upperBound : xRange.upperBound
+        let yTickLo = axisConfig.yTickCount >= 2 ? yRegion.lowerBound : yRange.lowerBound
+        let yTickHi = axisConfig.yTickCount >= 2 ? yRegion.upperBound : yRange.upperBound
+        let xNice = AxisFormatter.ticks(lower: xTickLo, upper: xTickHi, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
+        let yNice = AxisFormatter.ticks(lower: yTickLo, upper: yTickHi, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
+        let yLabels = yNice.tickValues.map { PlotAxisDrawHelper.tickLabel($0, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision) }
+        self.xRegion = xRegion
+        self.yRegion = yRegion
+        self.xRange = xRange
+        self.yRange = yRange
+        self.xNice = xNice
+        self.yNice = yNice
+        self.yLabels = yLabels
+        self.maxChars = yLabels.map(\.count).max() ?? 1
+        self.xScaleInfo = xScaleInfo
+        self.yScaleInfo = yScaleInfo
+        self.xTitle = xTitle
+        self.yTitle = yTitle
+    }
+}
+
+/// Plot rectangle and text metrics for one view size. Cheap to rebuild, so the
+/// cursor layer can read it without touching the data layer.
+struct PlotFrame {
+    let plot: CGRect
+    let fontScale: CGFloat
+    let maxLabelWidth: CGFloat
+}
+
+extension PlotAxes {
+    func frame(size: CGSize, preset: ScientificPreset) -> PlotFrame {
+        let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
+        let approxPlotWidth = max(200, size.width - 120)
+        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth)
+        let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
+        let leftGutter = max(84 * fontScale, maxLabelWidth + 30 * fontScale)
+        let topGutter: CGFloat = 20 * fontScale
+        let bottomGutter: CGFloat = 54 * fontScale
+        let rightGutter: CGFloat = 22 * fontScale
+
+        let availWidth = max(10, size.width - leftGutter - rightGutter)
+        let availHeight = max(10, size.height - topGutter - bottomGutter)
+        var plotW = availWidth
+        var plotH = plotW / targetRatio
+        if plotH > availHeight {
+            plotH = availHeight
+            plotW = plotH * targetRatio
+        }
+        let plotX = leftGutter + (availWidth - plotW) / 2
+        let plotY = topGutter + (availHeight - plotH) / 2
+        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
+        return PlotFrame(plot: plot, fontScale: fontScale, maxLabelWidth: maxLabelWidth)
+    }
+}
+
+private struct NativePlotInputs: Equatable {
+    let channels: [PlotChannelSnapshot]
+    let xName: String?
+    let yNames: [String]?
+    let xAbsolute: Bool
+    let yAbsolute: Bool
+    let xScale: AxisScale
+    let yScale: AxisScale
+    let axisConfig: PlotAxisConfig
+    let progressionFilterEnabled: Bool
+    let selectedProgressionChannel: String?
+    let selectedCycles: Set<String>
+}
+
+private struct PreparedNativePlot {
+    let data: ([Double?], [(String, [Double?])])
+    let axes: PlotAxes?
+    let segmentsPerSeries: [[ProgressionPlotSegment]]
+}
+
+private struct OverlaySeries: Identifiable {
+    let sourcePath: String
+    let label: String
+    let x: [Double?]
+    let y: [Double?]
+    var id: String { sourcePath + "|" + label }
+}
+
+private typealias OverlayData = (xChannel: (label: String, unit: String), yChannel: (label: String, unit: String), series: [OverlaySeries])
+
+private struct OverlaySourceInput: Equatable {
+    let sourcePath: String
+    let xName: String?
+    let yNames: [String]?
+    let channels: [PlotChannelSnapshot]
+}
+
+private struct OverlayPlotInputs: Equatable {
+    let sources: [OverlaySourceInput]
+    let order: [String]
+    let xAbsolute: Bool
+    let yAbsolute: Bool
+    let xScale: AxisScale
+    let yScale: AxisScale
+    let axisConfig: PlotAxisConfig
+}
+
+private struct PreparedOverlayPlot {
+    let xChannel: (label: String, unit: String)
+    let yChannel: (label: String, unit: String)
+    let series: [OverlaySeries]
+    let axes: PlotAxes?
+    let accessibleSummary: String
+}
+
 private enum PlotFailure: Error { case message(String) }
 
 struct NativePlot: View {
@@ -378,9 +604,9 @@ struct NativePlot: View {
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
     var palettePreset: ColorPalettePreset = .classicScientific
     var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
-    @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
     @State private var pan = CGSize.zero
+    @State private var preparedCache = PlotMemo<NativePlotInputs, Result<PreparedNativePlot, PlotFailure>>()
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
@@ -393,18 +619,6 @@ struct NativePlot: View {
 
     private var isProgressionContinuous: Bool {
         activeProgressionChannel?.quantity == "time" && !(activeProgressionChannel?.name.lowercased().contains("scan") ?? false)
-    }
-
-    private func progressionSegments(data: ([Double?], [(String, [Double?])])) -> [ProgressionPlotSegment] {
-        guard progressionFilterEnabled, let progChannel = activeProgressionChannel else { return [] }
-        guard let firstSeriesY = data.1.first?.1 else { return [] }
-        return ProgressionPlotReader.segments(
-            x: data.0,
-            y: firstSeriesY,
-            progression: progChannel.values,
-            isContinuous: isProgressionContinuous,
-            selectedDiscreteKeys: selectedCycles
-        )
     }
 
     private var transformed: Result<([Double?], [(String, [Double?])]), PlotFailure> {
@@ -432,24 +646,16 @@ struct NativePlot: View {
 
     var body: some View {
         let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500)
-        switch transformed {
+        switch preparedPlot() {
         case .failure(let failure):
             if case .message(let message) = failure { ContentUnavailableView("Invalid Plot Domain", systemImage: "chart.xyaxis.line", description: Text(message)) }
-        case .success(let data):
+        case .success(let prepared):
+            let data = prepared.data
             ZStack(alignment: .topTrailing) {
-                Canvas { context, size in draw(data, in: &context, size: size) }
+                Canvas { context, size in draw(prepared, in: &context, size: size) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        if axisConfig.showCursor {
-                            switch phase {
-                            case .active(let loc): hoverLocation = loc
-                            case .ended: hoverLocation = nil
-                            }
-                        } else {
-                            hoverLocation = nil
-                        }
-                    }
+
+                PlotCursorOverlay(axes: prepared.axes, preset: preset, showCursor: axisConfig.showCursor)
 
                 if isProgressionContinuous && colorBySweepProgress {
                     SweepColorbarView()
@@ -459,7 +665,7 @@ struct NativePlot: View {
                 }
 
                 if showLegend {
-                    let progSegments = progressionSegments(data: data)
+                    let progSegments = prepared.segmentsPerSeries.first ?? []
                     let hasCustomLabel = data.1.first.flatMap { customSeriesLabels[$0.0] }?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                     let hasProgressionSegmentation = progressionFilterEnabled && !progSegments.isEmpty
                     let isMultiSeries = data.1.count > 1
@@ -501,101 +707,119 @@ struct NativePlot: View {
         }
     }
 
-    private func draw(_ data: ([Double?], [(String, [Double?])]), in context: inout GraphicsContext, size: CGSize) {
+    private var inputs: NativePlotInputs {
+        NativePlotInputs(
+            channels: measurement.channels.map(PlotChannelSnapshot.init),
+            xName: measurement.view.x,
+            yNames: measurement.view.y,
+            xAbsolute: xAbsolute,
+            yAbsolute: yAbsolute,
+            xScale: xScale,
+            yScale: yScale,
+            axisConfig: axisConfig,
+            progressionFilterEnabled: progressionFilterEnabled,
+            selectedProgressionChannel: selectedProgressionChannel,
+            selectedCycles: selectedCycles
+        )
+    }
+
+    /// Transform and axis layout, reused across body evaluations. Hover re-runs
+    /// body, so without this cache each mouse move would redo the full data pass.
+    private func preparedPlot() -> Result<PreparedNativePlot, PlotFailure> {
+        preparedCache.value(for: inputs) {
+            switch transformed {
+            case .failure(let failure): return .failure(failure)
+            case .success(let data): return .success(makePrepared(data))
+            }
+        }
+    }
+
+    private func makePrepared(_ data: ([Double?], [(String, [Double?])])) -> PreparedNativePlot {
         let finiteX = data.0.compactMap { $0 }
         let finiteY = data.1.flatMap { $0.1.compactMap { $0 } }
-        guard !finiteX.isEmpty, !finiteY.isEmpty else { return }
-
         let xChannel = measurement.channel(named: measurement.view.x ?? "")
         let yChannel = measurement.view.y?.first.flatMap(measurement.channel(named:))
 
+        let progChannel = activeProgressionChannel
+        let isContinuous = isProgressionContinuous
+        let segmentsPerSeries: [[ProgressionPlotSegment]] = data.1.map { item in
+            guard progressionFilterEnabled, let progChannel else { return [] }
+            return ProgressionPlotReader.segments(
+                x: data.0,
+                y: item.1,
+                progression: progChannel.values,
+                isContinuous: isContinuous,
+                selectedDiscreteKeys: selectedCycles
+            )
+        }
+
+        guard !finiteX.isEmpty, !finiteY.isEmpty else {
+            return PreparedNativePlot(data: data, axes: nil, segmentsPerSeries: segmentsPerSeries)
+        }
         let xScaleInfo = AxisFormatter.scaleInfo(for: finiteX, baseUnit: xChannel?.unit ?? "")
         let yScaleInfo = AxisFormatter.scaleInfo(for: finiteY, baseUnit: yChannel?.unit ?? "")
+        let axes = PlotAxes(
+            xBounds: (lower: finiteX.min() ?? 0.0, upper: finiteX.max() ?? 1.0),
+            yBounds: (lower: finiteY.min() ?? 0.0, upper: finiteY.max() ?? 1.0),
+            xScaleInfo: xScaleInfo,
+            yScaleInfo: yScaleInfo,
+            xTitle: axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale),
+            yTitle: axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale),
+            yScale: yScale,
+            axisConfig: axisConfig
+        )
+        return PreparedNativePlot(data: data, axes: axes, segmentsPerSeries: segmentsPerSeries)
+    }
 
-        let xRawBounds = (lower: finiteX.min() ?? 0.0, upper: finiteX.max() ?? 1.0)
-        let yRawBounds = (lower: finiteY.min() ?? 0.0, upper: finiteY.max() ?? 1.0)
-        let xRegion = PlotAxisDrawHelper.dataRegion(bounds: xRawBounds, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
-        let yRegion = PlotAxisDrawHelper.dataRegion(bounds: yRawBounds, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
-        let xRange = PlotAxisDrawHelper.paddedViewport(xRegion, paddingPercent: axisConfig.xPaddingPercent)
-        let yRange = PlotAxisDrawHelper.paddedViewport(yRegion, paddingPercent: axisConfig.yPaddingPercent)
-
-        let yTickLo = axisConfig.yTickCount >= 2 ? yRegion.lowerBound : yRange.lowerBound
-        let yTickHi = axisConfig.yTickCount >= 2 ? yRegion.upperBound : yRange.upperBound
-        let yNice = AxisFormatter.ticks(lower: yTickLo, upper: yTickHi, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
-        let yLabels: [String] = yNice.tickValues.map { val in
-            axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
-        }
-        let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
-        let approxPlotWidth = max(200, size.width - 120)
-        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth)
-
-        let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
-        let leftGutter = max(84 * fontScale, maxLabelWidth + 30 * fontScale)
-        let topGutter: CGFloat = 20 * fontScale
-        let bottomGutter: CGFloat = 54 * fontScale
-        let rightGutter: CGFloat = 22 * fontScale
-
-        let availWidth = max(10, size.width - leftGutter - rightGutter)
-        let availHeight = max(10, size.height - topGutter - bottomGutter)
-        var plotW = availWidth
-        var plotH = plotW / targetRatio
-        if plotH > availHeight {
-            plotH = availHeight
-            plotW = plotH * targetRatio
-        }
-        let plotX = leftGutter + (availWidth - plotW) / 2
-        let plotY = topGutter + (availHeight - plotH) / 2
-        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
+    private func draw(_ prepared: PreparedNativePlot, in context: inout GraphicsContext, size: CGSize) {
+        guard let axes = prepared.axes else { return }
+        let data = prepared.data
+        let frame = axes.frame(size: size, preset: preset)
+        let plot = frame.plot
+        let xRange = axes.xRange
+        let yRange = axes.yRange
+        let isContinuous = isProgressionContinuous
 
         PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
-        let xTickLo = axisConfig.xTickCount >= 2 ? xRegion.lowerBound : xRange.lowerBound
-        let xTickHi = axisConfig.xTickCount >= 2 ? xRegion.upperBound : xRange.upperBound
-        let xNice = AxisFormatter.ticks(lower: xTickLo, upper: xTickHi, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
-
         if let onMetricsUpdate {
             let latest = PlotLiveMetrics(
-                xRange: xRegion,
-                yRange: yRegion,
-                xTickCount: xNice.tickValues.count,
-                yTickCount: yNice.tickValues.count
+                xRange: axes.xRegion,
+                yRange: axes.yRegion,
+                xTickCount: axes.xNice.tickValues.count,
+                yTickCount: axes.yNice.tickValues.count
             )
             DispatchQueue.main.async { onMetricsUpdate(latest) }
         }
-
-        let xTitle = axisTitle(xChannel?.label ?? "X", unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
-        let yTitle = axisTitle(yChannel?.label ?? "Y", unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
         PlotAxisDrawHelper.drawGridTicksAndCursor(
             context: &context,
             plot: plot,
             xRange: xRange,
             yRange: yRange,
-            xRegion: xRegion,
-            yRegion: yRegion,
-            xNice: xNice,
-            yNice: yNice,
-            xScaleInfo: xScaleInfo,
-            yScaleInfo: yScaleInfo,
+            xRegion: axes.xRegion,
+            yRegion: axes.yRegion,
+            xNice: axes.xNice,
+            yNice: axes.yNice,
+            xScaleInfo: axes.xScaleInfo,
+            yScaleInfo: axes.yScaleInfo,
             xScale: xScale,
             yScale: yScale,
-            xTitle: xTitle,
-            yTitle: yTitle,
+            xTitle: axes.xTitle,
+            yTitle: axes.yTitle,
             axisConfig: axisConfig,
             preset: preset,
-            fontScale: fontScale,
-            maxLabelWidth: maxLabelWidth,
-            yLabels: yLabels,
-            hoverLocation: hoverLocation,
+            fontScale: frame.fontScale,
+            maxLabelWidth: frame.maxLabelWidth,
+            yLabels: axes.yLabels,
             formatLabel: { val, scale, info, prec in axisLabel(val, scale: scale, scaleInfo: info, precision: prec) }
         )
 
         var plotContext = context
         let clipRect = PlotAxisDrawHelper.curveClipRect(
             plot: plot,
-            xRegion: xRegion,
-            yRegion: yRegion,
+            xRegion: axes.xRegion,
+            yRegion: axes.yRegion,
             xViewport: xRange,
             yViewport: yRange,
             clipToXRegion: axisConfig.xRegionMin != nil || axisConfig.xRegionMax != nil,
@@ -606,18 +830,7 @@ struct NativePlot: View {
         for (seriesIndex, item) in data.1.enumerated() {
             guard item.1.count == data.0.count else { continue }
             let color = (seriesIndex == 0 ? customColor : nil) ?? palette(seriesIndex)
-
-            let progChannel = selectedProgressionChannel.flatMap(measurement.channel(named:)) ?? measurement.progressionChannel
-            let isContinuous = progChannel?.quantity == "time" && !(progChannel?.name.lowercased().contains("scan") ?? false)
-            let progSegments = (progressionFilterEnabled && progChannel != nil)
-                ? ProgressionPlotReader.segments(
-                    x: data.0,
-                    y: item.1,
-                    progression: progChannel?.values,
-                    isContinuous: isContinuous,
-                    selectedDiscreteKeys: selectedCycles
-                  )
-                : []
+            let progSegments = prepared.segmentsPerSeries[seriesIndex]
 
             if !progSegments.isEmpty {
                 for (segIndex, seg) in progSegments.enumerated() {
@@ -640,7 +853,7 @@ struct NativePlot: View {
                         }
                     }()
                     PlotRenderingEngine.renderRun(
-                        points: runPoints,
+                        points: PlotRenderingEngine.reducedForDrawing(runPoints, mark: markType, plotWidth: plot.width),
                         mark: markType,
                         interpolation: interpolation,
                         color: segColor,
@@ -661,7 +874,7 @@ struct NativePlot: View {
                         runPoints.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
                     }
                     PlotRenderingEngine.renderRun(
-                        points: runPoints,
+                        points: PlotRenderingEngine.reducedForDrawing(runPoints, mark: markType, plotWidth: plot.width),
                         mark: markType,
                         interpolation: interpolation,
                         color: color,
@@ -691,21 +904,10 @@ struct NativePlot: View {
         return (center - span / 2)...(center + span / 2)
     }
     private func axisTitle(_ label: String, unit: String, absolute: Bool, scale: AxisScale) -> String {
-        let physical = label + (unit.isEmpty ? "" : " (\(unit))")
-        let magnitude = absolute ? "|\(physical)|" : physical
-        return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
+        PlotAxisDrawHelper.axisTitle(label, unit: unit, absolute: absolute, scale: scale)
     }
     private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, precision: Int? = nil, span: Double = 1.0) -> String {
-        if scale == .logarithmic {
-            return "10^\(AxisFormatter.formatTick(value, factor: 1.0, precision: 1))"
-        }
-        let prec: Int = precision ?? {
-            let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
-            if scaledSpan < 0.05 { return 3 }
-            if scaledSpan < 0.5 { return 2 }
-            return 1
-        }()
-        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
+        PlotAxisDrawHelper.tickLabel(value, scale: scale, scaleInfo: scaleInfo, precision: precision, span: span)
     }
     private func palette(_ index: Int) -> Color {
         NativeOverlayPalette.color(index, palette: palettePreset)
@@ -743,21 +945,13 @@ struct OverlayPlot: View {
     var axisConfig: PlotAxisConfig = PlotAxisConfig()
     var palettePreset: ColorPalettePreset = .classicScientific
     var onMetricsUpdate: ((PlotLiveMetrics) -> Void)? = nil
-    @State private var hoverLocation: CGPoint? = nil
     @State private var zoom = 1.0
     @State private var pan = CGSize.zero
     @AppStorage("uiFontSize") private var uiFontSize: Double = 12.0
+    @State private var preparedCache = PlotMemo<OverlayPlotInputs, Result<PreparedOverlayPlot, OverlayPlotFailure>>()
 
     private func plotFont(size: CGFloat, bold: Bool = false) -> Font {
         PlotRenderingEngine.plotFont(preset: preset, size: size, bold: bold)
-    }
-
-    private struct Series: Identifiable {
-        let sourcePath: String
-        let label: String
-        let x: [Double?]
-        let y: [Double?]
-        var id: String { sourcePath + "|" + label }
     }
 
     private var effectiveOrder: [String] {
@@ -768,9 +962,9 @@ struct OverlayPlot: View {
         return kept + missing
     }
 
-    private var transformed: Result<(xChannel: (label: String, unit: String), yChannel: (label: String, unit: String), series: [Series]), OverlayPlotFailure> {
+    private var transformed: Result<OverlayData, OverlayPlotFailure> {
         guard !measurements.isEmpty else { return .failure(.message("No measurements selected")) }
-        var series: [Series] = []
+        var series: [OverlaySeries] = []
         var xChannelInfo = ("", "")
         var yChannelInfo = ("", "")
         var first = true
@@ -812,8 +1006,9 @@ struct OverlayPlot: View {
                 let base = URL(fileURLWithPath: measurement.source.path).lastPathComponent
                 let sourceLabel = basenames[base, default: 0] > 1 ? measurement.source.path : base
                 let label = yNames.count > 1 ? "\(sourceLabel) · \(yChannel.label)" : sourceLabel
-                series.append(Series(sourcePath: measurement.source.path, label: label,
-                                     x: xChannel.values, y: yChannel.values))
+                series.append(OverlaySeries(sourcePath: measurement.source.path, label: label,
+                                     x: transformedSamples(xChannel.values, absolute: xAbsolute, scale: xScale),
+                                     y: transformedSamples(yChannel.values, absolute: yAbsolute, scale: yScale)))
             }
         }
         return .success((xChannelInfo, yChannelInfo, series))
@@ -821,7 +1016,7 @@ struct OverlayPlot: View {
 
     var body: some View {
         let headerFontScale = PlotRenderingEngine.fontScale(plotWidth: 500)
-        switch transformed {
+        switch preparedPlot() {
         case .failure(let failure):
             if case .message(let message) = failure {
                 VStack(alignment: .leading, spacing: 10) {
@@ -852,28 +1047,17 @@ struct OverlayPlot: View {
             }
         case .success(let data):
             let sourceOrder = effectiveOrder
-            let accessibleSummary = data.series.map {
-                "\($0.label): \($0.x.count) points, \(gapCount($0)) gaps"
-            }.joined(separator: ". ")
+            let accessibleSummary = data.accessibleSummary
             ZStack(alignment: .topTrailing) {
                 Canvas { context, size in
-                    draw(data.series, xLabel: data.xChannel.label, xUnit: data.xChannel.unit, yLabel: data.yChannel.label, yUnit: data.yChannel.unit, in: &context, size: size)
+                    draw(data, in: &context, size: size)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onContinuousHover { phase in
-                    if axisConfig.showCursor {
-                        switch phase {
-                        case .active(let loc): hoverLocation = loc
-                        case .ended: hoverLocation = nil
-                        }
-                    } else {
-                        hoverLocation = nil
-                    }
-                }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Overlay plot with \(data.series.count) series")
                 .accessibilityValue(accessibleSummary)
+
+                PlotCursorOverlay(axes: data.axes, preset: preset, showCursor: axisConfig.showCursor)
 
                 if colorBySweepProgress {
                     SweepColorbarView()
@@ -908,96 +1092,114 @@ struct OverlayPlot: View {
         }
     }
 
-    private func draw(_ series: [Series], xLabel: String, xUnit: String, yLabel: String, yUnit: String, in context: inout GraphicsContext, size: CGSize) {
-        guard let xBounds = extrema(series, isX: true), let yBounds = extrema(series, isX: false) else { return }
+    private var inputs: OverlayPlotInputs {
+        OverlayPlotInputs(
+            sources: measurements.map { measurement in
+                OverlaySourceInput(
+                    sourcePath: measurement.source.path,
+                    xName: measurement.view.x,
+                    yNames: measurement.view.y,
+                    channels: measurement.channels.map(PlotChannelSnapshot.init)
+                )
+            },
+            order: effectiveOrder,
+            xAbsolute: xAbsolute,
+            yAbsolute: yAbsolute,
+            xScale: xScale,
+            yScale: yScale,
+            axisConfig: axisConfig
+        )
+    }
 
-        let allX = series.flatMap { $0.x.compactMap { $0 } }
-        let allY = series.flatMap { $0.y.compactMap { $0 } }
-        let xScaleInfo = AxisFormatter.scaleInfo(for: allX, baseUnit: xUnit)
-        let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: yUnit)
-
-        let xRegion = PlotAxisDrawHelper.dataRegion(bounds: xBounds, minOverride: axisConfig.xRegionMin, maxOverride: axisConfig.xRegionMax)
-        let yRegion = PlotAxisDrawHelper.dataRegion(bounds: yBounds, minOverride: axisConfig.yRegionMin, maxOverride: axisConfig.yRegionMax)
-        let xRange = PlotAxisDrawHelper.paddedViewport(xRegion, paddingPercent: axisConfig.xPaddingPercent)
-        let yRange = PlotAxisDrawHelper.paddedViewport(yRegion, paddingPercent: axisConfig.yPaddingPercent)
-
-        let yTickLo = axisConfig.yTickCount >= 2 ? yRegion.lowerBound : yRange.lowerBound
-        let yTickHi = axisConfig.yTickCount >= 2 ? yRegion.upperBound : yRange.upperBound
-        let yNice = AxisFormatter.ticks(lower: yTickLo, upper: yTickHi, factor: yScaleInfo.factor, requestedCount: axisConfig.yTickCount)
-        let yLabels: [String] = yNice.tickValues.map { val in
-            axisLabel(val, scale: yScale, scaleInfo: yScaleInfo, precision: yNice.precision)
+    /// Transform, sort and axis layout, reused across body evaluations. Hover
+    /// re-runs body, so the cache keeps each mouse move from redoing the data pass.
+    private func preparedPlot() -> Result<PreparedOverlayPlot, OverlayPlotFailure> {
+        preparedCache.value(for: inputs) {
+            switch transformed {
+            case .failure(let failure): return .failure(failure)
+            case .success(let data): return .success(makePrepared(data))
+            }
         }
-        let targetRatio: CGFloat = CGFloat(preset.aspectRatio)
-        let approxPlotWidth = max(200, size.width - 120)
-        let fontScale = PlotRenderingEngine.fontScale(plotWidth: approxPlotWidth)
+    }
 
-        let maxChars = yLabels.map(\.count).max() ?? 1
-        let maxLabelWidth = max(34 * fontScale, CGFloat(maxChars) * 8.0 * fontScale)
-        let leftGutter = max(84 * fontScale, maxLabelWidth + 30 * fontScale)
-        let topGutter: CGFloat = 20 * fontScale
-        let bottomGutter: CGFloat = 54 * fontScale
-        let rightGutter: CGFloat = 22 * fontScale
-
-        let availWidth = max(10, size.width - leftGutter - rightGutter)
-        let availHeight = max(10, size.height - topGutter - bottomGutter)
-        var plotW = availWidth
-        var plotH = plotW / targetRatio
-        if plotH > availHeight {
-            plotH = availHeight
-            plotW = plotH * targetRatio
+    private func makePrepared(_ data: OverlayData) -> PreparedOverlayPlot {
+        let summary = data.series.map { item in
+            "\(item.label): \(item.x.count) points, \(gapCount(item)) gaps"
+        }.joined(separator: ". ")
+        guard let xBounds = extrema(data.series, isX: true), let yBounds = extrema(data.series, isX: false) else {
+            return PreparedOverlayPlot(xChannel: data.xChannel, yChannel: data.yChannel, series: data.series, axes: nil, accessibleSummary: summary)
         }
-        let plotX = leftGutter + (availWidth - plotW) / 2
-        let plotY = topGutter + (availHeight - plotH) / 2
-        let plot = CGRect(x: plotX, y: plotY, width: max(1, plotW), height: max(1, plotH))
+        let allX = data.series.flatMap { $0.x.compactMap { $0 } }
+        let allY = data.series.flatMap { $0.y.compactMap { $0 } }
+        let xScaleInfo = AxisFormatter.scaleInfo(for: allX, baseUnit: data.xChannel.unit)
+        let yScaleInfo = AxisFormatter.scaleInfo(for: allY, baseUnit: data.yChannel.unit)
+        let axes = PlotAxes(
+            xBounds: xBounds,
+            yBounds: yBounds,
+            xScaleInfo: xScaleInfo,
+            yScaleInfo: yScaleInfo,
+            xTitle: axisTitle(data.xChannel.label, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale),
+            yTitle: axisTitle(data.yChannel.label, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale),
+            yScale: yScale,
+            axisConfig: axisConfig
+        )
+        return PreparedOverlayPlot(xChannel: data.xChannel, yChannel: data.yChannel, series: data.series, axes: axes, accessibleSummary: summary)
+    }
+
+    private func transformedSamples(_ values: [Double?], absolute: Bool, scale: AxisScale) -> [Double?] {
+        values.map { sample -> Double? in
+            guard let sample else { return nil }
+            return transformedValue(sample, absolute: absolute, scale: scale)
+        }
+    }
+
+    private func draw(_ data: PreparedOverlayPlot, in context: inout GraphicsContext, size: CGSize) {
+        guard let axes = data.axes else { return }
+        let frame = axes.frame(size: size, preset: preset)
+        let plot = frame.plot
+        let xRange = axes.xRange
+        let yRange = axes.yRange
 
         PlotRenderingEngine.drawSpineFrame(plot: plot, preset: preset, in: &context)
 
-        let xTickLo = axisConfig.xTickCount >= 2 ? xRegion.lowerBound : xRange.lowerBound
-        let xTickHi = axisConfig.xTickCount >= 2 ? xRegion.upperBound : xRange.upperBound
-        let xNice = AxisFormatter.ticks(lower: xTickLo, upper: xTickHi, factor: xScaleInfo.factor, requestedCount: axisConfig.xTickCount)
-
         if let onMetricsUpdate {
             let latest = PlotLiveMetrics(
-                xRange: xRegion,
-                yRange: yRegion,
-                xTickCount: xNice.tickValues.count,
-                yTickCount: yNice.tickValues.count
+                xRange: axes.xRegion,
+                yRange: axes.yRegion,
+                xTickCount: axes.xNice.tickValues.count,
+                yTickCount: axes.yNice.tickValues.count
             )
             DispatchQueue.main.async { onMetricsUpdate(latest) }
         }
-
-        let xTitle = axisTitle(xLabel, unit: xScaleInfo.displayUnit, absolute: xAbsolute, scale: xScale)
-        let yTitle = axisTitle(yLabel, unit: yScaleInfo.displayUnit, absolute: yAbsolute, scale: yScale)
 
         PlotAxisDrawHelper.drawGridTicksAndCursor(
             context: &context,
             plot: plot,
             xRange: xRange,
             yRange: yRange,
-            xRegion: xRegion,
-            yRegion: yRegion,
-            xNice: xNice,
-            yNice: yNice,
-            xScaleInfo: xScaleInfo,
-            yScaleInfo: yScaleInfo,
+            xRegion: axes.xRegion,
+            yRegion: axes.yRegion,
+            xNice: axes.xNice,
+            yNice: axes.yNice,
+            xScaleInfo: axes.xScaleInfo,
+            yScaleInfo: axes.yScaleInfo,
             xScale: xScale,
             yScale: yScale,
-            xTitle: xTitle,
-            yTitle: yTitle,
+            xTitle: axes.xTitle,
+            yTitle: axes.yTitle,
             axisConfig: axisConfig,
             preset: preset,
-            fontScale: fontScale,
-            maxLabelWidth: maxLabelWidth,
-            yLabels: yLabels,
-            hoverLocation: hoverLocation,
+            fontScale: frame.fontScale,
+            maxLabelWidth: frame.maxLabelWidth,
+            yLabels: axes.yLabels,
             formatLabel: { val, scale, info, prec in axisLabel(val, scale: scale, scaleInfo: info, precision: prec) }
         )
 
         var plotContext = context
         let clipRect = PlotAxisDrawHelper.curveClipRect(
             plot: plot,
-            xRegion: xRegion,
-            yRegion: yRegion,
+            xRegion: axes.xRegion,
+            yRegion: axes.yRegion,
             xViewport: xRange,
             yViewport: yRange,
             clipToXRegion: axisConfig.xRegionMin != nil || axisConfig.xRegionMax != nil,
@@ -1005,14 +1207,14 @@ struct OverlayPlot: View {
         )
         plotContext.clip(to: Path(clipRect))
         let sourceOrder = effectiveOrder
-        for item in series {
+        for item in data.series {
             let color = customSeriesColors[item.sourcePath] ?? palette(item.sourcePath, order: sourceOrder)
             var currentRun: [CGPoint] = []
             for index in item.x.indices {
-                guard index < item.y.count, let rawX = item.x[index], let rawY = item.y[index] else {
+                guard index < item.y.count, let x = item.x[index], let y = item.y[index] else {
                     if !currentRun.isEmpty {
                         PlotRenderingEngine.renderRun(
-                            points: currentRun,
+                            points: PlotRenderingEngine.reducedForDrawing(currentRun, mark: markType, plotWidth: plot.width),
                             mark: markType,
                             interpolation: interpolation,
                             color: color,
@@ -1025,15 +1227,13 @@ struct OverlayPlot: View {
                     }
                     continue
                 }
-                let x = transformedValue(rawX, absolute: xAbsolute, scale: xScale)
-                let y = transformedValue(rawY, absolute: yAbsolute, scale: yScale)
                 let tx = (x - xRange.lowerBound) / (xRange.upperBound - xRange.lowerBound)
                 let ty = (y - yRange.lowerBound) / (yRange.upperBound - yRange.lowerBound)
                 currentRun.append(CGPoint(x: plot.minX + tx * plot.width, y: plot.maxY - ty * plot.height))
             }
             if !currentRun.isEmpty {
                 PlotRenderingEngine.renderRun(
-                    points: currentRun,
+                    points: PlotRenderingEngine.reducedForDrawing(currentRun, mark: markType, plotWidth: plot.width),
                     mark: markType,
                     interpolation: interpolation,
                     color: color,
@@ -1046,13 +1246,13 @@ struct OverlayPlot: View {
         }
     }
 
-    private func pointCount(_ series: [Series]) -> Int { series.reduce(0) { $0 + $1.x.count } }
-    private func gapCount(_ item: Series) -> Int {
+    private func pointCount(_ series: [OverlaySeries]) -> Int { series.reduce(0) { $0 + $1.x.count } }
+    private func gapCount(_ item: OverlaySeries) -> Int {
         item.x.indices.reduce(0) { count, index in
             count + ((item.x[index] == nil || index >= item.y.count || item.y[index] == nil) ? 1 : 0)
         }
     }
-    private func gapCount(_ series: [Series]) -> Int { series.reduce(0) { $0 + gapCount($1) } }
+    private func gapCount(_ series: [OverlaySeries]) -> Int { series.reduce(0) { $0 + gapCount($1) } }
     private func transformError(_ values: [Double?], absolute: Bool, scale: AxisScale) -> AxisTransformError? {
         for sample in values {
             guard let sample else { continue }
@@ -1066,22 +1266,19 @@ struct OverlayPlot: View {
         let magnitude = absolute ? abs(value) : value
         return scale == .logarithmic ? log10(magnitude) : magnitude
     }
-    private func extrema(_ series: [Series], isX: Bool) -> (lower: Double, upper: Double)? {
+    private func extrema(_ series: [OverlaySeries], isX: Bool) -> (lower: Double, upper: Double)? {
         var lower = Double.infinity
         var upper = -Double.infinity
         for item in series {
-            let values = isX ? item.x : item.y
-            let absolute = isX ? xAbsolute : yAbsolute
-            let scale = isX ? xScale : yScale
-            for sample in values {
+            for sample in (isX ? item.x : item.y) {
                 guard let sample else { continue }
-                let value = transformedValue(sample, absolute: absolute, scale: scale)
-                lower = min(lower, value)
-                upper = max(upper, value)
+                lower = min(lower, sample)
+                upper = max(upper, sample)
             }
         }
         return lower.isFinite && upper.isFinite ? (lower, upper) : nil
     }
+
     private func expanded(_ bounds: (lower: Double, upper: Double)) -> ClosedRange<Double> {
         let lo = bounds.lower; let hi = bounds.upper
         let delta = hi == lo ? max(abs(lo) * 0.05, 1) : (hi - lo) * 0.04
@@ -1094,21 +1291,10 @@ struct OverlayPlot: View {
         return (center - span / 2)...(center + span / 2)
     }
     private func axisTitle(_ label: String, unit: String, absolute: Bool, scale: AxisScale) -> String {
-        let physical = label + (unit.isEmpty ? "" : " (\(unit))")
-        let magnitude = absolute ? "|\(physical)|" : physical
-        return scale == .logarithmic ? "log₁₀(\(magnitude))" : magnitude
+        PlotAxisDrawHelper.axisTitle(label, unit: unit, absolute: absolute, scale: scale)
     }
     private func axisLabel(_ value: Double, scale: AxisScale, scaleInfo: AxisFormatter.ScaleInfo, precision: Int? = nil, span: Double = 1.0) -> String {
-        if scale == .logarithmic {
-            return "10^\(AxisFormatter.formatTick(value, factor: 1.0, precision: 1))"
-        }
-        let prec: Int = precision ?? {
-            let scaledSpan = span / (scaleInfo.factor != 0 ? scaleInfo.factor : 1.0)
-            if scaledSpan < 0.05 { return 3 }
-            if scaledSpan < 0.5 { return 2 }
-            return 1
-        }()
-        return AxisFormatter.formatTick(value, factor: scaleInfo.factor, precision: prec)
+        PlotAxisDrawHelper.tickLabel(value, scale: scale, scaleInfo: scaleInfo, precision: precision, span: span)
     }
     private func palette(_ sourcePath: String, order: [String]) -> Color {
         NativeOverlayPalette.color(order.firstIndex(of: sourcePath) ?? 0, palette: palettePreset)
