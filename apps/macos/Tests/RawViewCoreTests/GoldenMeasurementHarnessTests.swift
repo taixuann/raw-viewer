@@ -23,7 +23,7 @@ struct GoldenMeasurementHarnessTests {
         let cases: [Case]
     }
 
-    @Test func normalizedMeasurementGoldenHarness() async throws {
+    @Test(.globalConfigIsolated) func normalizedMeasurementGoldenHarness() async throws {
         let environment = ProcessInfo.processInfo.environment
         let shouldWrite = environment["RAWVIEW_WRITE_GOLDENS"] == "1"
         let shouldVerify = environment["RAWVIEW_VERIFY_GOLDENS"] == "1"

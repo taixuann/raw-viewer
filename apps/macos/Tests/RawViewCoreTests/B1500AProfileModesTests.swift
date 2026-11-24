@@ -6,7 +6,7 @@ import Testing
 /// selected folder -> YAML validation -> complete normalized arrays.
 /// Synthetic fixtures only; no real data.
 struct B1500AProfileModesTests {
-    @Test func listSweepPreservesRawValuesAndOrderWithoutTransform() async throws {
+    @Test(.globalConfigIsolated) func listSweepPreservesRawValuesAndOrderWithoutTransform() async throws {
         let profile = try shippedProfile()
         let csv = """
         SetupTitle, I/V List Sweep 1V
@@ -44,7 +44,7 @@ struct B1500AProfileModesTests {
         #expect(measurement.channel(named: "current")?.gapCount == 0)
     }
 
-    @Test func listSweepWithoutManifestIsSingleDisplayableButOverlayBlocked() async throws {
+    @Test(.globalConfigIsolated) func listSweepWithoutManifestIsSingleDisplayableButOverlayBlocked() async throws {
         let profile = try shippedProfile()
         let csvA = """
         SetupTitle, I/V List Sweep 0V
@@ -84,7 +84,7 @@ struct B1500AProfileModesTests {
         #expect(reason.contains("manifest"))
     }
 
-    @Test func dualSweepSelectsByHeaderSignature() async throws {
+    @Test(.globalConfigIsolated) func dualSweepSelectsByHeaderSignature() async throws {
         let profile = try shippedProfile()
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
@@ -111,7 +111,7 @@ struct B1500AProfileModesTests {
         #expect(measurement.view.preserveOrder)
     }
 
-    @Test func wgfmuRetainsEveryRequiredPlotPointAndDeclaredUnits() async throws {
+    @Test(.globalConfigIsolated) func wgfmuRetainsEveryRequiredPlotPointAndDeclaredUnits() async throws {
         let profile = try shippedProfile()
         let csv = """
         SetupTitle, STP decay
@@ -151,7 +151,7 @@ struct B1500AProfileModesTests {
         #expect(measurement.channels.count == 3)
     }
 
-    @Test func wgfmuPpfTimeFirstRowLoadsCompleteOrderedArrays() async throws {
+    @Test(.globalConfigIsolated) func wgfmuPpfTimeFirstRowLoadsCompleteOrderedArrays() async throws {
         let profile = try shippedProfile()
         let csv = """
         time_s,current_a
@@ -181,7 +181,7 @@ struct B1500AProfileModesTests {
         #expect(measurement.view.preserveOrder)
     }
 
-    @Test func wgfmuPpfIndexFirstRowPlotsPulseIndex() async throws {
+    @Test(.globalConfigIsolated) func wgfmuPpfIndexFirstRowPlotsPulseIndex() async throws {
         let profile = try shippedProfile()
         let csv = """
         index-pulse,current_a
@@ -206,7 +206,7 @@ struct B1500AProfileModesTests {
         #expect(measurement.view.preserveOrder)
     }
 
-    @Test func wgfmuStpKeepsOptionalFitOnlyWhenPresent() async throws {
+    @Test(.globalConfigIsolated) func wgfmuStpKeepsOptionalFitOnlyWhenPresent() async throws {
         let profile = try shippedProfile()
         let fit = "time_s,voltage_v,current_v,fit\n0,0.1,1e-9,0.5\n1e-9,0.2,2e-9,0.6\n"
         let fitCurrent = "time_s,voltage_v,current_v,fit_current\n0,0.1,1e-9,0.7\n"
@@ -239,7 +239,7 @@ struct B1500AProfileModesTests {
         #expect(withFitCurrent.channel(named: "fit") == nil)
     }
 
-    @Test func wgfmuEnduranceKeepsOptionalChannelOnlyWhenPresent() async throws {
+    @Test(.globalConfigIsolated) func wgfmuEnduranceKeepsOptionalChannelOnlyWhenPresent() async throws {
         let profile = try shippedProfile()
         let full = "SetupTitle, endurance\nDataName, raw_cycles, raw_ch2, raw_ch1\nDataValue, 0, 1e-12, 2e-12\nDataValue, 1, 3e-12, 4e-12\n"
         let minimal = "SetupTitle, endurance\nDataName, raw_cycles, raw_ch2\nDataValue, 0, 1e-12\n"
@@ -268,7 +268,7 @@ struct B1500AProfileModesTests {
         #expect(withoutOptional.channel(named: "channel_1") == nil)
     }
 
-    @Test func firstRowHeaderKindIsV2OnlyAndRejectsRows() async throws {
+    @Test(.globalConfigIsolated) func firstRowHeaderKindIsV2OnlyAndRejectsRows() async throws {
         let v1Profile = """
         schema_version: 1
         instrument:
@@ -313,7 +313,7 @@ struct B1500AProfileModesTests {
         #expect(rowsReport.results.first?.error?.contains("rows is not part of kind") == true)
     }
 
-    @Test func firstRowCorruptCellBlocksWithLineDiagnostic() async throws {        let profile = try shippedProfile()
+    @Test(.globalConfigIsolated) func firstRowCorruptCellBlocksWithLineDiagnostic() async throws {        let profile = try shippedProfile()
         let csv = "time_s,current_a\n0,1e-12\n1e-9,--\n"
         let root = try makeModeProject(
             profile: profile,
@@ -339,7 +339,7 @@ struct B1500AProfileModesTests {
         }
     }
 
-    @Test func foreignBasenameWithMatchingHeaderStaysBlocked() async throws {
+    @Test(.globalConfigIsolated) func foreignBasenameWithMatchingHeaderStaysBlocked() async throws {
         let profile = try shippedProfile()
         let csv = "time_s,current_a\n0,1e-12\n1e-9,2e-12\n"
         let root = try makeModeProject(
@@ -360,7 +360,7 @@ struct B1500AProfileModesTests {
         }
     }
 
-    @Test func listSweepHeaderWithLegacyDualSweepSuffixResolvesToListSweep() async throws {
+    @Test(.globalConfigIsolated) func listSweepHeaderWithLegacyDualSweepSuffixResolvesToListSweep() async throws {
         let profile = try shippedProfile()
         let csv = """
         SetupTitle, I/V List Sweep 1V
@@ -396,7 +396,7 @@ struct B1500AProfileModesTests {
         }
     }
 
-    @Test func stpRequiresCommaDelimitedRequiredColumnSignature() async throws {
+    @Test(.globalConfigIsolated) func stpRequiresCommaDelimitedRequiredColumnSignature() async throws {
         let profile = try shippedProfile()
         let comma = "time_s,voltage_v,current_v,fit\n0,0.1,1e-9,0.5\n"
         let semicolon = "SetupTitle, synthetic semicolon table\ntime_s;voltage_v;current_v;fit\n0;0.1;1e-9;0.5\n"
@@ -421,7 +421,7 @@ struct B1500AProfileModesTests {
         }
     }
 
-    @Test func dualSweepWithGenericSweepTextInMetadataResolvesUniquelyToDualSweep() async throws {
+    @Test(.globalConfigIsolated) func dualSweepWithGenericSweepTextInMetadataResolvesUniquelyToDualSweep() async throws {
         let profile = try shippedProfile()
         let csv = """
         SetupTitle, 2-terminal dual Vsweep

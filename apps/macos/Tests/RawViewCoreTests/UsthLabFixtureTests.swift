@@ -117,7 +117,7 @@ struct UsthLabFixtureTests {
             }
     }
 
-    @Test func expectedYAMLEntryCounts() async throws {
+    @Test(.globalConfigIsolated) func expectedYAMLEntryCounts() async throws {
         let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
         let rows = try Self.parseExpectedEntries(text: expectedText)
@@ -125,7 +125,7 @@ struct UsthLabFixtureTests {
         #expect(rows.filter(\.plottable).count == 6)
     }
 
-    @Test func plottableRowsMatchExpectedProfileAndAxes() async throws {
+    @Test(.globalConfigIsolated) func plottableRowsMatchExpectedProfileAndAxes() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
@@ -153,7 +153,7 @@ struct UsthLabFixtureTests {
         }
     }
 
-    @Test func tableRowCountsMatchExpectedYAMLIncludingNonPlottable() async throws {
+    @Test(.globalConfigIsolated) func tableRowCountsMatchExpectedYAMLIncludingNonPlottable() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
@@ -172,7 +172,7 @@ struct UsthLabFixtureTests {
         }
     }
 
-    @Test func keithleyResolvesThreeProfileColumns() async throws {
+    @Test(.globalConfigIsolated) func keithleyResolvesThreeProfileColumns() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let relative = "data/raw/2026-10-07/071026-143703_keithley-2400.dual-sweep_[cu-ec-pda.q14-ito.2_r2-c6]_iv.dual-sweep_r.[reproducible]_010.txt"
         let source = try #require(try project.discoverSources().first { $0.relativePath == relative })
@@ -192,7 +192,7 @@ struct UsthLabFixtureTests {
         #expect(timestamp.values.count == 121)
     }
 
-    @Test func plottableMetadataKeysMatchExpectedYAML() async throws {
+    @Test(.globalConfigIsolated) func plottableMetadataKeysMatchExpectedYAML() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let expectedText = try String(
             contentsOf: Self.workspaceRoot.appendingPathComponent("expected.yaml"), encoding: .utf8)
@@ -211,7 +211,7 @@ struct UsthLabFixtureTests {
         }
     }
 
-    @Test func autolabCvProgressionAndSkipColumns() async throws {
+    @Test(.globalConfigIsolated) func autolabCvProgressionAndSkipColumns() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let relative =
             "data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt"
@@ -233,7 +233,7 @@ struct UsthLabFixtureTests {
         #expect(scanCol.progression?.behavior == "discrete")
     }
 
-    @Test func autolabCaAxesAndSkipColumns() async throws {
+    @Test(.globalConfigIsolated) func autolabCaAxesAndSkipColumns() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let relative =
             "data/raw/2026-09-21/210926-131400_autolab-usth.ca_[cu-ec-pda.c5-ito.2]_ca.protonation.txt"
@@ -244,7 +244,7 @@ struct UsthLabFixtureTests {
         #expect(measurement.view.y == ["current"])
     }
 
-    @Test func autolabEisNyquistViewAndBodeChannels() async throws {
+    @Test(.globalConfigIsolated) func autolabEisNyquistViewAndBodeChannels() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let relative =
             "data/raw/2026-04-21/210426-000000_autolab-usth.eis_[gce-pda]_eis.characterization_r.[ph-6.65].txt"
@@ -280,7 +280,7 @@ struct UsthLabFixtureTests {
         #expect(eis.columns["index"]?.role == .skip)
     }
 
-    @Test func autolabCvAxesProgressionProvenance() async throws {
+    @Test(.globalConfigIsolated) func autolabCvAxesProgressionProvenance() async throws {
         let project = try ProjectContext.open(Self.workspaceRoot)
         let relative =
             "data/raw/2025-11-27/271125-000000_autolab-usth.cv_[au-pda]_cv.deposition_r.[20mv-ph-8.4].txt"

@@ -164,7 +164,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 
 /// Store resolution performs no creation: no `.rawviewer`, no legacy access,
 /// no destination, no staging — open and usage only resolve and stat.
-@Test func openResolvesWithoutCreatingAnything() async throws {
+@Test(.globalConfigIsolated) func openResolvesWithoutCreatingAnything() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let before = treeSnapshot(root: root)
@@ -187,7 +187,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 /// the failed VFS proof gate, so this asserts: withheld report, zero copies,
 /// legacy db/WAL/SHM byte-identical, no destination/staging, and the backup
 /// mechanics still copy every row committed only to the WAL.
-@Test func legacyWALBackupIncludesCommittedRows() async throws {
+@Test(.globalConfigIsolated) func legacyWALBackupIncludesCommittedRows() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let legacyURL = ProjectIndexStore.legacyIndexURL(project: project)
@@ -245,7 +245,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 
 /// An already-existing destination wins: it and the legacy index are both
 /// preserved byte-for-byte, and no staging artifact appears beside them.
-@Test func destinationConflictPreservesBoth() async throws {
+@Test(.globalConfigIsolated) func destinationConflictPreservesBoth() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let destination = ProjectIndexStore.preferredDestinationURL(project: project)
@@ -276,7 +276,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 
 /// An unusable legacy index is reported and retained: nothing is created,
 /// nothing is deleted, and the bytes stay identical.
-@Test func migrationFailureLeavesLegacyIntact() async throws {
+@Test(.globalConfigIsolated) func migrationFailureLeavesLegacyIntact() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let legacyURL = ProjectIndexStore.legacyIndexURL(project: project)
@@ -302,7 +302,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 /// One OS-managed advisory lock per bounded writer job: a nested/concurrent
 /// writer sees busy, an idle read never contends, and a crashed holder's
 /// lock is released by the kernel (no stale marker is consulted).
-@Test func busyWriterIsReportedAndCrashReleasesLease() async throws {
+@Test(.globalConfigIsolated) func busyWriterIsReportedAndCrashReleasesLease() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let store = try await ProjectIndexStore.open(project: project)
@@ -333,7 +333,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 /// The persisted namespace is `(project identity, data root, reader version,
 /// catalog fingerprint, schema)`: any axis changing invalidates stored rows
 /// (rebuild, never restore), while matching content stays advisory only.
-@Test func indexNamespaceChangesWithRootCatalogReader() async throws {
+@Test(.globalConfigIsolated) func indexNamespaceChangesWithRootCatalogReader() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let store = try await ProjectIndexStore.open(project: project, catalogFingerprint: "fp-current")
@@ -391,7 +391,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 
 /// A symlinked metadata namespace or destination leaf is a security refusal:
 /// open fails closed and nothing is created or followed.
-@Test func unsafeMetadataNamespaceFailsClosed() async throws {
+@Test(.globalConfigIsolated) func unsafeMetadataNamespaceFailsClosed() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let metadata = root.appendingPathComponent(".rawviewer")
@@ -427,7 +427,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 /// An ordinary read-only project root never becomes a write target: storage
 /// resolves to the owner-private app-local index fallback and the project
 /// gains no `.rawviewer` namespace.
-@Test func readOnlyProjectUsesPrivateFallback() async throws {
+@Test(.globalConfigIsolated) func readOnlyProjectUsesPrivateFallback() async throws {
     let (project, root) = try makeStoreProject()
     defer {
         chmod(root.path, 0o755)
@@ -454,7 +454,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 /// advisory: matching content proves freshness, never authorship, so the row
 /// can never be promoted to a trusted SourceInspection. Imported legacy rows
 /// without validity fields are equally non-restorable.
-@Test func forgedIndexCannotPromoteTrustedInspection() async throws {
+@Test(.globalConfigIsolated) func forgedIndexCannotPromoteTrustedInspection() async throws {
     let (project, root) = try makeStoreProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let file = project.root.appendingPathComponent("data/raw/seed.csv")
@@ -507,7 +507,7 @@ private func probeLeaseAcrossCrash(leasePath: String) -> (busyWhileHeld: Bool, a
 
 /// Same size and same recorded mtime prove nothing: a header edit that keeps
 /// both still invalidates the index row through the secured prefix digest.
-@Test func sameSizeSameTimeHeaderEditInvalidatesIndex() async throws {
+@Test(.globalConfigIsolated) func sameSizeSameTimeHeaderEditInvalidatesIndex() async throws {
     let (project, root) = try makeStoreProject(
         dataRootFiles: ["data/raw/edited.csv": String(repeating: "A", count: 2048)])
     defer { try? FileManager.default.removeItem(at: root) }

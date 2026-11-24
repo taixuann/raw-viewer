@@ -30,7 +30,7 @@ func legacyDistinctValues(sources: [RawSource], grammar: FilenameGrammar, variab
     return vals.sorted()
 }
 
-@Test func indexHoldsTheSameFieldsAsExtractPerFile() {
+@Test(.globalConfigIsolated) func indexHoldsTheSameFieldsAsExtractPerFile() {
     let index = FacetIndex.build(sources: facetNames.map(facetSource), grammar: facetGrammar)
 
     #expect(index.indexedFileCount == facetNames.count)
@@ -47,7 +47,7 @@ func legacyDistinctValues(sources: [RawSource], grammar: FilenameGrammar, variab
     #expect(first.extractedFields["batch"] == "001")
 }
 
-@Test func distinctValuesMatchThePerFieldMenuIncludingTheCap() {
+@Test(.globalConfigIsolated) func distinctValuesMatchThePerFieldMenuIncludingTheCap() {
     // 7 and 300 are coprime, so the 300 studies come in scrambled order. The first 250 seen
     // differ from the first 250 when sorted, which is what the cap has to keep.
     let scrambled = (0..<300).map { index in
@@ -65,7 +65,7 @@ func legacyDistinctValues(sources: [RawSource], grammar: FilenameGrammar, variab
     }
 }
 
-@Test func matchesFilterGivesTheSameResultForMatchedUnmatchedAndMissingFiles() {
+@Test(.globalConfigIsolated) func matchesFilterGivesTheSameResultForMatchedUnmatchedAndMissingFiles() {
     let sources = facetNames.map(facetSource)
     let index = FacetIndex.build(sources: sources, grammar: facetGrammar)
     let variableName: (String) -> String = { key in
@@ -94,7 +94,7 @@ func legacyDistinctValues(sources: [RawSource], grammar: FilenameGrammar, variab
     #expect(results(filter([("instrument", "autolab-usth"), ("view\0standard-scientific\0mode", "ca")])) == [true, false, true, false])
 }
 
-@Test func indexBuiltForAnotherGrammarIsNotUsed() {
+@Test(.globalConfigIsolated) func indexBuiltForAnotherGrammarIsNotUsed() {
     let index = FacetIndex.build(sources: facetNames.map(facetSource), grammar: facetGrammar)
     let other = FilenameGrammar(name: "other", template: "{instrument}", fields: [GrammarField(name: "instrument")])
 
@@ -103,7 +103,7 @@ func legacyDistinctValues(sources: [RawSource], grammar: FilenameGrammar, variab
     #expect(FacetIndex.empty.facts(forFilename: facetNames[0], grammar: facetGrammar).isMatched == true)
 }
 
-@Test func buildStartedBeforeAGrammarOrSourceChangeIsDropped() {
+@Test(.globalConfigIsolated) func buildStartedBeforeAGrammarOrSourceChangeIsDropped() {
     var gate = FacetIndexGate()
     let grammarBuild = gate.begin()
     let sourceBuild = gate.begin()

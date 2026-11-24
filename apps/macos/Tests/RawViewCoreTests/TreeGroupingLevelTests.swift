@@ -27,7 +27,7 @@ private let caSecond = "100826-102300_autolab-usth.ca_[dev-2]"
 private let caNoDevice = "100826-102400_autolab-usth.ca"
 private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
 
-@Test func twoTokensInOneLevelProduceDotJoinedFolders() {
+@Test(.globalConfigIsolated) func twoTokensInOneLevelProduceDotJoinedFolders() {
     let tree = SourceTree(
         sources: [levelSource(caFirst), levelSource(cvFirst), levelSource(caSecond)],
         grammar: levelGrammar,
@@ -45,7 +45,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     #expect(cvNode.children.compactMap(\.sourceID) == [cvFirst])
 }
 
-@Test func oneTokenLevelKeepsCurrentFolderNamesAndIDs() {
+@Test(.globalConfigIsolated) func oneTokenLevelKeepsCurrentFolderNamesAndIDs() {
     let sources = [levelSource(caFirst), levelSource(cvFirst)]
 
     let single = SourceTree(sources: sources, grammar: levelGrammar, groupingFields: ["instrument"])
@@ -61,7 +61,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     ])
 }
 
-@Test func missingTokenInsideLevelIsSkippedAndOtherValueKept() {
+@Test(.globalConfigIsolated) func missingTokenInsideLevelIsSkippedAndOtherValueKept() {
     let tree = SourceTree(
         sources: [levelSource(caFirst), levelSource(caNoDevice)],
         grammar: levelGrammar,
@@ -73,7 +73,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     #expect(tree.root.children.first { $0.name == "dev-1.ca" }?.children.compactMap(\.sourceID) == [caFirst])
 }
 
-@Test func levelWithEveryTokenMissingGoesToMissingValue() {
+@Test(.globalConfigIsolated) func levelWithEveryTokenMissingGoesToMissingValue() {
     let tree = SourceTree(
         sources: [levelSource(caFirst), levelSource(caNoDevice), levelSource(caNoDeviceLater)],
         grammar: levelGrammar,
@@ -86,7 +86,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     #expect(tree.root.children.first { $0.name == "dev-1" }?.children.compactMap(\.sourceID) == [caFirst])
 }
 
-@Test func dateTokenInCombinedLevelHonoursGranularity() {
+@Test(.globalConfigIsolated) func dateTokenInCombinedLevelHonoursGranularity() {
     let august = caFirst
     let september = "150926-140000_autolab-usth.ca_[dev-1]"
     let sources = [levelSource(august), levelSource(september)]
@@ -102,7 +102,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     #expect(day.root.children.map(\.name) == ["autolab-usth.2026-08-10", "autolab-usth.2026-09-15"])
 }
 
-@Test func legacyPlainStringSettingsLoadAsOneTokenLevels() throws {
+@Test(.globalConfigIsolated) func legacyPlainStringSettingsLoadAsOneTokenLevels() throws {
     let settings = try ProjectSettingsStore.parse(text: "schema_version: 1\ntree_grouping:\n  - instrument\n  - mode\n")
     #expect(settings.treeGrouping == ["instrument", "mode"])
 
@@ -119,7 +119,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     ])
 }
 
-@Test func combinedLevelSurvivesSaveAndLoad() throws {
+@Test(.globalConfigIsolated) func combinedLevelSurvivesSaveAndLoad() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("tree-grouping-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -131,7 +131,7 @@ private let caNoDeviceLater = "100826-102500_autolab-usth.ca"
     #expect(loaded.treeGrouping == levels)
 }
 
-@Test func plusThatDoesNotJoinTwoNamesIsRejected() throws {
+@Test(.globalConfigIsolated) func plusThatDoesNotJoinTwoNamesIsRejected() throws {
     // '+' is the separator, so a '+' inside a token name can only show up as an empty token.
     let rejected = ["+mode", "instrument+", "a++b", "+", " + "]
     for level in rejected {

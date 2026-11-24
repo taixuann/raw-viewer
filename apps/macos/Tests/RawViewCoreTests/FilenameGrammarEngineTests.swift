@@ -14,7 +14,7 @@ struct FilenameGrammarEngineTests {
         return (project, root)
     }
 
-    @Test func patternCompilationAndExtraction() throws {
+    @Test(.globalConfigIsolated) func patternCompilationAndExtraction() throws {
         let template = "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]"
         let grammar = FilenameGrammar(
             id: "autolab-convention",
@@ -45,7 +45,7 @@ struct FilenameGrammarEngineTests {
         #expect(result.category == "cv.deposition")
     }
 
-    @Test func unmatchedFilenameReportsMismatch() throws {
+    @Test(.globalConfigIsolated) func unmatchedFilenameReportsMismatch() throws {
         let template = "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]"
         let grammar = FilenameGrammar(
             id: "autolab-convention",
@@ -61,7 +61,7 @@ struct FilenameGrammarEngineTests {
         #expect(result.extractedFields.isEmpty)
     }
 
-    @Test func yamlPersistenceAndCatalogLoading() throws {
+    @Test(.globalConfigIsolated) func yamlPersistenceAndCatalogLoading() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -101,7 +101,7 @@ struct FilenameGrammarEngineTests {
         #expect(loaded == catalog)
     }
 
-    @Test func optionalFieldAllowsMissingSegment() throws {
+    @Test(.globalConfigIsolated) func optionalFieldAllowsMissingSegment() throws {
         let template = "{date}_{study}_r.[{remarks}]"
         let grammar = FilenameGrammar(
             id: "opt-test",
@@ -128,7 +128,7 @@ struct FilenameGrammarEngineTests {
         #expect(res2.extractedFields["remarks"] == nil)
     }
 
-    @Test func numberAndDatetimeFormatMatching() throws {
+    @Test(.globalConfigIsolated) func numberAndDatetimeFormatMatching() throws {
         let template = "{date}_batch_{batch}_scan_{scan}_{conc}mM"
         let grammar = FilenameGrammar(
             id: "num-test",
@@ -156,7 +156,7 @@ struct FilenameGrammarEngineTests {
         #expect(res2.isMatched == false)
     }
 
-    @Test func testStandardDefaultsCanonicalNaming() throws {
+    @Test(.globalConfigIsolated) func testStandardDefaultsCanonicalNaming() throws {
         let first = try #require(FilenameGrammarCatalog.standardDefaults.first)
         #expect(first.id == "standard-scientific")
         #expect(first.name == "Standard Filename Pattern")
@@ -172,7 +172,7 @@ struct FilenameGrammarEngineTests {
         #expect(!yaml.contains("is_facet"))
     }
 
-    @Test func standardScientificTemplateWithBatchAndDateTime() throws {
+    @Test(.globalConfigIsolated) func standardScientificTemplateWithBatchAndDateTime() throws {
         let standard = FilenameGrammarCatalog.standardDefaults.first!
         #expect(standard.template == "{date}_{instrument}.{mode}_[{device-id}]_{study}_r.[{remarks}]_f.[{flags}]_{batch}")
         let (_, fieldNames) = try FilenameGrammarEngine.compile(template: standard.template, fields: standard.fields)
@@ -187,7 +187,7 @@ struct FilenameGrammarEngineTests {
         #expect(facts.extractedFields["device-id"] == "d01")
     }
 
-    @Test func globalAndProjectStorageIsolation() throws {
+    @Test(.globalConfigIsolated) func globalAndProjectStorageIsolation() throws {
         let globalDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: globalDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: globalDir) }
@@ -210,7 +210,7 @@ struct FilenameGrammarEngineTests {
         #expect(loaded.grammars.first?.id == "global-1")
     }
 
-    @Test func loadCombinedMergesProjectAndGlobalGrammars() throws {
+    @Test(.globalConfigIsolated) func loadCombinedMergesProjectAndGlobalGrammars() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -253,7 +253,7 @@ struct FilenameGrammarEngineTests {
         #expect(combined.activeID == "proj-1")
     }
 
-    @Test func standardScientificTemplatePermutations() throws {
+    @Test(.globalConfigIsolated) func standardScientificTemplatePermutations() throws {
         let standard = FilenameGrammarCatalog.standardDefaults.first!
 
         // 1. With remarks and batch (standard keithley-style tokens; optional flags omitted)
@@ -285,7 +285,7 @@ struct FilenameGrammarEngineTests {
         #expect(f4.extractedFields["batch"] == nil)
     }
 
-    @Test func testProgressiveTokenExtractionOnPartialMismatch() throws {
+    @Test(.globalConfigIsolated) func testProgressiveTokenExtractionOnPartialMismatch() throws {
         let grammar = FilenameGrammar(
             id: "standard-scientific",
             name: "Standard Filename Pattern",
@@ -311,7 +311,7 @@ struct FilenameGrammarEngineTests {
         #expect(facts.extractedFields["study"] == "kinetics")
     }
 
-    @Test func noNameSubstringInferenceWithoutDeclaredRoles() throws {
+    @Test(.globalConfigIsolated) func noNameSubstringInferenceWithoutDeclaredRoles() throws {
         // Spec: never infer role/type from variable name substrings.
         // Fields without declared roles leave semantic slots empty;
         // raw values remain available as editor feedback only.
@@ -361,7 +361,7 @@ struct FilenameGrammarEngineTests {
         ])
     }
 
-    @Test func canonicalRoundTripWritesStrictSchemaV1() throws {
+    @Test(.globalConfigIsolated) func canonicalRoundTripWritesStrictSchemaV1() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
         #expect(FilenameGrammarEngine.relativePath == ".raw-viewer/grammar.yaml")
@@ -403,7 +403,7 @@ struct FilenameGrammarEngineTests {
         #expect(facts.timestamp == "20261012")
     }
 
-    @Test func customRolesAndArbitraryVariablesRoundTrip() throws {
+    @Test(.globalConfigIsolated) func customRolesAndArbitraryVariablesRoundTrip() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fileURL = dir.appendingPathComponent("grammar.yaml")
@@ -437,7 +437,7 @@ struct FilenameGrammarEngineTests {
         #expect(facts.batch == nil)
     }
 
-    @Test func invalidCatalogsThrowDistinctErrors() throws {
+    @Test(.globalConfigIsolated) func invalidCatalogsThrowDistinctErrors() throws {
         let valid = FilenameGrammar(
             id: "ok",
             name: "OK",
@@ -501,7 +501,7 @@ struct FilenameGrammarEngineTests {
         }
     }
 
-    @Test func malformedCanonicalDocumentsThrow() throws {
+    @Test(.globalConfigIsolated) func malformedCanonicalDocumentsThrow() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -552,7 +552,7 @@ struct FilenameGrammarEngineTests {
         }
     }
 
-    @Test func partialExtractionNeverRoutes() throws {
+    @Test(.globalConfigIsolated) func partialExtractionNeverRoutes() throws {
         let grammar = FilenameGrammar(
             id: "strict",
             name: "Strict",
@@ -577,7 +577,7 @@ struct FilenameGrammarEngineTests {
         #expect(trailingGarbage.isMatched == false)
     }
 
-    @Test func legacyImportReportsDiagnosticsAndLeavesOriginals() throws {
+    @Test(.globalConfigIsolated) func legacyImportReportsDiagnosticsAndLeavesOriginals() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -653,7 +653,7 @@ struct FilenameGrammarEngineTests {
         #expect(reloaded.grammars[0].fields.map(\.role) == ["Date & Time", "Study", "Batch"])
     }
 
-    @Test func malformedCanonicalNeverFallsBackToLegacy() throws {
+    @Test(.globalConfigIsolated) func malformedCanonicalNeverFallsBackToLegacy() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -672,7 +672,7 @@ struct FilenameGrammarEngineTests {
         }
     }
 
-    @Test func invalidSavePreservesExistingDocument() throws {
+    @Test(.globalConfigIsolated) func invalidSavePreservesExistingDocument() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -689,7 +689,7 @@ struct FilenameGrammarEngineTests {
         #expect(try FilenameGrammarEngine.load(project: project) == valid)
     }
 
-    @Test func loadCombinedNeverMasksMalformedCanonical() throws {
+    @Test(.globalConfigIsolated) func loadCombinedNeverMasksMalformedCanonical() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -717,7 +717,7 @@ struct FilenameGrammarEngineTests {
         #expect(combined.activeID == "standard-scientific")
     }
 
-    @Test func loadCombinedHasNoEnforcedPathCallers() throws {
+    @Test(.globalConfigIsolated) func loadCombinedHasNoEnforcedPathCallers() throws {
         // Caller audit: loadCombined is a best-effort display helper. The
         // enforced save/routing paths use throwing load(project:), so no file
         // under Sources/ may call loadCombined except its definition site.
@@ -758,7 +758,7 @@ struct FilenameGrammarEngineTests {
         )
     }
 
-    @Test func groupsSourcesByDeclaredVariableExactlyOnce() {
+    @Test(.globalConfigIsolated) func groupsSourcesByDeclaredVariableExactlyOnce() {
         let grammar = viewGrammar()
         let sources = [
             viewSource("alpha_02.txt", dir: "my_batch/batch1"),
@@ -773,7 +773,7 @@ struct FilenameGrammarEngineTests {
         #expect(groups.flatMap(\.sourceIDs).sorted() == sources.map(\.id).sorted())
     }
 
-    @Test func groupsPartialAndNonmatchesAsUnmatched() {
+    @Test(.globalConfigIsolated) func groupsPartialAndNonmatchesAsUnmatched() {
         let grammar = FilenameGrammar(
             id: "tagged-grammar",
             name: "Tagged",
@@ -798,7 +798,7 @@ struct FilenameGrammarEngineTests {
         #expect(groups.last?.label == SourceGrouping.unmatchedBucketLabel)
     }
 
-    @Test func groupsAbsentOptionalVariableAsMissingValue() {
+    @Test(.globalConfigIsolated) func groupsAbsentOptionalVariableAsMissingValue() {
         let grammar = viewGrammar()
         let sources = [viewSource("alpha.txt"), viewSource("alpha_01.txt")]
         // Routing key fields stay unrelated to view eligibility: grouping by a
@@ -813,7 +813,7 @@ struct FilenameGrammarEngineTests {
         #expect(byStudy[0].sourceIDs.sorted() == ["data/raw/alpha.txt", "data/raw/alpha_01.txt"])
     }
 
-    @Test func groupsQualifiesLiteralBucketCollisions() {
+    @Test(.globalConfigIsolated) func groupsQualifiesLiteralBucketCollisions() {
         let grammar = viewGrammar()
         let sources = [viewSource("Unmatched_01.txt"), viewSource("notes.csv")]
         let groups = SourceGrouping.groups(sources: sources, grammar: grammar, variable: "study")
@@ -827,7 +827,7 @@ struct FilenameGrammarEngineTests {
         #expect(byLabel[literal!] == ["data/raw/Unmatched_01.txt"])
     }
 
-    @Test func groupsOrderIsDeterministicUnderReorderedInput() {
+    @Test(.globalConfigIsolated) func groupsOrderIsDeterministicUnderReorderedInput() {
         let grammar = viewGrammar()
         let sources = [
             viewSource("beta_02.txt"), viewSource("notes.csv"),
@@ -839,7 +839,7 @@ struct FilenameGrammarEngineTests {
         #expect(forward.map(\.label) == ["01", "02", SourceGrouping.missingValueBucketLabel, SourceGrouping.unmatchedBucketLabel])
     }
 
-    @Test func groupsUnknownVariableAsMissingValue() {
+    @Test(.globalConfigIsolated) func groupsUnknownVariableAsMissingValue() {
         // Absent references (renamed/deleted variable) never drop sources:
         // full matches land in Missing value, nonmatches in Unmatched.
         let grammar = viewGrammar()
@@ -851,7 +851,7 @@ struct FilenameGrammarEngineTests {
         #expect(groups.flatMap(\.sourceIDs).sorted() == sources.map(\.id).sorted())
     }
 
-    @Test func removedViewSelectionsPurgeCleanlyAndGroupsStayUnfiltered() throws {
+    @Test(.globalConfigIsolated) func removedViewSelectionsPurgeCleanlyAndGroupsStayUnfiltered() throws {
         // Task 7 fix round 1: removing an Explorer view purges its filter
         // selections so no chip renders and grouping stays unfiltered.
         let grammar = viewGrammar()
@@ -873,7 +873,7 @@ struct FilenameGrammarEngineTests {
 
     // MARK: - Task 2: variable-defined names (role optional)
 
-    @Test func variableNativeNamesRoundTripWithoutRole() throws {
+    @Test(.globalConfigIsolated) func variableNativeNamesRoundTripWithoutRole() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fileURL = dir.appendingPathComponent("grammar.yaml")
@@ -909,7 +909,7 @@ struct FilenameGrammarEngineTests {
         #expect(facts.remarks.isEmpty)
     }
 
-    @Test func legacyRoleMappingSurvivesLoad() throws {
+    @Test(.globalConfigIsolated) func legacyRoleMappingSurvivesLoad() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fileURL = dir.appendingPathComponent("grammar.yaml")
@@ -972,7 +972,7 @@ struct FilenameGrammarEngineTests {
         #expect(nativeFacts.extractedFields == facts.extractedFields)
     }
 
-    @Test func customVariableMetadataIsPreserved() throws {
+    @Test(.globalConfigIsolated) func customVariableMetadataIsPreserved() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         let fileURL = dir.appendingPathComponent("grammar.yaml")
@@ -1012,7 +1012,7 @@ struct FilenameGrammarEngineTests {
         #expect(groups.flatMap(\.sourceIDs).sorted() == sources.map(\.id).sorted())
     }
 
-    @Test func renameRejectsDuplicateInvalidAndReferencedNames() throws {
+    @Test(.globalConfigIsolated) func renameRejectsDuplicateInvalidAndReferencedNames() throws {
         func makeGrammar() -> FilenameGrammar {
             FilenameGrammar(
                 id: "g", name: "G", template: "{study}_{run}",
@@ -1093,7 +1093,7 @@ struct FilenameGrammarEngineTests {
         #expect(same == makeGrammar())
     }
 
-    @Test func renameBlockedBySettingsFileReferences() throws {
+    @Test(.globalConfigIsolated) func renameBlockedBySettingsFileReferences() throws {
         // TMPDIR fixture: a real setting.yaml with an Explorer view and a
         // source-label row referencing grammar "g" variable "study".
         let root = FileManager.default.temporaryDirectory
@@ -1156,7 +1156,7 @@ struct FilenameGrammarEngineTests {
         #expect(grammar.fields.map(\.name) == ["study", "run"])
     }
 
-    @Test func nilRoleSurvivesTypeAndFormatEdits() throws {
+    @Test(.globalConfigIsolated) func nilRoleSurvivesTypeAndFormatEdits() throws {
         // A variable-native field (nil role) keeps nil through type/format
         // edits and serializes with no role line.
         var catalog = FilenameGrammarCatalog(grammars: [
@@ -1214,7 +1214,7 @@ struct FilenameGrammarEngineTests {
                 emphasis: "primary"
         """
 
-    @Test func grammarDeleteBlocksProfileAndViewReferences() throws {
+    @Test(.globalConfigIsolated) func grammarDeleteBlocksProfileAndViewReferences() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("GrammarDelete-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1264,7 +1264,7 @@ struct FilenameGrammarEngineTests {
         }
     }
 
-    @Test func lastGrammarDeletionPersistsEmptyCatalog() throws {
+    @Test(.globalConfigIsolated) func lastGrammarDeletionPersistsEmptyCatalog() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let single = FilenameGrammarCatalog(grammars: [makeTwoGrammarCatalog().grammars[0]])

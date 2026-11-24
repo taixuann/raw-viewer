@@ -18,7 +18,7 @@ private func makeSettingsProject(_ files: [String: String] = [:]) throws -> URL 
 
 private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\n"
 
-@Test func settingsRoundTripIsProjectRelative() throws {
+@Test(.globalConfigIsolated) func settingsRoundTripIsProjectRelative() throws {
     let root = try makeSettingsProject(["measurements/batch/a.csv": "synthetic"])
     defer { try? FileManager.default.removeItem(at: root) }
 
@@ -39,7 +39,7 @@ private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndef
     #expect(try ProjectSettingsStore.load(projectRoot: root) == dot)
 }
 
-@Test func missingSettingsIsNotMalformedSettings() throws {
+@Test(.globalConfigIsolated) func missingSettingsIsNotMalformedSettings() throws {
     let fresh = try makeSettingsProject(["data/raw/a.csv": "synthetic"])
     defer { try? FileManager.default.removeItem(at: fresh) }
 
@@ -59,7 +59,7 @@ private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndef
     #expect(throws: ProjectSettingsError.self) { try ProjectContext.open(corrupt) }
 }
 
-@Test func settingsRejectUnknownVersionKeysAndParentPaths() throws {
+@Test(.globalConfigIsolated) func settingsRejectUnknownVersionKeysAndParentPaths() throws {
     func expectReject(_ yaml: String, _ comment: String) throws {
         let root = try makeSettingsProject([".rawviewer/setting/setting.yaml": yaml])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -102,7 +102,7 @@ private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndef
     }
 }
 
-@Test func settingsRejectSymlinkNamespaceAndRoot() throws {
+@Test(.globalConfigIsolated) func settingsRejectSymlinkNamespaceAndRoot() throws {
     let fm = FileManager.default
 
     // Symlinked settings namespace: load and save both refuse, and the
@@ -140,7 +140,7 @@ private let validSettingsYAML = "schema_version: 1\ndata_root: \"data/raw\"\ndef
     #expect(throws: ReaderError.self) { try ProjectContext.open(rootLink, dataRootRelativePath: "data/raw") }
 }
 
-@Test func projectMovePreservesDataRoot() throws {
+@Test(.globalConfigIsolated) func projectMovePreservesDataRoot() throws {
     let fm = FileManager.default
     let a = try makeSettingsProject([
         ".rawviewer/setting/setting.yaml": "schema_version: 1\ndata_root: \"measurements\"\ndefault_view: \"tree\"\n",
@@ -209,7 +209,7 @@ explorer_views:
     variable: "device-id"
 """
 
-@Test func settingsV3RoundTripDeveloperModeAndExplorerViews() throws {
+@Test(.globalConfigIsolated) func settingsV3RoundTripDeveloperModeAndExplorerViews() throws {
     let root = try makeSettingsProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let settings = ProjectSettings(
@@ -225,7 +225,7 @@ explorer_views:
     #expect(try ProjectSettingsStore.load(projectRoot: root) == settings)
 }
 
-@Test func settingsV3EmptyViewsRoundTrip() throws {
+@Test(.globalConfigIsolated) func settingsV3EmptyViewsRoundTrip() throws {
     let root = try makeSettingsProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let settings = ProjectSettings(dataRoot: "data/raw")
@@ -236,7 +236,7 @@ explorer_views:
     #expect(try ProjectSettingsStore.load(projectRoot: root) == settings)
 }
 
-@Test func legacySettingsDefaultToDeveloperOffAndNoViews() throws {
+@Test(.globalConfigIsolated) func legacySettingsDefaultToDeveloperOffAndNoViews() throws {
     for yaml in [
         "schema_version: 1\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\n",
         "schema_version: 2\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\n",
@@ -249,7 +249,7 @@ explorer_views:
     }
 }
 
-@Test func settingsRejectExplorerViewsOutsideV3AndBadReferences() throws {
+@Test(.globalConfigIsolated) func settingsRejectExplorerViewsOutsideV3AndBadReferences() throws {
     func expectReject(_ yaml: String, _ comment: String) throws {
         let root = try makeSettingsProject([".rawviewer/setting/setting.yaml": yaml])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -272,7 +272,7 @@ explorer_views:
     try expectReject("schema_version: 3\n" + head + "developer_mode: \"yes\"\n", "non-boolean developer_mode")
 }
 
-@Test func settingsReadModifyWritePreservesViewsAndDeveloperMode() throws {
+@Test(.globalConfigIsolated) func settingsReadModifyWritePreservesViewsAndDeveloperMode() throws {
     let root = try makeSettingsProject([".rawviewer/setting.yaml": v3SettingsYAML + "\n"])
     defer { try? FileManager.default.removeItem(at: root) }
     guard var loaded = try ProjectSettingsStore.load(projectRoot: root) else {
@@ -296,7 +296,7 @@ explorer_views:
 
 // MARK: - Task 1: Explorer source labels persistence.
 
-@Test func sourceLabelsRoundTripAndPreserveOtherSettings() throws {
+@Test(.globalConfigIsolated) func sourceLabelsRoundTripAndPreserveOtherSettings() throws {
     let root = try makeSettingsProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let settings = ProjectSettings(
@@ -327,7 +327,7 @@ explorer_views:
     #expect(reloaded.sourceLabels.count == 2)
 }
 
-@Test func oldSettingsDefaultToFilename() throws {
+@Test(.globalConfigIsolated) func oldSettingsDefaultToFilename() throws {
     for yaml in [
         "schema_version: 1\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\n",
         "schema_version: 2\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\ndefault_preset: \"nature-single\"\n",
@@ -341,7 +341,7 @@ explorer_views:
     #expect(ProjectSettings(dataRoot: "data/raw").sourceLabels == [])
 }
 
-@Test func invalidLabelStyleAndDuplicateGrammarRejected() throws {
+@Test(.globalConfigIsolated) func invalidLabelStyleAndDuplicateGrammarRejected() throws {
     func expectSaveReject(_ labels: [SourceLabelLayout], _ comment: String) throws {
         let root = try makeSettingsProject()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -386,7 +386,7 @@ explorer_views:
     try expectLoadReject("schema_version: 1\ndata_root: \"data/raw\"\ndefault_view: \"tree\"\nsource_labels: []\n", "source_labels in v1")
 }
 
-@Test func sourceLabelsResetToEmptyPersists() throws {
+@Test(.globalConfigIsolated) func sourceLabelsResetToEmptyPersists() throws {
     let root = try makeSettingsProject()
     defer { try? FileManager.default.removeItem(at: root) }
     let row = SourceLabelRow(variables: ["study"], fontSize: 12, weight: "regular", font: "normal", emphasis: "primary")
@@ -419,7 +419,7 @@ explorer_views:
 
 // MARK: - Task 7: Explorer add/remove view read-modify-write.
 
-@Test func settingsAddViewPreservesUnrelatedFields() throws {
+@Test(.globalConfigIsolated) func settingsAddViewPreservesUnrelatedFields() throws {
     let root = try makeSettingsProject([".rawviewer/setting.yaml": v3SettingsYAML + "\n"])
     defer { try? FileManager.default.removeItem(at: root) }
     // Explorer Add View from Filename…: load, append one reference, save.
@@ -446,7 +446,7 @@ explorer_views:
     ])
 }
 
-@Test func settingsRemoveViewPreservesRemainingViews() throws {
+@Test(.globalConfigIsolated) func settingsRemoveViewPreservesRemainingViews() throws {
     let root = try makeSettingsProject([".rawviewer/setting.yaml": v3SettingsYAML + "\n"])
     defer { try? FileManager.default.removeItem(at: root) }
     // Explorer Remove View: load, drop one reference, save.

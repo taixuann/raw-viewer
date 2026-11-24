@@ -20,7 +20,7 @@ struct ProfileDocumentV4Tests {
         ProfileSchema.load(text: yaml, relativePath: path, sha256: sha256Hex(Data(yaml.utf8)))
     }
 
-    @Test func v1V2V3FixturesStillLoad() throws {
+    @Test(.globalConfigIsolated) func v1V2V3FixturesStillLoad() throws {
         for (path, relative) in [
             ("compat/keysight-b1500a-v1.yaml", "core/tests/fixtures/profiles/compat/keysight-b1500a-v1.yaml"),
             ("compat/keysight-b1500a-v2.yaml", "core/tests/fixtures/profiles/compat/keysight-b1500a-v2.yaml"),
@@ -37,7 +37,7 @@ struct ProfileDocumentV4Tests {
         }
     }
 
-    @Test func unsupportedSchemaVersionListsV4() throws {
+    @Test(.globalConfigIsolated) func unsupportedSchemaVersionListsV4() throws {
         let yaml = try Self.fixtureText("core/tests/fixtures/profiles/compat/keysight-b1500a-v1.yaml")
             .replacingOccurrences(of: "schema_version: 1", with: "schema_version: 9")
         let outcome = loadProfile(yaml: yaml, path: "broken.yaml")
@@ -46,7 +46,7 @@ struct ProfileDocumentV4Tests {
         #expect(text.contains("schema_version 1, 2, 3, and 4"), "\(text)")
     }
 
-    @Test func keysightV4ProfileLoadsAndCompiles() throws {
+    @Test(.globalConfigIsolated) func keysightV4ProfileLoadsAndCompiles() throws {
         let yaml = try Self.fixtureText("core/tests/fixtures/profiles/keysight-b1500a.yaml")
         let outcome = loadProfile(yaml: yaml, path: "keysight-b1500a.yaml")
         #expect(outcome.issues.isEmpty, "\(outcome.issues.joined(separator: "\n"))")
@@ -56,7 +56,7 @@ struct ProfileDocumentV4Tests {
         #expect(profile.modes.count == 7)
     }
 
-    @Test func progressionRoundTrip() throws {
+    @Test(.globalConfigIsolated) func progressionRoundTrip() throws {
         let yaml = """
             schema_version: 4
             id: usth/demo
@@ -110,7 +110,7 @@ struct ProfileDocumentV4Tests {
         #expect(i.progression?.behavior == "discrete")
     }
 
-    @Test func variantsMapIsKeyedByApplicationMode() throws {
+    @Test(.globalConfigIsolated) func variantsMapIsKeyedByApplicationMode() throws {
         let yaml = """
             schema_version: 4
             id: usth/demo
@@ -149,7 +149,7 @@ struct ProfileDocumentV4Tests {
         #expect(doc.variants.keys.sorted() == ["cv"])
     }
 
-    @Test func overlappingRowsFailValidation() throws {
+    @Test(.globalConfigIsolated) func overlappingRowsFailValidation() throws {
         let yaml = """
             schema_version: 4
             id: usth/demo

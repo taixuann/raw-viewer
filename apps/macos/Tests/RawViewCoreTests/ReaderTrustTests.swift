@@ -3,7 +3,7 @@ import Testing
 @testable import RawViewCore
 
 struct ReaderTrustTests {
-    @Test func projectReaderAndRuntimeCodeAreNeverExecuted() async throws {
+    @Test(.globalConfigIsolated) func projectReaderAndRuntimeCodeAreNeverExecuted() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let marker = root.appendingPathComponent("PROJECT_CODE_EXECUTED")
@@ -24,7 +24,7 @@ struct ReaderTrustTests {
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
-    @Test func escapedSourceSymlinkCannotBeInspectedOrLoaded() async throws {
+    @Test(.globalConfigIsolated) func escapedSourceSymlinkCannotBeInspectedOrLoaded() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try write("data/raw/inside.csv", Data(Fixtures.dualSweepCSV.utf8), under: root)
@@ -59,7 +59,7 @@ struct ReaderTrustTests {
         }
     }
 
-    @Test func inRootSymlinkToExcludedTargetIsRejectedWithoutFollowing() async throws {
+    @Test(.globalConfigIsolated) func inRootSymlinkToExcludedTargetIsRejectedWithoutFollowing() async throws {
         // A .csv symlink naming a .spe target is rejected from the link text
         // alone: the prohibited target is never resolved, stat-ed, opened, or
         // read. Direct and forged callers both fail closed.
@@ -84,7 +84,7 @@ struct ReaderTrustTests {
         }
     }
 
-    @Test func externalInstrumentsRootFailsClosedWithoutUsingOutsideProfiles() async throws {
+    @Test(.globalConfigIsolated) func externalInstrumentsRootFailsClosedWithoutUsingOutsideProfiles() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
         let outsideInstruments = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-outside-\(UUID().uuidString)")
         defer {
@@ -113,7 +113,7 @@ struct ReaderTrustTests {
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
-    @Test func escapedProfileSymlinkIsSkipped() async throws {
+    @Test(.globalConfigIsolated) func escapedProfileSymlinkIsSkipped() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
         let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-profile-\(UUID().uuidString).yaml")
         defer {
@@ -135,7 +135,7 @@ struct ReaderTrustTests {
         #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
     }
 
-    @Test func missingRawDirectoryOffersActionableMessage() throws {
+    @Test(.globalConfigIsolated) func missingRawDirectoryOffersActionableMessage() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-trust-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try write("data/instruments/.keep", Data(), under: root)
@@ -147,7 +147,7 @@ struct ReaderTrustTests {
         }
     }
 
-    @Test func fifoProfileIsSkippedWithoutBlockingInspection() async throws {
+    @Test(.globalConfigIsolated) func fifoProfileIsSkippedWithoutBlockingInspection() async throws {
         // Bound the complete inspectMany path. On timeout, open the FIFO writer
         // briefly so a regressed blocking reader can finish before teardown.
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-fifo-\(UUID().uuidString)")

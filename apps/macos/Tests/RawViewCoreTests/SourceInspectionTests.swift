@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import RawViewCore
 
-@Test func sourceInspectionErrorCanRemainLocalToOneSource() {
+@Test(.globalConfigIsolated) func sourceInspectionErrorCanRemainLocalToOneSource() {
     let source = RawSource(relativePath: "data/raw/b.csv", url: URL(fileURLWithPath: "/tmp/b.csv"), byteSize: 1)
     let result = SourceInspectionResult(source: source, inspection: nil, error: "unsupported format")
     #expect(result.id == source.relativePath)
@@ -10,7 +10,7 @@ import Testing
     #expect(result.inspection == nil)
 }
 
-@Test func sourceInspectionCarriesProfileIdentityAndSupportState() {
+@Test(.globalConfigIsolated) func sourceInspectionCarriesProfileIdentityAndSupportState() {
     let source = RawSource(relativePath: "data/raw/a.csv", url: URL(fileURLWithPath: "/tmp/a.csv"), byteSize: 42)
     let inspection = SourceInspection(
         source: source.relativePath, size: 42, instrumentID: "keysight-b1500a", instrumentName: "Keysight B1500A",
