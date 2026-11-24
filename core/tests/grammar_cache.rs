@@ -196,6 +196,38 @@ fn compiled_form_matches_extract_for_every_vectors_row() {
 }
 
 #[test]
+fn legacy_extract_results_survive_cache_eviction() {
+    let original = standard_grammar();
+    let rows = load_vector_rows();
+    // More distinct grammars than the legacy cache holds, so early entries are evicted.
+    for i in 0..80 {
+        let variant = FilenameGrammar {
+            template: original.template.replace("_f.[", &format!("_f{i}.[")),
+            ..original.clone()
+        };
+        let compiled = compile_grammar(&variant);
+        for row in &rows {
+            assert_eq!(
+                extract(&row.filename, &variant),
+                extract_compiled(&row.filename, &compiled),
+                "{}: legacy extract must match compiled form for variant {i}",
+                row.id
+            );
+        }
+    }
+    // The original grammar was evicted long ago; it must still give the same facts.
+    let compiled = compile_grammar(&original);
+    for row in &rows {
+        assert_eq!(
+            extract(&row.filename, &original),
+            extract_compiled(&row.filename, &compiled),
+            "{}: legacy extract must match compiled form after eviction",
+            row.id
+        );
+    }
+}
+
+#[test]
 fn perf_extract_5000_synthetic_filenames() {
     if std::env::var("RAWVIEW_PERF").as_deref() != Ok("1") {
         return;
@@ -227,7 +259,7 @@ fn perf_extract_5000_synthetic_filenames() {
         .count();
     let elapsed = start.elapsed();
     println!(
-        "PERF extract (compiles per call) 5000 files: {:.1} ms, matched {}",
+        "PERF extract (legacy cache) 5000 files: {:.1} ms, matched {}",
         elapsed.as_secs_f64() * 1000.0,
         uncached
     );
