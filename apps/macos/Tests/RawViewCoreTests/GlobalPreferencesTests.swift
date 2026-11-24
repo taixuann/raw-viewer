@@ -8,7 +8,7 @@ private func makeTempConfigDir() throws -> URL {
     return dir
 }
 
-@Test func missingFileReturnsFactoryDefaults() throws {
+@Test(.globalConfigIsolated) func missingFileReturnsFactoryDefaults() throws {
     let dir = try makeTempConfigDir()
     defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -16,7 +16,7 @@ private func makeTempConfigDir() throws -> URL {
     #expect(loaded == GlobalPreferences())
 }
 
-@Test func saveAndLoadRoundtripPreservesAllFields() throws {
+@Test(.globalConfigIsolated) func saveAndLoadRoundtripPreservesAllFields() throws {
     let dir = try makeTempConfigDir()
     defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -55,7 +55,7 @@ private func makeTempConfigDir() throws -> URL {
     #expect(loaded == custom)
 }
 
-@Test func partialYAMLFileMergesWithDefaults() throws {
+@Test(.globalConfigIsolated) func partialYAMLFileMergesWithDefaults() throws {
     let partialYAML = """
     schema_version: 1
     default_line_width: 3.0
@@ -74,7 +74,7 @@ private func makeTempConfigDir() throws -> URL {
     #expect(parsed == expected)
 }
 
-@Test func outOfRangeNumericValuesAreClamped() throws {
+@Test(.globalConfigIsolated) func outOfRangeNumericValuesAreClamped() throws {
     let dir = try makeTempConfigDir()
     defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -138,7 +138,7 @@ private func makeTempConfigDir() throws -> URL {
     #expect(parsedHigh.cacheLimitMB == 8192)
 }
 
-@Test func colorPalettePresetsHaveValidRGBTriplets() {
+@Test(.globalConfigIsolated) func colorPalettePresetsHaveValidRGBTriplets() {
     for preset in ColorPalettePreset.allCases {
         #expect(!preset.displayName.isEmpty)
         #expect(!preset.rgbValues.isEmpty)

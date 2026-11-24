@@ -24,7 +24,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
 
 // MARK: - Required Task 2 tests
 
-@Test func configuredRootWorksAcrossLoadInspectCacheAndManifest() async throws {
+@Test(.globalConfigIsolated) func configuredRootWorksAcrossLoadInspectCacheAndManifest() async throws {
     let root = makeTempProject("configured")
     defer { try? FileManager.default.removeItem(at: root) }
     try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
@@ -87,7 +87,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(mtimeAfter == mtimeBefore)
 }
 
-@Test func treePreservesIntermediateAndEmptyFolders() async throws {
+@Test(.globalConfigIsolated) func treePreservesIntermediateAndEmptyFolders() async throws {
     let root = makeTempProject("tree")
     defer { try? FileManager.default.removeItem(at: root) }
     try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
@@ -113,7 +113,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(empty.children.isEmpty)
 }
 
-@Test func treeIDsSeparateDirectoryAndSource() async throws {
+@Test(.globalConfigIsolated) func treeIDsSeparateDirectoryAndSource() async throws {
     let root = makeTempProject("ids")
     defer { try? FileManager.default.removeItem(at: root) }
     try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
@@ -147,7 +147,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(file.children.isEmpty)
 }
 
-@Test func dotRootExcludesViewerMetadataAndSnapshots() async throws {
+@Test(.globalConfigIsolated) func dotRootExcludesViewerMetadataAndSnapshots() async throws {
     let root = makeTempProject("dot")
     defer { try? FileManager.default.removeItem(at: root) }
     try ProjectSettingsStore.save(ProjectSettings(dataRoot: ".", defaultView: "tree"), projectRoot: root)
@@ -177,7 +177,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     })
 }
 
-@Test func nestedDataRawMarkerNoLongerPrunesSelectedData() async throws {
+@Test(.globalConfigIsolated) func nestedDataRawMarkerNoLongerPrunesSelectedData() async throws {
     let root = makeTempProject("marker")
     defer { try? FileManager.default.removeItem(at: root) }
     try write(root, "data/raw/top.csv", "synthetic")
@@ -201,7 +201,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(nestedRaw.children.map(\.sourceID) == ["data/raw/inner/data/raw/deep.csv"])
 }
 
-@Test func rootSwitchDoesNotReuseDerivedNamespace() async throws {
+@Test(.globalConfigIsolated) func rootSwitchDoesNotReuseDerivedNamespace() async throws {
     let root = makeTempProject("switch")
     defer { try? FileManager.default.removeItem(at: root) }
     try write(root, "data/raw/a.csv", Fixtures.dualSweepCSV)
@@ -235,7 +235,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(calls.count == 2)
 }
 
-@Test func partialDirectoryFailureKeepsSiblingsAndFailsCLICompleteness() async throws {
+@Test(.globalConfigIsolated) func partialDirectoryFailureKeepsSiblingsAndFailsCLICompleteness() async throws {
     let root = makeTempProject("partial")
     let locked = root.appendingPathComponent("data/raw/locked")
     defer {
@@ -260,7 +260,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     })
 }
 
-@Test func metadataReadFailureIsReported() async throws {
+@Test(.globalConfigIsolated) func metadataReadFailureIsReported() async throws {
     let root = makeTempProject("metadata")
     defer { try? FileManager.default.removeItem(at: root) }
     try write(root, "data/raw/run.csv", "synthetic")
@@ -292,7 +292,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(inventory.sources.contains { $0.relativePath == "data/raw/run.csv" })
 }
 
-@Test func customDataRootDataDoesNotInventorySnapshotOrLegacyIndex() async throws {
+@Test(.globalConfigIsolated) func customDataRootDataDoesNotInventorySnapshotOrLegacyIndex() async throws {
     let root = makeTempProject("customdata")
     defer { try? FileManager.default.removeItem(at: root) }
     try ProjectSettingsStore.save(ProjectSettings(dataRoot: "data", defaultView: "tree"), projectRoot: root)
@@ -333,7 +333,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(index.manifests.first?.members == ["data/raw/a.csv"])
 }
 
-@Test func fileMetadataFailureKeepsFollowingDirectorySources() async throws {
+@Test(.globalConfigIsolated) func fileMetadataFailureKeepsFollowingDirectorySources() async throws {
     let root = makeTempProject("filemeta")
     defer { try? FileManager.default.removeItem(at: root) }
     try write(root, "data/raw/trigger.csv", "synthetic")
@@ -366,7 +366,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
 
 // MARK: - Regressions under a configured root
 
-@Test func configuredRootKeepsZeroOpenAndLinkRegressions() async throws {
+@Test(.globalConfigIsolated) func configuredRootKeepsZeroOpenAndLinkRegressions() async throws {
     let root = makeTempProject("regress-links")
     defer { try? FileManager.default.removeItem(at: root) }
     try ProjectSettingsStore.save(ProjectSettings(dataRoot: "measurements", defaultView: "tree"), projectRoot: root)
@@ -424,7 +424,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(outsideTarget == Data("outside data".utf8))
 }
 
-@Test func sessionStateRejectsStaleWorkAfterRootChange() {
+@Test(.globalConfigIsolated) func sessionStateRejectsStaleWorkAfterRootChange() {
     var state = ProjectSessionState()
     let first = state.beginRootChange()
     #expect(state.accepts(generation: first))
@@ -438,7 +438,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(state.accepts(generation: second))
 }
 
-@Test func grammarTreeGroupsByOrderedFieldsAndFilters() {
+@Test(.globalConfigIsolated) func grammarTreeGroupsByOrderedFieldsAndFilters() {
     let grammar = FilenameGrammar(
         id: "lab-grammar",
         name: "Lab Grammar",
@@ -486,7 +486,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(filtered.first?.children.first?.children.first?.sourceID == "b.txt")
 }
 
-@Test func grammarTreeDateGranularityAndDeviceAliasing() {
+@Test(.globalConfigIsolated) func grammarTreeDateGranularityAndDeviceAliasing() {
     let grammar = FilenameGrammar(
         id: "usth-grammar",
         name: "USTH Grammar",
@@ -520,7 +520,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(dayNode?.children.count == 2)
 }
 
-@Test func testHiddenDirectoriesAndFilesExcludedFromTree() {
+@Test(.globalConfigIsolated) func testHiddenDirectoriesAndFilesExcludedFromTree() {
     let inventory = SourceInventory(
         sources: [
             RawSource(relativePath: "data/raw/normal.csv", url: URL(fileURLWithPath: "/tmp/data/raw/normal.csv"), byteSize: 50),
@@ -551,7 +551,7 @@ private func metadataIssuePaths(_ issues: [InventoryIssue]) -> [String] {
     #expect(!flattened.contains(where: { $0.node.id.contains(".intake.log") }))
 }
 
-@Test func testGrammarFieldVariantKeyAndTokenExtraction() {
+@Test(.globalConfigIsolated) func testGrammarFieldVariantKeyAndTokenExtraction() {
     let fieldMode = GrammarField(name: "mode")
     #expect(fieldMode.isVariantKey == true)
 

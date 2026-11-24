@@ -4,7 +4,7 @@ import Testing
 @testable import RawViewCore
 
 struct InstrumentReaderTests {
-    @Test func directReaderCallsRejectSPEAndAFFMBeforeOpeningFiles() async throws {
+    @Test(.globalConfigIsolated) func directReaderCallsRejectSPEAndAFFMBeforeOpeningFiles() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let raw = root.appendingPathComponent("data/raw")
@@ -24,7 +24,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func loadsKeysightDualSweepPreservingEveryPointInFileOrder() async throws {
+    @Test(.globalConfigIsolated) func loadsKeysightDualSweepPreservingEveryPointInFileOrder() async throws {
         let profile = Fixtures.keysightProfile
         let csv = Fixtures.dualSweepCSV
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/fixture-run/dual-sweep.csv": Data(csv.utf8)])
@@ -70,7 +70,7 @@ struct InstrumentReaderTests {
         #expect(measurement.supportStatus == "supported")
     }
 
-    @Test func handlesCRLFLineEndingsInSourceAndProfile() async throws {
+    @Test(.globalConfigIsolated) func handlesCRLFLineEndingsInSourceAndProfile() async throws {
         let profile = Fixtures.keysightProfile.replacingOccurrences(of: "\n", with: "\r\n")
         let csv = Fixtures.dualSweepCSV.replacingOccurrences(of: "\n", with: "\r\n")
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/dual.csv": Data(csv.utf8)])
@@ -84,7 +84,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "current")?.values == [1e-12, 2e-12, 3e-12, 4e-12, 5e-12])
     }
 
-    @Test func unversionedProfileBlocksAffectedSourceWithoutRewritingProfile() async throws {
+    @Test(.globalConfigIsolated) func unversionedProfileBlocksAffectedSourceWithoutRewritingProfile() async throws {
         let profile = Fixtures.unversionedKeysightProfile
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -105,7 +105,7 @@ struct InstrumentReaderTests {
         #expect(try Data(contentsOf: profileURL) == before)
     }
 
-    @Test func unversionedDiagnosticWinsOverEncodingFailure() async throws {
+    @Test(.globalConfigIsolated) func unversionedDiagnosticWinsOverEncodingFailure() async throws {
         var bytes = Data("DataName, V1, I1\nDataValue, 0, 1\n".utf8)
         bytes.append(0xE9) // cp1252-only byte; not valid UTF-8
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": Fixtures.unversionedKeysightProfile], sources: ["data/raw/dual.csv": bytes])
@@ -120,7 +120,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func sameIndentListMarkersFailWithLinePreciseDiagnostic() async throws {
+    @Test(.globalConfigIsolated) func sameIndentListMarkersFailWithLinePreciseDiagnostic() async throws {
         let profile = """
         schema_version: 1
         instrument:
@@ -142,7 +142,7 @@ struct InstrumentReaderTests {
         #expect(result.error != nil)
     }
 
-    @Test func schemaRejectsUnknownKeysAtEveryScope() async throws {
+    @Test(.globalConfigIsolated) func schemaRejectsUnknownKeysAtEveryScope() async throws {
         let scopes: [(name: String, anchor: String, insert: String, fragment: String)] = [
             ("root.yaml", "model: B1500A\n", "description: extra root key\n", "unknown key \"description\""),
             ("instrument.yaml", "  model: B1500A\n", "  nickname: b1500\n", "instrument.nickname"),
@@ -162,7 +162,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func unsupportedSchemaVersionIsRejectedWithActionableDiagnostic() async throws {
+    @Test(.globalConfigIsolated) func unsupportedSchemaVersionIsRejectedWithActionableDiagnostic() async throws {
         let profile = Fixtures.keysightProfile.replacingOccurrences(of: "schema_version: 1", with: "schema_version: 9")
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -173,7 +173,7 @@ struct InstrumentReaderTests {
         #expect(error.contains("1, 2, 3, and 4"))
     }
 
-    @Test func invalidProfileFieldNamesTheProfileAndField() async throws {
+    @Test(.globalConfigIsolated) func invalidProfileFieldNamesTheProfileAndField() async throws {
         let root = try makeProject(profiles: ["missing-unit.yaml": Fixtures.missingUnitProfile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
@@ -183,7 +183,7 @@ struct InstrumentReaderTests {
         #expect(error.contains("formats[0].columns.voltage.unit is required"))
     }
 
-    @Test func malformedProfileIsVisibleWithoutBlockingOtherSources() async throws {
+    @Test(.globalConfigIsolated) func malformedProfileIsVisibleWithoutBlockingOtherSources() async throws {
         let root = try makeProject(
             profiles: ["broken.yaml": Fixtures.malformedProfile, "fixture-dat.yaml": Fixtures.dataProfile],
             sources: ["data/raw/a.csv": Data(Fixtures.dualSweepCSV.utf8), "data/raw/b.dat": Data(Fixtures.dataCSV.utf8)]
@@ -199,7 +199,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "x")?.values == [1, 2])
     }
 
-    @Test func brokenProfileBlocksOnlyItsExtension() async throws {
+    @Test(.globalConfigIsolated) func brokenProfileBlocksOnlyItsExtension() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.unversionedKeysightProfile, "fixture-dat.yaml": Fixtures.dataProfile],
             sources: ["data/raw/a.csv": Data(Fixtures.dualSweepCSV.utf8), "data/raw/b.dat": Data(Fixtures.dataCSV.utf8)]
@@ -213,7 +213,7 @@ struct InstrumentReaderTests {
         #expect(datResult.inspection?.supportStatus == "supported")
     }
 
-    @Test func ambiguousProfilesBlockOnlyTheAffectedSource() async throws {
+    @Test(.globalConfigIsolated) func ambiguousProfilesBlockOnlyTheAffectedSource() async throws {
         let root = try makeProject(
             profiles: [
                 "keysight-b1500a.yaml": Fixtures.keysightProfile,
@@ -231,7 +231,7 @@ struct InstrumentReaderTests {
         #expect(report.results.first { $0.source.relativePath == "data/raw/b.dat" }?.inspection != nil)
     }
 
-    @Test func unsupportedExtensionStaysVisible() async throws {
+    @Test(.globalConfigIsolated) func unsupportedExtensionStaysVisible() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/scan.ibw": Data("binary-ish".utf8)]
@@ -245,7 +245,7 @@ struct InstrumentReaderTests {
         #expect(report.results.first?.error?.contains("No instrument profile supports \".ibw\"") == true)
     }
 
-    @Test func modeSignatureMismatchListsDeclaredModes() async throws {
+    @Test(.globalConfigIsolated) func modeSignatureMismatchListsDeclaredModes() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/other.csv": Data("SetupTitle, something else\nDataName, V1, I1\nDataValue, 0, 1E-12\n".utf8)]
@@ -260,7 +260,7 @@ struct InstrumentReaderTests {
         #expect(!error.contains("filename_contains_all"))
     }
 
-    @Test func extractionFailuresStayLocalToTheirSource() async throws {
+    @Test(.globalConfigIsolated) func extractionFailuresStayLocalToTheirSource() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: [
@@ -305,7 +305,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func gapCellsPreserveAcquisitionRowsWithTraceableDiagnostics() async throws {
+    @Test(.globalConfigIsolated) func gapCellsPreserveAcquisitionRowsWithTraceableDiagnostics() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         Dimension1, 5, 5
@@ -345,14 +345,14 @@ struct InstrumentReaderTests {
         #expect(runs == [[0], [4]])
     }
 
-    @Test func plotSegmentsBreakOnEitherChannelGap() {
+    @Test(.globalConfigIsolated) func plotSegmentsBreakOnEitherChannelGap() {
         #expect(AxisTransform.segments(x: [0, 1, 2], y: [1.0, nil, 3.0]) == [[0], [2]])
         #expect(AxisTransform.segments(x: [0, nil, 2], y: [1.0, 2.0, 3.0]) == [[0], [2]])
         #expect(AxisTransform.segments(x: [nil, nil], y: [nil, nil]) == [])
         #expect(AxisTransform.segments(x: [0, 1], y: [1.0, 2.0]) == [[0, 1]])
     }
 
-    @Test func gapIsolatedSingletonPointFormsItsOwnSegment() {
+    @Test(.globalConfigIsolated) func gapIsolatedSingletonPointFormsItsOwnSegment() {
         // One finite row surrounded by gaps, and a one-row source: both yield a
         // singleton run that the plot must draw as a visible marker, not an
         // invisible zero-length line, while the gaps stay breaks.
@@ -360,7 +360,7 @@ struct InstrumentReaderTests {
         #expect(AxisTransform.segments(x: [0.5], y: [2.0]) == [[0]])
     }
 
-    @Test func headerAndFilenameMetadataArePreserved() async throws {
+    @Test(.globalConfigIsolated) func headerAndFilenameMetadataArePreserved() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         Dimension1, 2, 2
@@ -392,7 +392,7 @@ struct InstrumentReaderTests {
         #expect(measurement.metadataSections.first { $0.title == "Data" } != nil)
     }
 
-    @Test func filenameTimestampAcceptsValidLeapDay() async throws {
+    @Test(.globalConfigIsolated) func filenameTimestampAcceptsValidLeapDay() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         DataName, V1, I1
@@ -414,7 +414,7 @@ struct InstrumentReaderTests {
         #expect(inspection.category == "iv.dual-sweep")
     }
 
-    @Test func filenameTimestampRejectsImpossibleDatesAndTimes() async throws {
+    @Test(.globalConfigIsolated) func filenameTimestampRejectsImpossibleDatesAndTimes() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         DataName, V1, I1
@@ -447,7 +447,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func validSourceStaysUsableBesideInvalidProfileWithSameExtension() async throws {
+    @Test(.globalConfigIsolated) func validSourceStaysUsableBesideInvalidProfileWithSameExtension() async throws {
         // Same extension (.csv) claimed by both a valid and an unversioned profile
         // with provably DISTINCT detect signatures: the uniquely matched source
         // stays usable while the unmatched source reports the upgrade diagnostic.
@@ -474,7 +474,7 @@ struct InstrumentReaderTests {
         #expect(other.error?.contains("unversioned") == true)
     }
 
-    @Test func brokenProfileWithSameSignatureBlocksUniquelyMatchedSource() async throws {
+    @Test(.globalConfigIsolated) func brokenProfileWithSameSignatureBlocksUniquelyMatchedSource() async throws {
         // The invalid profile declares the SAME detect signature the valid match
         // uses (legacy application_modes.detect.signatures shape, as in the real
         // unversioned Keysight profile): the conflict must stay blocked and
@@ -497,7 +497,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func brokenProfilesDoNotBorrowEachOthersSignatures() async throws {
+    @Test(.globalConfigIsolated) func brokenProfilesDoNotBorrowEachOthersSignatures() async throws {
         let unrelatedBroken = Fixtures.unversionedKeysightProfile.replacingOccurrences(
             of: "detect: [\"2-terminal dual Vsweep\"]", with: "detect: [\"UNRELATED-SIG\"]")
         let root = try makeProject(
@@ -522,7 +522,7 @@ struct InstrumentReaderTests {
         #expect(result.error?.contains("unrelated.yaml") == false)
     }
 
-    @Test func unsupportedExtensionDiagnosticPrecedesDecoding() async throws {
+    @Test(.globalConfigIsolated) func unsupportedExtensionDiagnosticPrecedesDecoding() async throws {
         var bytes = Data("not utf8: ".utf8)
         bytes.append(contentsOf: [0xFF, 0xFE, 0xFD])
         let root = try makeProject(
@@ -536,7 +536,7 @@ struct InstrumentReaderTests {
         #expect(report.results.first?.error?.contains("No instrument profile supports \".ibw\"") == true)
     }
 
-    @Test func schemaRejectsTransformsUnknownExtractAndNonScalarLists() async throws {
+    @Test(.globalConfigIsolated) func schemaRejectsTransformsUnknownExtractAndNonScalarLists() async throws {
         let transformsProfile = Fixtures.keysightProfile.replacingOccurrences(
             of: "    extract:\n      x: voltage\n      y: [current]",
             with: "    extract:\n      x: voltage\n      y: [current]\n    transforms:\n      - field: current\n        operation: multiply\n        factor: -1.0"
@@ -558,7 +558,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func discoveryRunsOffMainThread() async throws {
+    @Test(.globalConfigIsolated) func discoveryRunsOffMainThread() async throws {
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile], sources: ["data/raw/a.csv": Data(Fixtures.dualSweepCSV.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
@@ -569,7 +569,7 @@ struct InstrumentReaderTests {
         #expect(viaSeam.map(\.relativePath) == direct.map(\.relativePath))
     }
 
-    @Test func primaryHeaderWinsOverEarlierAlias() async throws {
+    @Test(.globalConfigIsolated) func primaryHeaderWinsOverEarlierAlias() async throws {
         // The alias "V ALT" sits left of the primary "V1": exact primary wins.
         let profile = Fixtures.keysightProfile.replacingOccurrences(
             of: "        header: \"V1\"", with: "        header: \"V1\"\n        aliases: [\"V ALT\"]")
@@ -586,7 +586,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "voltage")?.values == [0, 0.1])
     }
 
-    @Test func twoChannelsResolvingToOneColumnBlock() async throws {
+    @Test(.globalConfigIsolated) func twoChannelsResolvingToOneColumnBlock() async throws {
         let profile = Fixtures.keysightProfile.replacingOccurrences(
             of: "      current:\n        header: \"I2\"\n        aliases: [\"I1\"]", with: "      current:\n        header: \"V1\"")
         let root = try makeProject(profiles: ["keysight-b1500a.yaml": profile], sources: ["data/raw/clash.csv": Data(Fixtures.dualSweepCSV.utf8)])
@@ -605,7 +605,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func tableKeepsEveryDeclaredChannelWhilePlotUsesModeAxes() async throws {
+    @Test(.globalConfigIsolated) func tableKeepsEveryDeclaredChannelWhilePlotUsesModeAxes() async throws {
         let profile = Fixtures.keysightProfile.replacingOccurrences(
             of: "      current:\n        header: \"I2\"",
             with: "      compliance:\n        header: \"C1\"\n        quantity: current\n        unit: \"A\"\n        label: \"Compliance\"\n      current:\n        header: \"I2\"")
@@ -625,7 +625,7 @@ struct InstrumentReaderTests {
         #expect(measurement.view.y == ["current"])
     }
 
-    @Test func repeatedMetadataKeysStayUniqueWithoutDroppingValues() async throws {
+    @Test(.globalConfigIsolated) func repeatedMetadataKeysStayUniqueWithoutDroppingValues() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         Note, first remark
@@ -644,7 +644,7 @@ struct InstrumentReaderTests {
         #expect(Set(acquisition.fields.map(\.id)).count == acquisition.fields.count)
     }
 
-    @Test func quotedDelimiterStaysInsideOneCell() async throws {
+    @Test(.globalConfigIsolated) func quotedDelimiterStaysInsideOneCell() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         Note, "said ""hi"", ok"
@@ -668,7 +668,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func escapedQuotesUnescapeInsideMetadata() async throws {
+    @Test(.globalConfigIsolated) func escapedQuotesUnescapeInsideMetadata() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         Note, "said ""hi"", ok"
@@ -684,7 +684,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "voltage")?.values == [0])
     }
 
-    @Test func malformedQuotesBlockWithLineDiagnostic() async throws {
+    @Test(.globalConfigIsolated) func malformedQuotesBlockWithLineDiagnostic() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         DataName, V1, I1
@@ -705,7 +705,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func gapReasonsDistinguishBlankNanInfiniteAndSaturation() async throws {
+    @Test(.globalConfigIsolated) func gapReasonsDistinguishBlankNanInfiniteAndSaturation() async throws {
         let csv = """
         SetupTitle, 2-terminal dual Vsweep
         DataName, V1, I1
@@ -736,7 +736,7 @@ struct InstrumentReaderTests {
         #expect(AxisTransform.segments(x: x, y: current.values) == [[0], [5]])
     }
 
-    @Test func missingSourceIsNotMislabeledAsOutside() async throws {
+    @Test(.globalConfigIsolated) func missingSourceIsNotMislabeledAsOutside() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/gone.csv": Data(Fixtures.dualSweepCSV.utf8)]
@@ -762,7 +762,7 @@ struct InstrumentReaderTests {
         #expect(!message.contains("outside"))
     }
 
-    @Test func unreadableSourceReportsReadabilityNotOutside() async throws {
+    @Test(.globalConfigIsolated) func unreadableSourceReportsReadabilityNotOutside() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/locked.csv": Data(Fixtures.dualSweepCSV.utf8)]
@@ -782,7 +782,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func headerSampleSurvivesSplitUTF8Scalar() async throws {
+    @Test(.globalConfigIsolated) func headerSampleSurvivesSplitUTF8Scalar() async throws {
         // The 64 KiB sample cut lands inside a multibyte scalar: decoding must
         // back off to the scalar boundary instead of falling back to mojibake,
         // so the non-ASCII detect signature still matches.
@@ -806,7 +806,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "voltage")?.values == [0, 0.1])
     }
 
-    @Test func decodingTriesOnlyDeclaredEncodings() async throws {
+    @Test(.globalConfigIsolated) func decodingTriesOnlyDeclaredEncodings() async throws {
         // The profile declares ascii only; the valid-UTF-8 multibyte content
         // must not be rescued by an undeclared utf-8 fallback.
         let profile = Fixtures.keysightProfile.replacingOccurrences(
@@ -820,7 +820,7 @@ struct InstrumentReaderTests {
         #expect(error.contains("could not be decoded"))
     }
 
-    @Test func foreignEncodingMatchNeverReportsSupported() async throws {
+    @Test(.globalConfigIsolated) func foreignEncodingMatchNeverReportsSupported() async throws {
         // One candidate encoding (windows-1252) decodes the prefix while another
         // candidate's detect signature (café-B, requiring é) appears only in that
         // decoded text; the ascii candidate cannot decode 0xE9 itself. Inspection
@@ -895,7 +895,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func largeFileStreamsFullyWithoutCaps() async throws {
+    @Test(.globalConfigIsolated) func largeFileStreamsFullyWithoutCaps() async throws {
         var csv = "SetupTitle, 2-terminal dual Vsweep\nDataName, V1, I1\n"
         for index in 0..<200_000 {
             csv += "DataValue, \(Double(index) * 0.001), 1E-12\n"
@@ -912,7 +912,7 @@ struct InstrumentReaderTests {
         #expect(measurement.source.sha256 == sha256Hex(payload))
     }
 
-    @Test func manyShortRowsAcrossChunkBoundariesPreserveCountAndOrder() async throws {
+    @Test(.globalConfigIsolated) func manyShortRowsAcrossChunkBoundariesPreserveCountAndOrder() async throws {
         // Many short rows span several 64 KiB chunks: every row stays in file
         // order with no loss.
         let rowCount = 8000
@@ -934,7 +934,7 @@ struct InstrumentReaderTests {
         #expect(current.values == Array(repeating: 1e-12, count: rowCount))
     }
 
-    @Test func loadHashesAndReadsTheSameOpenedObject() async throws {
+    @Test(.globalConfigIsolated) func loadHashesAndReadsTheSameOpenedObject() async throws {
         // The file is replaced between discovery and load: the measurement
         // must carry the replaced content together with its hash, never a mix.
         let root = try makeProject(
@@ -951,7 +951,7 @@ struct InstrumentReaderTests {
         #expect(measurement.source.sha256 == sha256Hex(replacement))
     }
 
-    @Test func relocationPreservesExtractionAndProvenance() async throws {
+    @Test(.globalConfigIsolated) func relocationPreservesExtractionAndProvenance() async throws {
         let rootA = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/fixture-run/dual-sweep.csv": Data(Fixtures.dualSweepCSV.utf8)]
@@ -975,7 +975,7 @@ struct InstrumentReaderTests {
         #expect(measurementA.provenance == measurementB.provenance)
     }
 
-    @Test func inspectionResumeMergesBatchesWithoutLoss() async throws {
+    @Test(.globalConfigIsolated) func inspectionResumeMergesBatchesWithoutLoss() async throws {
         // Models RawViewModel.resumeInspection: a cancelled run keeps its first
         // batch, and inspecting only the remainder completes every source.
         var files: [String: Data] = [:]
@@ -994,7 +994,7 @@ struct InstrumentReaderTests {
         #expect(merged.values.allSatisfy { $0.inspection != nil && $0.error == nil })
     }
 
-    @Test func inspectionReportsProgressAndMarksRemainingSourcesCancelled() async throws {
+    @Test(.globalConfigIsolated) func inspectionReportsProgressAndMarksRemainingSourcesCancelled() async throws {
         var sources: [String: Data] = [:]
         for index in 0..<129 {
             sources["data/raw/s\(index).csv"] = Data(Fixtures.dataCSV.utf8)
@@ -1022,7 +1022,7 @@ struct InstrumentReaderTests {
         #expect(await recorder.values == [64, 129])
     }
 
-    @Test func loadIsRetryableAfterTheFailureCauseIsFixed() async throws {
+    @Test(.globalConfigIsolated) func loadIsRetryableAfterTheFailureCauseIsFixed() async throws {
         let root = try makeProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/retry.csv": Data("SetupTitle, 2-terminal dual Vsweep\nDataName, V1, I1\nDataValue, 0, --\n".utf8)]
@@ -1039,7 +1039,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "current")?.values == [1e-12, 2e-12, 3e-12, 4e-12, 5e-12])
     }
 
-    @Test func nestedRawViewerProfileBlockIsRejected() async throws {
+    @Test(.globalConfigIsolated) func nestedRawViewerProfileBlockIsRejected() async throws {
         // A top-level v2 document carrying a nested raw_viewer block must fail
         // closed: viewer profiles are standalone top-level documents, and
         // companion profiles live under data/instruments/rawview/.
@@ -1061,7 +1061,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func keithleyLvmLoadsEveryPairInFileOrder() async throws {
+    @Test(.globalConfigIsolated) func keithleyLvmLoadsEveryPairInFileOrder() async throws {
         let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/sweep.txt": Data(Fixtures.lvmSweep.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
@@ -1097,7 +1097,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channels.map(\.name) == ["voltage", "current", "timestamp"])
     }
 
-    @Test func lvmAbsentOptionalColumnLoadsRequiredChannelsUnchanged() async throws {
+    @Test(.globalConfigIsolated) func lvmAbsentOptionalColumnLoadsRequiredChannelsUnchanged() async throws {
         let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/notime.txt": Data(Fixtures.lvmSweepNoTimestamp.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
         let project = try ProjectContext.open(root)
@@ -1117,7 +1117,7 @@ struct InstrumentReaderTests {
         #expect(measurement.source.sha256 == sha256Hex(Data(Fixtures.lvmSweepNoTimestamp.utf8)))
     }
 
-    @Test func lvmMissingRequiredChannelStillBlocksWhenOptionalPresent() async throws {
+    @Test(.globalConfigIsolated) func lvmMissingRequiredChannelStillBlocksWhenOptionalPresent() async throws {
         // The required current header is gone while the optional timestamp
         // header stays: the source must block naming the required channel.
         let text = Fixtures.lvmSweep.replacingOccurrences(of: "Untitled 1", with: "Bogus")
@@ -1132,7 +1132,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func optionalColumnSchemaIsFailClosed() async throws {
+    @Test(.globalConfigIsolated) func optionalColumnSchemaIsFailClosed() async throws {
         let nonBoolean = Fixtures.keithleyLvm.replacingOccurrences(
             of: "required: false", with: "required: maybe")
         let optionalAxis = Fixtures.keithleyLvm.replacingOccurrences(
@@ -1150,7 +1150,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func lvmBlockedStatesAreActionable() async throws {
+    @Test(.globalConfigIsolated) func lvmBlockedStatesAreActionable() async throws {
         let missingHeader = Fixtures.lvmSweep.replacingOccurrences(of: "X_Value\tUntitled", with: "Nope\tUntitled")
         let corruptCell = Fixtures.lvmSweep.replacingOccurrences(of: "-3.75E-6", with: "--")
         for (name, text, fragment) in [
@@ -1169,7 +1169,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func lvmShortRowIsABlankGapNotCorrupt() async throws {
+    @Test(.globalConfigIsolated) func lvmShortRowIsABlankGapNotCorrupt() async throws {
         let short = Fixtures.lvmSweep.replacingOccurrences(of: "\t0.5\t-3.75E-6\t3", with: "\t0.5")
         let root = try makeProject(profiles: ["keithley-2400.yaml": Fixtures.keithleyLvm], sources: ["data/raw/short.txt": Data(short.utf8)])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1181,7 +1181,7 @@ struct InstrumentReaderTests {
         #expect(current.gapReasons[2] == .blank)
     }
 
-    @Test func decimalCommaConflictingWithCommaDelimiterIsRejected() async throws {
+    @Test(.globalConfigIsolated) func decimalCommaConflictingWithCommaDelimiterIsRejected() async throws {
         let profile = Fixtures.keysightV2.replacingOccurrences(
             of: "    delimiter: \",\"\n", with: "    delimiter: \",\"\n    decimal: \",\"\n")
         let root = try makeProject(profiles: ["nested.yaml": profile], sources: ["data/raw/dual.csv": Data(Fixtures.dualSweepCSV.utf8)])
@@ -1191,7 +1191,7 @@ struct InstrumentReaderTests {
         #expect(report.results.first?.error?.contains("decimal") == true)
     }
 
-    @Test func horibaLabramLoadsBothLayoutsInFileOrder() async throws {
+    @Test(.globalConfigIsolated) func horibaLabramLoadsBothLayoutsInFileOrder() async throws {
         let root = try makeProject(
             profiles: ["horiba-labram.yaml": Fixtures.horibaLabram],
             sources: [
@@ -1232,7 +1232,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func ramanTsvSurvivesLatin1CommentBytes() async throws {
+    @Test(.globalConfigIsolated) func ramanTsvSurvivesLatin1CommentBytes() async throws {
         var bytes = Data("#Instrument=\tLabRAM HR Evol\n#Range (cm-".utf8)
         bytes.append(0xB9) // latin-1-only byte: not valid UTF-8
         bytes.append(contentsOf: Data(")=\t100...300\n#Laser=\t532nm\n125,500\t3,25\n".utf8))
@@ -1244,7 +1244,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "intensity")?.values == [3.25])
     }
 
-    @Test func ramanBlockedStatesAreActionable() async throws {
+    @Test(.globalConfigIsolated) func ramanBlockedStatesAreActionable() async throws {
         // Comment-only TSV has no data rows; a semicolon file with corrupt
         // text blocks naming file, line, column, and value.
         let empty = "#Instrument=\tLabRAM HR Evol\n#Laser=\t532nm\n\n"
@@ -1265,7 +1265,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func commentTsvSchemaIsFailClosed() async throws {
+    @Test(.globalConfigIsolated) func commentTsvSchemaIsFailClosed() async throws {
         let rowsAdded = Fixtures.horibaLabram.replacingOccurrences(
             of: "    kind: comment-tsv", with: "    kind: comment-tsv\n    rows:\n      names_prefix: \"X\"")
         let headerColumn = Fixtures.horibaLabram.replacingOccurrences(
@@ -1289,7 +1289,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v2FilenameSelectorGatesMatchingOnBasenameOnly() async throws {
+    @Test(.globalConfigIsolated) func v2FilenameSelectorGatesMatchingOnBasenameOnly() async throws {
         let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\nDataValue, 0.1, 2E-12\nDataValue, 0.2, 3E-12\n"
         let root = try makeProject(
             profiles: ["synth.yaml": Fixtures.filenameV2],
@@ -1331,7 +1331,7 @@ struct InstrumentReaderTests {
         #expect(!nestedError.contains("not in header sample"))
     }
 
-    @Test func profileWithoutFilenameSelectorKeepsLegacyMatching() async throws {
+    @Test(.globalConfigIsolated) func profileWithoutFilenameSelectorKeepsLegacyMatching() async throws {
         let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
         let root = try makeProject(
             profiles: ["synth.yaml": Fixtures.filenameV2NoSelector],
@@ -1345,7 +1345,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "voltage")?.values == [0])
     }
 
-    @Test func brokenFilenameSelectorIsolationUsesItsOwnSelectors() async throws {
+    @Test(.globalConfigIsolated) func brokenFilenameSelectorIsolationUsesItsOwnSelectors() async throws {
         let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
         // Unrelated broken filename must not poison a uniquely valid match.
         let unrelated = try makeProject(
@@ -1374,7 +1374,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func filenameSelectorIsV2Only() async throws {
+    @Test(.globalConfigIsolated) func filenameSelectorIsV2Only() async throws {
         let v1 = Fixtures.keysightProfile.replacingOccurrences(
             of: "    detect: [\"2-terminal dual Vsweep\", \"dual Vsweep\"]",
             with: "    filename_contains_all: [\"keysight-b1500a.dual-sweep\"]\n    detect: [\"2-terminal dual Vsweep\", \"dual Vsweep\"]")
@@ -1394,7 +1394,7 @@ struct InstrumentReaderTests {
         #expect(controlReport.results.first?.inspection?.applicationMode == "dual-sweep")
     }
 
-    @Test func filenameSelectorPreservesAmbiguity() async throws {
+    @Test(.globalConfigIsolated) func filenameSelectorPreservesAmbiguity() async throws {
         let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
         let copy = Fixtures.filenameV2.replacingOccurrences(of: "id: synth", with: "id: synth-copy")
         let root = try makeProject(
@@ -1410,7 +1410,7 @@ struct InstrumentReaderTests {
         #expect(error.contains("synth-copy"))
     }
 
-    @Test func malformedFilenameSelectorIsFailClosed() async throws {
+    @Test(.globalConfigIsolated) func malformedFilenameSelectorIsFailClosed() async throws {
         let csv = "SetupTitle, SYNTH-SPECIFIC-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
         // An empty selector list is schema-invalid: the source stays blocked
         // with a diagnostic naming the exact field.
@@ -1456,7 +1456,7 @@ struct InstrumentReaderTests {
         #expect(unrelatedReport.results.first?.inspection?.applicationMode == "dual-sweep")
     }
 
-    @Test func filenameMatchHeaderMissStaysUnmatchedAndUnblocking() async throws {
+    @Test(.globalConfigIsolated) func filenameMatchHeaderMissStaysUnmatchedAndUnblocking() async throws {
         // Filename tokens match but both detect alternatives miss: the valid
         // mode stays unmatched with a header cause, never a filename cause.
         let other = "SetupTitle, SYNTH-OTHER-HEADER\nDataName, V1, I1\nDataValue, 0, 1E-12\n"
@@ -1488,7 +1488,7 @@ struct InstrumentReaderTests {
         #expect(pairReport.results.first?.inspection?.applicationMode == "dual-sweep")
     }
 
-    @Test func mixedDetectListCannotExonerateBrokenClaim() async throws {
+    @Test(.globalConfigIsolated) func mixedDetectListCannotExonerateBrokenClaim() async throws {
         // A detect list mixing a nonmatching scalar with a non-scalar mapping
         // is malformed as a whole: its surviving string must not count as
         // trustworthy header evidence exonerating the source, so the uniquely
@@ -1525,7 +1525,7 @@ struct InstrumentReaderTests {
         #expect(freedReport.results.first?.inspection?.applicationMode == "dual-sweep")
     }
 
-    @Test func uncertainBrokenClaimBlocks() async throws {
+    @Test(.globalConfigIsolated) func uncertainBrokenClaimBlocks() async throws {
         // The broken profile pairs a matching filename with a missing detect
         // list (uncertain) alongside an unrelated valid signature: the
         // uncertain mode keeps the source blocked with its own diagnostic.
@@ -1546,7 +1546,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v1FilenameFieldCannotExonerateBrokenClaim() async throws {
+    @Test(.globalConfigIsolated) func v1FilenameFieldCannotExonerateBrokenClaim() async throws {
         // A schema-v1 broken claim carrying the unknown filename field plus a
         // matching header still blocks: the field is ignored as evidence
         // outside schema v2 and the header match stands.
@@ -1571,7 +1571,7 @@ struct InstrumentReaderTests {
 
     // MARK: - Task 4: exact variant resolution and extraction (schema v3)
 
-    @Test func v3SharedGrammarResolvesExactVariantWithProvenance() async throws {
+    @Test(.globalConfigIsolated) func v3SharedGrammarResolvesExactVariantWithProvenance() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let root = try makeV3Project(
@@ -1607,7 +1607,7 @@ struct InstrumentReaderTests {
         #expect(measurement.provenance["profile_hash"] == sha256Hex(Data(profileText.utf8)))
     }
 
-    @Test func v3SecondModeWithSharedGrammarResolvesItsVariant() async throws {
+    @Test(.globalConfigIsolated) func v3SecondModeWithSharedGrammarResolvesItsVariant() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let root = try makeV3Project(
@@ -1631,7 +1631,7 @@ struct InstrumentReaderTests {
 
     // MARK: - Task 4: tuples, ambiguity, gates, and layouts
 
-    @Test func v3RepeatedTupleDisambiguatesByHeader() async throws {
+    @Test(.globalConfigIsolated) func v3RepeatedTupleDisambiguatesByHeader() async throws {
         var wide = V3ReaderFixtures.cvVariant()
         wide.id = "cv-wide"
         wide.name = "CV wide"
@@ -1661,7 +1661,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "current")?.values == [30.0])
     }
 
-    @Test func v3AmbiguousCandidatesBlockWithoutFirstMatch() async throws {
+    @Test(.globalConfigIsolated) func v3AmbiguousCandidatesBlockWithoutFirstMatch() async throws {
         var twin = V3ReaderFixtures.cvVariant()
         twin.id = "cv-b"
         twin.name = "CV B"
@@ -1685,7 +1685,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v3UnknownKeyValueBlocksWithoutGenericFallback() async throws {
+    @Test(.globalConfigIsolated) func v3UnknownKeyValueBlocksWithoutGenericFallback() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let root = try makeV3Project(
@@ -1706,7 +1706,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v3PartialFilenameNeverRoutesToVariant() async throws {
+    @Test(.globalConfigIsolated) func v3PartialFilenameNeverRoutesToVariant() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         // Missing the _sample token: the grammar prefix-matches but never
@@ -1726,7 +1726,7 @@ struct InstrumentReaderTests {
         #expect(result.inspection?.profileID == "generic-table")
     }
 
-    @Test func v3EncodingAlternativesDecodeExplicitly() async throws {
+    @Test(.globalConfigIsolated) func v3EncodingAlternativesDecodeExplicitly() async throws {
         var variant = V3ReaderFixtures.cvVariant()
         variant.rawStream.encodings = ["utf-8", "windows-1252"]
         let doc = V3ReaderFixtures.electrochemDoc(variants: [variant])
@@ -1750,7 +1750,7 @@ struct InstrumentReaderTests {
         #expect(runField.value.displayText.contains("caf\u{E9}"))
     }
 
-    @Test func v3UndeclaredEncodingFailsClosed() async throws {
+    @Test(.globalConfigIsolated) func v3UndeclaredEncodingFailsClosed() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         var bytes = Data("Run, caf".utf8)
@@ -1772,7 +1772,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v3ReorderedHeaderOnlyColumnsResolveByName() async throws {
+    @Test(.globalConfigIsolated) func v3ReorderedHeaderOnlyColumnsResolveByName() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let reordered = "Run, acme-cv-5\nAmps, Volts\n10.0, 1.0\n20.0, 2.0\n"
@@ -1789,7 +1789,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "current")?.values == [10.0, 20.0])
     }
 
-    @Test func v3PositionHeaderDisagreementFailsClosed() async throws {
+    @Test(.globalConfigIsolated) func v3PositionHeaderDisagreementFailsClosed() async throws {
         var variant = V3ReaderFixtures.cvVariant()
         variant.rawStream.columns[0].source = ColumnSourceV3(column: 1, header: "Amps")
         let doc = V3ReaderFixtures.electrochemDoc(variants: [variant])
@@ -1810,7 +1810,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v3CompatibilitySelectorsGateCandidates() async throws {
+    @Test(.globalConfigIsolated) func v3CompatibilitySelectorsGateCandidates() async throws {
         var gatedOut = V3ReaderFixtures.cvVariant()
         gatedOut.id = "sel-b"
         gatedOut.name = "Gated out"
@@ -1832,7 +1832,7 @@ struct InstrumentReaderTests {
         #expect(measurement.provenance["variant_id"] == "sel-a")
     }
 
-    @Test func v3MarkerHeaderKeepsPhysicalCoordinates() async throws {
+    @Test(.globalConfigIsolated) func v3MarkerHeaderKeepsPhysicalCoordinates() async throws {
         let doc = V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.markerVariant()])
         let profileText = try doc.serializedYAML()
         let marked = "Run, acme-mk-1\nHDR, Volts, Amps\nDATA, 1.0, 10.0\nDATA, 2.0, 20.0\n"
@@ -1849,7 +1849,7 @@ struct InstrumentReaderTests {
         #expect(measurement.channel(named: "current")?.values == [10.0, 20.0])
     }
 
-    @Test func v3RoundTripRetainsProvenanceValuesGapsUnitsDefaults() async throws {
+    @Test(.globalConfigIsolated) func v3RoundTripRetainsProvenanceValuesGapsUnitsDefaults() async throws {
         let doc = V3ReaderFixtures.electrochemDoc(variants: [V3ReaderFixtures.richVariant(), V3ReaderFixtures.caVariant()])
         let profileText = try doc.serializedYAML()
         let richCSV = "Run, acme-rich-7\nVolts, Amps, Note\n1.0, 10.0, ok\n, NaN, ok\n2.0, 20.0, ok\n"
@@ -1901,7 +1901,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v3CommentCaptureKeepsOrderedRecords() async throws {
+    @Test(.globalConfigIsolated) func v3CommentCaptureKeepsOrderedRecords() async throws {
         var variant = V3ReaderFixtures.cvVariant()
         variant.rawStream.rows.commentPrefix = "#"
         variant.metadataCapture = [.commentKeyValue(prefix: "#")]
@@ -1924,7 +1924,7 @@ struct InstrumentReaderTests {
         #expect(acquisition.fields.first { $0.key == "note" }?.value.displayText == "hi")
     }
 
-    @Test func v3ConflictingFilenameHeaderMetadataStaysQualified() async throws {
+    @Test(.globalConfigIsolated) func v3ConflictingFilenameHeaderMetadataStaysQualified() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let conflicted = "sample, HEADERVAL\nVolts, Amps\n1.0, 10.0\n"
@@ -1944,7 +1944,7 @@ struct InstrumentReaderTests {
         #expect(!measurement.warnings.isEmpty)
     }
 
-    @Test func v3CacheFingerprintInvalidatesOnGrammarKeyVariantEdits() async throws {
+    @Test(.globalConfigIsolated) func v3CacheFingerprintInvalidatesOnGrammarKeyVariantEdits() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let root = try makeV3Project(
@@ -1989,7 +1989,7 @@ struct InstrumentReaderTests {
         #expect(fourth.channel(named: "potential")?.unit == "volt")
     }
 
-    @Test func v3LegacyOriginShadowsOnlyExactCompanion() async throws {
+    @Test(.globalConfigIsolated) func v3LegacyOriginShadowsOnlyExactCompanion() async throws {
         let legacyText = Fixtures.keysightProfile
         let peerText = Fixtures.keysightProfile.replacingOccurrences(of: "keysight-b1500a", with: "keysight-peer")
         var doc = V3ReaderFixtures.electrochemDoc()
@@ -2017,7 +2017,7 @@ struct InstrumentReaderTests {
         #expect(catalog.issues.contains { $0.contains("changed since import") })
     }
 
-    @Test func v3ArchiveDirectoriesAreIgnored() async throws {
+    @Test(.globalConfigIsolated) func v3ArchiveDirectoriesAreIgnored() async throws {
         let doc = V3ReaderFixtures.electrochemDoc()
         let profileText = try doc.serializedYAML()
         let root = try makeV3Project(
@@ -2199,7 +2199,7 @@ struct InstrumentReaderTests {
         #expect(legacyData?.map { "\($0.key)=\($0.value)" } == upgradedData?.map { "\($0.key)=\($0.value)" })
     }
 
-    @Test func upgradedTabularMatchesLegacyIncludingAcquisitionMetadata() async throws {
+    @Test(.globalConfigIsolated) func upgradedTabularMatchesLegacyIncludingAcquisitionMetadata() async throws {
         let sourceA = Data("""
             Title, SYNTH-TAB-A export
             Operator, ada
@@ -2243,7 +2243,7 @@ struct InstrumentReaderTests {
         #expect(legacyA.channel(named: "current")?.values == [2, nil, 8])
     }
 
-    @Test func upgradedHeaderlessMatchesLegacy() async throws {
+    @Test(.globalConfigIsolated) func upgradedHeaderlessMatchesLegacy() async throws {
         let source = Data("""
             #SYNTH-POS instrument
             #Operator=ada
@@ -2275,7 +2275,7 @@ struct InstrumentReaderTests {
         #expect(acquisitionPairs(legacy).map(\.0) == ["Operator", "Operator #2", "Note"])
     }
 
-    @Test func upgradedFirstRowMatchesLegacyWithAliasAndAbsentOptional() async throws {
+    @Test(.globalConfigIsolated) func upgradedFirstRowMatchesLegacyWithAliasAndAbsentOptional() async throws {
         // The file uses the declared alias and omits the optional channel.
         // The detect token rides in an extra header cell: the first
         // non-blank line is the header by definition on both paths.
@@ -2308,7 +2308,7 @@ struct InstrumentReaderTests {
         #expect(up.channel(named: "signal")?.values == [1, 2])
     }
 
-    @Test func legacyAndUpgradedAgreeOnFailure() async throws {
+    @Test(.globalConfigIsolated) func legacyAndUpgradedAgreeOnFailure() async throws {
         let bad = Data("Title, SYNTH-TAB-A export\nNOPE, V1\nROW, 1, 2, 3\n".utf8)
         let root = try makeV3Project(
             grammar: V3ReaderFixtures.grammarYAML,
@@ -2330,7 +2330,7 @@ struct InstrumentReaderTests {
         await #expect(throws: ReaderError.self) { try await InstrumentReader.load(url2, project: project) }
     }
 
-    @Test func v4DeclaredMetadataFromProfileRowLocators() async throws {
+    @Test(.globalConfigIsolated) func v4DeclaredMetadataFromProfileRowLocators() async throws {
         let profile = """
         schema_version: 4
         id: test/acquisition-filter
@@ -2391,7 +2391,7 @@ struct InstrumentReaderTests {
         }
     }
 
-    @Test func v4EmptyMetadataLeavesAcquisitionUnfiltered() async throws {
+    @Test(.globalConfigIsolated) func v4EmptyMetadataLeavesAcquisitionUnfiltered() async throws {
         let profile = """
         schema_version: 4
         id: test/acquisition-plain

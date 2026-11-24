@@ -11,7 +11,7 @@ struct ProfileCatalogDiscoveryTests {
         return url
     }
 
-    @Test func rawViewerProfilesLoadAndTakePrecedence() throws {
+    @Test(.globalConfigIsolated) func rawViewerProfilesLoadAndTakePrecedence() throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("rawview-profiles-priority-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -31,7 +31,7 @@ struct ProfileCatalogDiscoveryTests {
         #expect(keysight?.relativePath.hasPrefix(".raw-viewer/profiles/") == true)
     }
 
-    @Test func legacyDirectoriesStillLoadWithoutRawViewerProfiles() throws {
+    @Test(.globalConfigIsolated) func legacyDirectoriesStillLoadWithoutRawViewerProfiles() throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("rawview-legacy-only-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -48,7 +48,7 @@ struct ProfileCatalogDiscoveryTests {
         #expect(keysight?.relativePath.hasPrefix("data/.rawview/instrument/") == true)
     }
 
-    @Test func dataInstrumentsWithNonYAMLFilesDoesNotSuppressBuiltins() throws {
+    @Test(.globalConfigIsolated) func dataInstrumentsWithNonYAMLFilesDoesNotSuppressBuiltins() throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("rawview-non-yaml-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }

@@ -21,7 +21,7 @@ struct ProjectLayoutCacheVectorsTests {
         return try YAMLParser.parse(text)
     }
 
-    @Test func sharedCacheVectorsMatchSwiftLayout() throws {
+    @Test(.globalConfigIsolated) func sharedCacheVectorsMatchSwiftLayout() throws {
         let contract = try Self.loadCrossLanguageContract()
         guard let rel = contract.value(for: "cache_vectors")?.value(for: "file")?.scalarValue else {
             Issue.record("missing cache_vectors.file in contract")

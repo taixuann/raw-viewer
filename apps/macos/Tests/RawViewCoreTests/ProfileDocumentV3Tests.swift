@@ -199,7 +199,7 @@ struct ProfileDocumentV3Tests {
 
     // MARK: - Round-trip
 
-    @Test func testV3RoundTripsMultipleVariants() throws {
+    @Test(.globalConfigIsolated) func testV3RoundTripsMultipleVariants() throws {
         let sha = String(repeating: "a", count: 64)
         let doc = ProfileDocumentV3(
             profileID: "autolab-usth",
@@ -349,7 +349,7 @@ struct ProfileDocumentV3Tests {
         #expect(again == doc)
     }
 
-    @Test func testScalarEscapingRoundTrip() throws {
+    @Test(.globalConfigIsolated) func testScalarEscapingRoundTrip() throws {
         var doc = try ProfileDocumentV3.parse(text: Self.baseYAML)
         doc.variants[0].rawStream.columns[0].source.header = "Weird \"quoted\" \\ header; with # hash"
         doc.variants[0].rawStream.columns[0].label = "tab\there"
@@ -358,7 +358,7 @@ struct ProfileDocumentV3Tests {
         #expect(back == doc)
     }
 
-    @Test func testSpecInstrumentExampleParses() throws {
+    @Test(.globalConfigIsolated) func testSpecInstrumentExampleParses() throws {
         // Verbatim single-variant example from the v3 design spec (flow lists).
         let example = """
             schema_version: 3
@@ -421,7 +421,7 @@ struct ProfileDocumentV3Tests {
         #expect(doc.variants[0].rawStream.rows.header == .firstNonBlank)
     }
 
-    @Test func testSpecGrammarExampleParsesWithYAMLParser() throws {
+    @Test(.globalConfigIsolated) func testSpecGrammarExampleParsesWithYAMLParser() throws {
         // Verbatim grammar example from the v3 design spec: syntax only.
         let example = """
             schema_version: 1
@@ -452,7 +452,7 @@ struct ProfileDocumentV3Tests {
 
     // MARK: - Rejections
 
-    @Test func testRejectsUnsafeProfileIDs() {
+    @Test(.globalConfigIsolated) func testRejectsUnsafeProfileIDs() {
         for bad in ["", "../evil", "a/b", "..", ".", "a\\b", "bad\nid"] {
             #expect(throws: ProfileDocumentError.self) {
                 try ProfileDocumentV3.parse(text: self.mutated("id: \"autolab-usth\"", "id: \"" + bad + "\""))
@@ -460,7 +460,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testRejectsDuplicateVariantAndColumnIDs() {
+    @Test(.globalConfigIsolated) func testRejectsDuplicateVariantAndColumnIDs() {
         #expect(throws: ProfileDocumentError.self) {
             try ProfileDocumentV3.parse(text: Self.baseYAML + Self.positionalVariant(id: "cv", mode: "ca"))
         }
@@ -469,14 +469,14 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testAllowsDuplicateKeyTuplesWithSelectors() throws {
+    @Test(.globalConfigIsolated) func testAllowsDuplicateKeyTuplesWithSelectors() throws {
         let doc = try ProfileDocumentV3.parse(
             text: Self.baseYAML + Self.positionalVariant(id: "cv-2col", mode: "cv"))
         #expect(doc.variants.count == 2)
         try doc.validate(catalog: Self.catalog())
     }
 
-    @Test func testRejectsIncompleteKeyValues() {
+    @Test(.globalConfigIsolated) func testRejectsIncompleteKeyValues() {
         #expect(throws: ProfileDocumentError.self) {
             try ProfileDocumentV3.parse(text: self.mutated(
                 "key_values:\n              instrument: \"autolab-usth\"\n              mode: \"cv\"",
@@ -489,7 +489,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testRejectsUnknownAndOptionalRoutingKeys() throws {
+    @Test(.globalConfigIsolated) func testRejectsUnknownAndOptionalRoutingKeys() throws {
         let withKeys = self.mutated(
             "variant_keys:\n            - \"instrument\"\n            - \"mode\"",
             "variant_keys:\n  - \"instrument\"\n  - \"nosuch\"")
@@ -508,7 +508,7 @@ struct ProfileDocumentV3Tests {
             ])]))
     }
 
-    @Test func testRejectsUnknownSelectorsAndEnums() {
+    @Test(.globalConfigIsolated) func testRejectsUnknownSelectorsAndEnums() {
         let cases: [(String, String)] = [
             ("filename_contains_all:", "bogus_selector:"),
             ("role: \"skip\"", "role: \"aux\""),
@@ -531,7 +531,7 @@ struct ProfileDocumentV3Tests {
         #expect(throws: ProfileDocumentError.self) { try doc.serializedYAML() }
     }
 
-    @Test func testRejectsInvalidCoordinates() {
+    @Test(.globalConfigIsolated) func testRejectsInvalidCoordinates() {
         #expect(throws: ProfileDocumentError.self) {
             try ProfileDocumentV3.parse(text: self.mutated("row: 3", "row: 0",
                 base: Self.baseYAML + Self.positionalVariant(id: "cv-2col", mode: "ca")))
@@ -566,7 +566,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testRejectsBadDefaultAxes() {
+    @Test(.globalConfigIsolated) func testRejectsBadDefaultAxes() {
         #expect(throws: ProfileDocumentError.self) {
             try ProfileDocumentV3.parse(text: self.mutated("x: \"potential\"", "x: \"nosuch\""))
         }
@@ -589,7 +589,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testRejectsEmptySelectorListsAndSchema() {
+    @Test(.globalConfigIsolated) func testRejectsEmptySelectorListsAndSchema() {
         #expect(throws: ProfileDocumentError.self) {
             try ProfileDocumentV3.parse(text: self.mutated(
                 "filename_contains_all:\n                - \"cv\"",
@@ -603,7 +603,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testValidateAgainstCatalog() throws {
+    @Test(.globalConfigIsolated) func testValidateAgainstCatalog() throws {
         let doc = try ProfileDocumentV3.parse(text: Self.baseYAML)
         try doc.validate(catalog: Self.catalog())
         var badGrammar = doc
@@ -736,7 +736,7 @@ struct ProfileDocumentV3Tests {
         return profile
     }
 
-    @Test func testUpgradePreservesMarkerLayoutDeclarations() throws {
+    @Test(.globalConfigIsolated) func testUpgradePreservesMarkerLayoutDeclarations() throws {
         let profile = try legacyProfile(Self.legacyTabularV2)
         let draft = try LegacyProfileUpgrader.draft(
             from: profile, modeIDs: nil,
@@ -784,7 +784,7 @@ struct ProfileDocumentV3Tests {
         #expect(variant.metadataCapture == [.preHeaderFields])
     }
 
-    @Test func testUpgradeMapsFirstRowAndHeaderlessLayouts() throws {
+    @Test(.globalConfigIsolated) func testUpgradeMapsFirstRowAndHeaderlessLayouts() throws {
         let first = try legacyProfile(Self.legacyFirstRowV2)
         let firstDraft = try LegacyProfileUpgrader.draft(
             from: first, legacyPath: "data/instruments/first.yaml",
@@ -810,7 +810,7 @@ struct ProfileDocumentV3Tests {
         #expect(scan.rawStream.columns.first { $0.id == "counts" }?.source.column == 3)
     }
 
-    @Test func testUpgradeNeverFreezesSampleRowCounts() throws {
+    @Test(.globalConfigIsolated) func testUpgradeNeverFreezesSampleRowCounts() throws {
         let profile = try legacyProfile(Self.legacyTabularV2)
         let draft = try LegacyProfileUpgrader.draft(
             from: profile, legacyPath: "data/instruments/synth.yaml",
@@ -824,7 +824,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func testUpgradeSelectionValidation() throws {
+    @Test(.globalConfigIsolated) func testUpgradeSelectionValidation() throws {
         let profile = try legacyProfile(Self.legacyTabularV2)
         #expect(throws: ProfileDocumentError.self) {
             try LegacyProfileUpgrader.draft(from: profile, modeIDs: [], legacyPath: "p", sha256: "s")
@@ -837,7 +837,7 @@ struct ProfileDocumentV3Tests {
         #expect(subset.variants.map(\.id) == ["sweep-b"])
     }
 
-    @Test func testUpgradeDraftBlocksFinalizeUntilResolved() throws {
+    @Test(.globalConfigIsolated) func testUpgradeDraftBlocksFinalizeUntilResolved() throws {
         let profile = try legacyProfile(Self.legacyTabularV2)
         var draft = try LegacyProfileUpgrader.draft(
             from: profile, modeIDs: ["sweep-a"], legacyPath: "p", sha256: String(repeating: "0", count: 64))
@@ -852,7 +852,7 @@ struct ProfileDocumentV3Tests {
         #expect(done.legacyOrigin?.path == "p")
     }
 
-    @Test func testUpgradeKeylessResolveStaysValid() throws {
+    @Test(.globalConfigIsolated) func testUpgradeKeylessResolveStaysValid() throws {
         // Review-ruled: keyless documents are schema-valid; no save blocker.
         let profile = try legacyProfile(Self.legacyFirstRowV2)
         var draft = try LegacyProfileUpgrader.draft(
@@ -868,7 +868,7 @@ struct ProfileDocumentV3Tests {
             text: Self.baseYAML + Self.positionalVariant(id: "cv-2col", mode: "ca"))
     }
 
-    @Test func testColumnOnlyFixedMetadataFailsValidation() throws {
+    @Test(.globalConfigIsolated) func testColumnOnlyFixedMetadataFailsValidation() throws {
         var doc = try twoVariantDocument()
         doc.variants[0].metadata = [VariantMetadataV3(key: "m", role: "r", column: 2)]
         let invalid = doc
@@ -909,7 +909,7 @@ struct ProfileDocumentV3Tests {
             prefixBytes: bytes, byteSize: bytes.count)
     }
 
-    @Test func testPreviewMatcherConfirmsExactVariant() throws {
+    @Test(.globalConfigIsolated) func testPreviewMatcherConfirmsExactVariant() throws {
         let doc = try matchDocument()
         let hit = candidate(id: "data/raw/a.csv", basename: "synthx.sweep-a_s01.csv", bytes: tabSample(modeToken: "SYNTH-TAB-A"))
         let other = candidate(id: "data/raw/b.csv", basename: "synthx.sweep-b_s02.csv", bytes: tabSample(modeToken: "SYNTH-TAB-B"))
@@ -922,7 +922,7 @@ struct ProfileDocumentV3Tests {
             grammar: Self.catalog()) == .confirmed(sourceID: "data/raw/a.csv"))
     }
 
-    @Test func testPreviewMatcherSkipsOtherVariantsAndUnrelated() throws {
+    @Test(.globalConfigIsolated) func testPreviewMatcherSkipsOtherVariantsAndUnrelated() throws {
         let doc = try matchDocument()
         let otherVariant = candidate(
             id: "data/raw/b.csv", basename: "synthx.sweep-b_s02.csv", bytes: tabSample(modeToken: "SYNTH-TAB-B"))
@@ -936,7 +936,7 @@ struct ProfileDocumentV3Tests {
             grammar: Self.catalog()) == .noMatch)
     }
 
-    @Test func testPreviewMatcherReportsAmbiguity() throws {
+    @Test(.globalConfigIsolated) func testPreviewMatcherReportsAmbiguity() throws {
         var doc = try matchDocument()
         // Duplicate key tuple with identical stream checks: undecidable, never first-match.
         doc.variants[1].keyValues = doc.variants[0].keyValues
@@ -1012,7 +1012,7 @@ struct ProfileDocumentV3Tests {
             documentSHA256: "document")
     }
 
-    @Test func axisChoicesExposeMultipleXYAndExcludeSkip() throws {
+    @Test(.globalConfigIsolated) func axisChoicesExposeMultipleXYAndExcludeSkip() throws {
         let variant = Self.axisVariant()
         let measurement = try V3Reader.measurement(
             relativePath: "data/raw/acme.cv_s01.csv",
@@ -1036,7 +1036,7 @@ struct ProfileDocumentV3Tests {
         #expect(measurement.channels.map(\.name).contains("auxskip") == false)
     }
 
-    @Test func axisChoicesOfferOptionalOnlyWhenPresent() throws {
+    @Test(.globalConfigIsolated) func axisChoicesOfferOptionalOnlyWhenPresent() throws {
         let variant = Self.axisVariant()
         let present = try V3Reader.measurement(
             relativePath: "data/raw/a.csv", basename: "a.csv",
@@ -1055,7 +1055,7 @@ struct ProfileDocumentV3Tests {
         #expect(absent.view.y == ["current", "current2"])
     }
 
-    @Test func axisMissingDefaultChannelFailsClosedWithoutSubstitution() throws {
+    @Test(.globalConfigIsolated) func axisMissingDefaultChannelFailsClosedWithoutSubstitution() throws {
         var variant = Self.axisVariant()
         variant.defaultPlot = DefaultPlotV3(x: "potential", y: ["current", "optaux"])
         #expect(throws: ReaderError.self) {
@@ -1066,7 +1066,7 @@ struct ProfileDocumentV3Tests {
         }
     }
 
-    @Test func axisOverrideAppliesWithoutSubstitution() throws {
+    @Test(.globalConfigIsolated) func axisOverrideAppliesWithoutSubstitution() throws {
         // Session overrides reselect declared channels display-only; missing
         // IDs are kept (plots/overlays fail closed, inspector resets).
         let variant = Self.axisVariant()
@@ -1087,7 +1087,7 @@ struct ProfileDocumentV3Tests {
 
     // MARK: - Final fix: v3-shaped parse failure warns, never legacy clean-loads
 
-    @Test func editorDiscoveryExcludesLegacyMalformedAndInvalidReferences() throws {
+    @Test(.globalConfigIsolated) func editorDiscoveryExcludesLegacyMalformedAndInvalidReferences() throws {
         let malformed = Self.baseYAML.replacingOccurrences(of: "delimiter: \";\"", with: "delimiter: \";;\"")
         let unsupported = Self.baseYAML.replacingOccurrences(of: "schema_version: 3", with: "schema_version: 9")
         let missingGrammar = Self.baseYAML.replacingOccurrences(
@@ -1127,7 +1127,7 @@ struct ProfileDocumentV3Tests {
 
     // MARK: - Task 4: safe profile deletion
 
-    @Test func deleteRejectsNonOwnedSymlinkAndChangedTargets() throws {
+    @Test(.globalConfigIsolated) func deleteRejectsNonOwnedSymlinkAndChangedTargets() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfileDelete-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1167,7 +1167,7 @@ struct ProfileDocumentV3Tests {
         #expect(!FileManager.default.fileExists(atPath: owned.path))
     }
 
-    @Test func failedDeletePreservesState() throws {
+    @Test(.globalConfigIsolated) func failedDeletePreservesState() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("DeletePreserves-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

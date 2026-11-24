@@ -2,7 +2,7 @@ import Testing
 @testable import RawViewCore
 
 struct SourceGroupingTests {
-    @Test func projectsConfirmedMetadataAndPreservesStableSourceIdentity() {
+    @Test(.globalConfigIsolated) func projectsConfirmedMetadataAndPreservesStableSourceIdentity() {
         let first = inspection(
             source: "data/raw/a.csv", instrumentID: "b1500", instrumentName: "B1500A",
             mode: "sweep", timestamp: "2026-09-30T10:00:00Z", deviceID: "D1", category: "study-a",
@@ -22,7 +22,7 @@ struct SourceGroupingTests {
         #expect(grouping.sampleDevice[0].sourceIDs == ["data/raw/a.csv"])
     }
 
-    @Test func omitsMissingValuesAndUsesCategoryOnly() {
+    @Test(.globalConfigIsolated) func omitsMissingValuesAndUsesCategoryOnly() {
         let value = inspection(source: "data/raw/no-metadata.csv", instrumentID: "", mode: " ", timestamp: "nonsense", deviceID: nil, category: nil)
         let grouping = SourceGrouping(inspections: [value])
         #expect(grouping.sampleDevice.isEmpty)
@@ -33,7 +33,7 @@ struct SourceGroupingTests {
         #expect(grouping.status.isEmpty)
     }
 
-    @Test func parsesRealFilenameTimestampConventionForDateBatch() {
+    @Test(.globalConfigIsolated) func parsesRealFilenameTimestampConventionForDateBatch() {
         // Real convention DDMMYY-HHMMSS validates as a calendar date.
         #expect(SourceGrouping.date(from: "311224-235958") == "2024-12-31")
         #expect(SourceGrouping.date(from: "010100-000000") == "2000-01-01")
@@ -45,12 +45,12 @@ struct SourceGroupingTests {
         #expect(SourceGrouping.date(from: "311224-246060") == nil)
     }
 
-    @Test func rejectsNonDigitDateComponents() {
+    @Test(.globalConfigIsolated) func rejectsNonDigitDateComponents() {
         let value = inspection(source: "data/raw/malformed-date.csv", timestamp: "2026-+9-30T10:00:00Z")
         #expect(SourceGrouping(inspections: [value]).dateBatch.isEmpty)
     }
 
-    @Test func keepsDistinctInstrumentsSeparateWhenDisplayNamesCollide() {
+    @Test(.globalConfigIsolated) func keepsDistinctInstrumentsSeparateWhenDisplayNamesCollide() {
         let first = inspection(source: "data/raw/a.csv", instrumentID: "id-1", instrumentName: "Shared Name")
         let second = inspection(source: "data/raw/b.csv", instrumentID: "id-2", instrumentName: "Shared Name")
         let grouping = SourceGrouping(inspections: [first, second])

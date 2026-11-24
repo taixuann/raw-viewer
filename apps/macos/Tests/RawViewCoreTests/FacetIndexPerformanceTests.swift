@@ -24,7 +24,7 @@ private func milliseconds(_ body: () -> Void) -> Double {
 /// then the menu and the tree read it. Each measured step uses names not seen before in
 /// the process, so the first pass is cold. "Warm" repeats the old path on the same names.
 struct FacetIndexPerformanceTests {
-    @Test(.enabled(if: facetPerfEnabled))
+    @Test(.globalConfigIsolated, .enabled(if: facetPerfEnabled))
     func facetIndexBenchmarkFiveThousandFiles() {
         let grammar = FilenameGrammarCatalog.standardDefaults[0]
         let fields = grammar.fields.map(\.name)

@@ -15,7 +15,7 @@ struct TreeNavigationTests {
         return (project, root)
     }
 
-    @Test func treeFilterKeepsAncestorsAndDoesNotFlatten() throws {
+    @Test(.globalConfigIsolated) func treeFilterKeepsAncestorsAndDoesNotFlatten() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -52,7 +52,7 @@ struct TreeNavigationTests {
         #expect(fileNode.children.isEmpty)
     }
 
-    @Test func duplicateBasenamesKeepDistinctIDs() throws {
+    @Test(.globalConfigIsolated) func duplicateBasenamesKeepDistinctIDs() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -85,7 +85,7 @@ struct TreeNavigationTests {
         #expect(file1?.id != file2?.id, "Identical basenames must have distinct node IDs")
     }
 
-    @Test func rootChangeClearsSelectionAndExpansion() {
+    @Test(.globalConfigIsolated) func rootChangeClearsSelectionAndExpansion() {
         var state = ProjectSessionState()
         #expect(state.generation == 0)
 
@@ -101,7 +101,7 @@ struct TreeNavigationTests {
         #expect(!state.accepts(generation: 0), "Old generation token must be rejected")
     }
 
-    @Test func virtualGroupingStillUsesProjectRelativeIDs() throws {
+    @Test(.globalConfigIsolated) func virtualGroupingStillUsesProjectRelativeIDs() throws {
         let (project, root) = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -128,7 +128,7 @@ struct TreeNavigationTests {
 
     // MARK: - Task 6 Lifecycle Tests
 
-    @Test func lateOldRootResultsCannotInstall() {
+    @Test(.globalConfigIsolated) func lateOldRootResultsCannotInstall() {
         var state = ProjectSessionState()
         let token1 = state.beginRootChange()
         let token2 = state.beginRootChange()
@@ -137,7 +137,7 @@ struct TreeNavigationTests {
         #expect(state.accepts(generation: token2), "Current generation token must be accepted")
     }
 
-    @Test func setupCancelPreservesCurrentProject() throws {
+    @Test(.globalConfigIsolated) func setupCancelPreservesCurrentProject() throws {
         let (project1, root1) = try makeProject(dataRoot: "data/raw")
         defer { try? FileManager.default.removeItem(at: root1) }
         let (_, root2) = try makeProject(dataRoot: "data/raw")
@@ -155,7 +155,7 @@ struct TreeNavigationTests {
         #expect(currentProject?.dataRootRelativePath == "data/raw")
     }
 
-    @Test func failedSettingsSaveDoesNotClaimSaved() throws {
+    @Test(.globalConfigIsolated) func failedSettingsSaveDoesNotClaimSaved() throws {
         let (_, root) = try makeProject(dataRoot: "data/raw")
         defer {
             chmod(root.path, 0o755)
@@ -180,7 +180,7 @@ struct TreeNavigationTests {
         #expect(!FileManager.default.fileExists(atPath: settingsFile.path), "No settings file must be created on failed save")
     }
 
-    @Test func readOnlyUseWithoutSavingWorks() throws {
+    @Test(.globalConfigIsolated) func readOnlyUseWithoutSavingWorks() throws {
         let (_, root) = try makeProject(dataRoot: "data/raw")
         defer {
             chmod(root.path, 0o755)
@@ -197,7 +197,7 @@ struct TreeNavigationTests {
         #expect(opened.root.path == root.resolvingSymlinksInPath().standardizedFileURL.path)
     }
 
-    @Test func malformedSavedRootNeedsCorrection() throws {
+    @Test(.globalConfigIsolated) func malformedSavedRootNeedsCorrection() throws {
         let (_, root) = try makeProject(dataRoot: "data/raw")
         defer { try? FileManager.default.removeItem(at: root) }
 

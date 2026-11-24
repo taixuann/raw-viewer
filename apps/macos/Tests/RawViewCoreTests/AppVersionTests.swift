@@ -2,7 +2,7 @@ import Testing
 @testable import RawViewCore
 
 struct AppVersionTests {
-    @Test func versionParsingStripsPrefixAndExtractsComponents() {
+    @Test(.globalConfigIsolated) func versionParsingStripsPrefixAndExtractsComponents() {
         let v1 = SemanticVersion("v0.3.2")
         #expect(v1.major == 0)
         #expect(v1.minor == 3)
@@ -20,7 +20,7 @@ struct AppVersionTests {
         #expect(v3.patch == 8)
     }
 
-    @Test func versionComparisonAndUpToDateSemantics() {
+    @Test(.globalConfigIsolated) func versionComparisonAndUpToDateSemantics() {
         // Equal versions with/without 'v' prefix are equal (up to date)
         #expect(SemanticVersion("v0.3.2") == SemanticVersion("0.3.2"))
         #expect(!SemanticVersion.isNewer(latest: "v0.3.2", current: "0.3.2"))

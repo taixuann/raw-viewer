@@ -2,7 +2,7 @@ import Testing
 @testable import RawViewCore
 
 struct ScientificPresetTests {
-    @Test func allPresetsHavePositiveDimensionsAndRatio() {
+    @Test(.globalConfigIsolated) func allPresetsHavePositiveDimensionsAndRatio() {
         for preset in ScientificPreset.allCases {
             #expect(!preset.id.isEmpty)
             #expect(!preset.displayName.isEmpty)
@@ -16,7 +16,7 @@ struct ScientificPresetTests {
         }
     }
 
-    @Test func natureSingleMatchesSpecifications() {
+    @Test(.globalConfigIsolated) func natureSingleMatchesSpecifications() {
         let preset = ScientificPreset.natureSingle
         #expect(preset.id == "nature-single")
         #expect(preset.publisher == "Nature")
@@ -28,28 +28,28 @@ struct ScientificPresetTests {
         #expect(abs(preset.tickLengthPt - 4.25) < 0.01)
     }
 
-    @Test func natureOpenIsOpenFrame() {
+    @Test(.globalConfigIsolated) func natureOpenIsOpenFrame() {
         let preset = ScientificPreset.natureOpen
         #expect(preset.id == "nature-open")
         #expect(preset.isOpenFrame)
         #expect(!preset.isSerif)
     }
 
-    @Test func ieeeSingleIsSerif() {
+    @Test(.globalConfigIsolated) func ieeeSingleIsSerif() {
         let preset = ScientificPreset.ieeeSingle
         #expect(preset.id == "ieee-single")
         #expect(preset.publisher == "IEEE")
         #expect(preset.isSerif)
     }
 
-    @Test func presetGroupingCollections() {
+    @Test(.globalConfigIsolated) func presetGroupingCollections() {
         #expect(ScientificPreset.standardPresets.count == 4)
         #expect(ScientificPreset.openFramePresets.count == 2)
         #expect(ScientificPreset.standardPresets.allSatisfy { !$0.isOpenFrame })
         #expect(ScientificPreset.openFramePresets.allSatisfy { $0.isOpenFrame })
     }
 
-    @Test func typographySpecificationsArePositiveAndProportional() {
+    @Test(.globalConfigIsolated) func typographySpecificationsArePositiveAndProportional() {
         for preset in ScientificPreset.allCases {
             #expect(preset.titlePt >= preset.axisLabelPt)
             #expect(preset.axisLabelPt >= preset.tickLabelPt)
@@ -58,7 +58,7 @@ struct ScientificPresetTests {
         }
     }
 
-    @Test func legendScaleMultipliesFontSizeAndClampsToMinimum() {
+    @Test(.globalConfigIsolated) func legendScaleMultipliesFontSizeAndClampsToMinimum() {
         let preset = ScientificPreset.natureSingle
         let baseSize = preset.legendFontSize(fontScale: 1.0, legendScale: 1.0)
         let scaledSize = preset.legendFontSize(fontScale: 1.0, legendScale: 1.5)

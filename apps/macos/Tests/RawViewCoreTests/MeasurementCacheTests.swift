@@ -92,7 +92,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 1 — bitwise full-payload round-trip
 
-    @Test func cacheRoundTripsMeasurementBitwiseIncludingGapsAndMetadata() async throws {
+    @Test(.globalConfigIsolated) func cacheRoundTripsMeasurementBitwiseIncludingGapsAndMetadata() async throws {
         let original = syntheticMeasurement
         let encoded = try MeasurementCache.encode(measurement: original)
         let restored = try MeasurementCache.decode(measurement: encoded)
@@ -156,7 +156,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 4 — measurement store/hit/miss with full-digest verification
 
-    @Test func measurementCacheHitRestoresAfterStoreAndMissAfterContentEdit() async throws {
+    @Test(.globalConfigIsolated) func measurementCacheHitRestoresAfterStoreAndMissAfterContentEdit() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -182,7 +182,7 @@ struct MeasurementCacheTests {
         #expect(miss == nil)
     }
 
-    @Test func fullDigestGateRejectsSameSizeSameMtimeBodyEditBeyondPrefix() async throws {
+    @Test(.globalConfigIsolated) func fullDigestGateRejectsSameSizeSameMtimeBodyEditBeyondPrefix() async throws {
         // Same relative path, same descriptor size, same exact 64 KiB prefix
         // digest, same fingerprint — only the recorded full-content digest
         // differs. The entry must NOT be served: the verification gate alone
@@ -207,7 +207,7 @@ struct MeasurementCacheTests {
         #expect(afterEdit == nil, "full-digest verification gate did not reject a body edit with identical identity inputs")
     }
 
-    @Test func measurementCacheMissesWhenProfileFingerprintChanges() async throws {
+    @Test(.globalConfigIsolated) func measurementCacheMissesWhenProfileFingerprintChanges() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -218,7 +218,7 @@ struct MeasurementCacheTests {
         #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-2") == nil)
     }
 
-    @Test func corruptCacheEntryIsAMissAndCanBeRebuilt() async throws {
+    @Test(.globalConfigIsolated) func corruptCacheEntryIsAMissAndCanBeRebuilt() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -245,7 +245,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 5 — containment
 
-    @Test func projectCacheSymlinkIsIgnoredWhileAppLocalCacheWorks() async throws {
+    @Test(.globalConfigIsolated) func projectCacheSymlinkIsIgnoredWhileAppLocalCacheWorks() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-cache-outside-\(UUID().uuidString)")
@@ -271,7 +271,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 6 — read-only projects use the same app-local cache
 
-    @Test func readOnlyProjectUsesAppLocalCacheAndStores() async throws {
+    @Test(.globalConfigIsolated) func readOnlyProjectUsesAppLocalCacheAndStores() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.appendingPathComponent("data").path)
@@ -292,7 +292,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 7 — limit, LRU, clear
 
-    @Test func lruEvictionHonorsLimitAndClearRemovesOnlyCacheFiles() async throws {
+    @Test(.globalConfigIsolated) func lruEvictionHonorsLimitAndClearRemovesOnlyCacheFiles() async throws {
         let (root, project) = try makeCacheProject(rowCount: 9000)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -330,7 +330,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 8 — cancellation/transient errors never cached
 
-    @Test func readerCancellationDoesNotStoreMeasurement() async throws {
+    @Test(.globalConfigIsolated) func readerCancellationDoesNotStoreMeasurement() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -350,7 +350,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 9 — .spe/.affm zero-open at the cache seam
 
-    @Test func speAndAffmSourcesNeverReachTheCache() async throws {
+    @Test(.globalConfigIsolated) func speAndAffmSourcesNeverReachTheCache() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -369,7 +369,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 2/3 — inspection cache seam (typed deterministic outcomes)
 
-    @Test func inspectionCacheReusesDeterministicOutcomeAfterRowOnlyEdit() async throws {
+    @Test(.globalConfigIsolated) func inspectionCacheReusesDeterministicOutcomeAfterRowOnlyEdit() async throws {
         let (root, project) = try makeCacheProject(rowCount: 12000)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -407,7 +407,7 @@ struct MeasurementCacheTests {
         #expect(third.fromCache == false)
     }
 
-    @Test func inspectionCacheMissesOnSameSizeSameMtimeHeaderEdit() async throws {
+    @Test(.globalConfigIsolated) func inspectionCacheMissesOnSameSizeSameMtimeHeaderEdit() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -431,7 +431,7 @@ struct MeasurementCacheTests {
         #expect(second.fromCache == false)
     }
 
-    @Test func deterministicBlockedOutcomeIsCachedUntilInvalidated() async throws {
+    @Test(.globalConfigIsolated) func deterministicBlockedOutcomeIsCachedUntilInvalidated() async throws {
         // A valid profile whose detect never matches: inspectAccess returns a
         // deterministic blocked diagnostic, and the seam caches it.
         let (root, project) = try makeCacheProject()
@@ -467,7 +467,7 @@ struct MeasurementCacheTests {
         #expect(warmProducerRan.count == 0)
     }
 
-    @Test func cancelledAndTransientOutcomesThrowAndRetry() async throws {
+    @Test(.globalConfigIsolated) func cancelledAndTransientOutcomesThrowAndRetry() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -508,7 +508,7 @@ struct MeasurementCacheTests {
         #expect(warm.fromCache == true)
     }
 
-    @Test func missingSourceOpenFailsInsteadOfCaching() async throws {
+    @Test(.globalConfigIsolated) func missingSourceOpenFailsInsteadOfCaching() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -521,7 +521,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 10 — reader integration: warm load comes from the cache
 
-    @Test func readerLoadStoresThenServesWarmLoadsFromCache() async throws {
+    @Test(.globalConfigIsolated) func readerLoadStoresThenServesWarmLoadsFromCache() async throws {
         let (root, project) = try makeCacheProject(rowCount: 9000)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -550,7 +550,7 @@ struct MeasurementCacheTests {
         var count = 0
     }
 
-    @Test func catalogFingerprintChangesWithProfileBytes() async throws {
+    @Test(.globalConfigIsolated) func catalogFingerprintChangesWithProfileBytes() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let before = ProfileCatalog.load(project: project).fingerprint
@@ -566,7 +566,7 @@ struct MeasurementCacheTests {
 
     // MARK: Slice 11 — inspection cache via inspectMany (app seam)
 
-    @Test func inspectManyUsesCacheAndWarmRunsSkipProfileWork() async throws {
+    @Test(.globalConfigIsolated) func inspectManyUsesCacheAndWarmRunsSkipProfileWork() async throws {
         let (root, project) = try makeCacheProject(rowCount: 200)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -588,7 +588,7 @@ struct MeasurementCacheTests {
 
     // MARK: Correction pass — fingerprint completeness, namespace gates, shape misses
 
-    @Test func brokenProfileBytesDriveCatalogFingerprintDifferently() async throws {
+    @Test(.globalConfigIsolated) func brokenProfileBytesDriveCatalogFingerprintDifferently() async throws {
         func brokenProfile(prefixComment: String) -> String {
             "\(prefixComment)schema_version: 1\ninstrument:\n  id: broken\n  name: Broken\nformats:\n  - id: csv\n    kind: tabular\n    extensions: [\".csv\"]\n    rows:\n      names_prefix: \"DataName\"\n      data_prefix: \"DataValue\"\n    columns:\n      voltage:\n        header: \"V1\"\n        quantity: voltage\nmodes:\n  - id: broken-mode\n    format: csv\n    detect: [\"NEVER-SEEN-SIGNATURE\"]\n    extract:\n      x: voltage\n      y: [current]\n"
         }
@@ -622,7 +622,7 @@ struct MeasurementCacheTests {
         #expect(catalogA.brokenClaims[0].contentSHA256.count == 64)
     }
 
-    @Test func symlinkedRawviewNamespaceIsRejectedWithoutTraversal() async throws {
+    @Test(.globalConfigIsolated) func symlinkedRawviewNamespaceIsRejectedWithoutTraversal() async throws {
         let (root, project) = try makeCacheProject(rowCount: 300)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -650,7 +650,7 @@ struct MeasurementCacheTests {
                 "cache operations traversed the symlinked namespace")
     }
 
-    @Test func unsafeExistingCacheDirectoryFailsClosedWithoutRepair() async throws {
+    @Test(.globalConfigIsolated) func unsafeExistingCacheDirectoryFailsClosedWithoutRepair() async throws {
         let (root, project) = try makeCacheProject(rowCount: 300)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -686,7 +686,7 @@ struct MeasurementCacheTests {
         #expect(try cache.measurement(for: source, project: project, profileFingerprint: "fp-1") == nil)
     }
 
-    @Test func symlinkedPayloadIsNotFollowed() async throws {
+    @Test(.globalConfigIsolated) func symlinkedPayloadIsNotFollowed() async throws {
         let (root, project) = try makeCacheProject(rowCount: 300)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = MeasurementCache(project: project, limitBytes: 512 * 1024 * 1024)
@@ -716,7 +716,7 @@ struct MeasurementCacheTests {
         #expect(try Data(contentsOf: outside.appendingPathComponent("sentinel.txt")) == Data("sentinel".utf8))
     }
 
-    @Test func corruptPayloadShapeIsAMissNotATrap() async throws {
+    @Test(.globalConfigIsolated) func corruptPayloadShapeIsAMissNotATrap() async throws {
         let (root, project) = try makeCacheProject()
         defer { try? FileManager.default.removeItem(at: root) }
         let source = try #require(try project.discoverSources().first)
@@ -731,7 +731,7 @@ struct MeasurementCacheTests {
         }
     }
 
-    @Test func malformedPackedPayloadFailsClosed() throws {
+    @Test(.globalConfigIsolated) func malformedPackedPayloadFailsClosed() throws {
         let original = syntheticMeasurement
         func encodedPayload(_ mutate: (inout MeasurementCache.MeasurementPayload) -> Void) throws -> Data {
             var payload = MeasurementCache.MeasurementPayload(measurement: original)
@@ -756,7 +756,7 @@ struct MeasurementCacheTests {
         }
     }
 
-    @Test func packedCodecKeepsNilGapReasonDistinctFromUnknown() throws {
+    @Test(.globalConfigIsolated) func packedCodecKeepsNilGapReasonDistinctFromUnknown() throws {
         let original = syntheticMeasurement
         let restored = try MeasurementCache.decode(measurement: try MeasurementCache.encode(measurement: original))
         // Voltage row 5 is a nil gap reason; current row 7 is `.unknown`: they
@@ -765,7 +765,7 @@ struct MeasurementCacheTests {
         #expect(restored.channels[1].values[7] == nil && restored.channels[1].gapReasons[7] == .unknown)
     }
 
-    @Test func presentNonFiniteSamplesAreInvalid() throws {
+    @Test(.globalConfigIsolated) func presentNonFiniteSamplesAreInvalid() throws {
         // Present NaN/infinity are never valid present samples; recorded
         // non-finite source cells are gaps.
         for value in [Double.nan, Double.infinity, -Double.infinity] {
@@ -781,7 +781,7 @@ struct MeasurementCacheTests {
         }
     }
 
-    @Test func forgedNonFinitePresentSampleFailsClosed() throws {
+    @Test(.globalConfigIsolated) func forgedNonFinitePresentSampleFailsClosed() throws {
         var payload = MeasurementCache.MeasurementPayload(measurement: syntheticMeasurement)
         let bits = Double.nan.bitPattern
         for offset in 0..<8 { payload.channelValueBytes[0][offset] = UInt8((bits >> (offset * 8)) & 0xFF) }
@@ -790,7 +790,7 @@ struct MeasurementCacheTests {
         #expect(throws: ContractError.self) { try MeasurementCache.decode(measurement: encoded) }
     }
 
-    @Test func cachePreflightSkipsOverCapWithoutHugeAllocation() async throws {
+    @Test(.globalConfigIsolated) func cachePreflightSkipsOverCapWithoutHugeAllocation() async throws {
         // Minimum packed bytes: 9 per sample (8 value + 1 gap). Lower bound
         // only; metadata overhead stays on the final encoded-size check.
         #expect(MeasurementCache.minimumPackedSampleBytesExceedsCap(sampleCounts: [10], cap: 100) == false)
@@ -831,7 +831,7 @@ struct MeasurementCacheTests {
         #expect(try cache.usage().entryCount == 1)
     }
 
-    @Test func indexDatabaseAutoMigratesProfileIDForExistingDatabases() throws {
+    @Test(.globalConfigIsolated) func indexDatabaseAutoMigratesProfileIDForExistingDatabases() throws {
         let dbURL = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-test-\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: dbURL) }
         var rawDB: OpaquePointer?

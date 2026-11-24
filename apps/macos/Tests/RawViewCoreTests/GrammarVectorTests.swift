@@ -85,7 +85,7 @@ struct GrammarVectorTests {
         return (grammar, cases)
     }
 
-    @Test func sharedGrammarCompilePatternMatchesRustReference() throws {
+    @Test(.globalConfigIsolated) func sharedGrammarCompilePatternMatchesRustReference() throws {
         let root = Self.repoRoot()
         let grammarURL = root.appendingPathComponent("fixtures/grammar/standard-scientific.yaml")
         let grammar = try FilenameGrammarEngine.load(fileURL: grammarURL).grammars[0]
@@ -94,7 +94,7 @@ struct GrammarVectorTests {
         #expect(regex.pattern == expected)
     }
 
-    @Test func sharedGrammarVectorsMatchSwiftEngine() throws {
+    @Test(.globalConfigIsolated) func sharedGrammarVectorsMatchSwiftEngine() throws {
         let (grammar, cases) = try Self.loadVectors()
         #expect(!cases.isEmpty)
         for vector in cases {

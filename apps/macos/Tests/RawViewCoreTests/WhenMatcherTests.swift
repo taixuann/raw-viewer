@@ -47,7 +47,7 @@ struct WhenMatcherTests {
     0.2,3.0e-9
     """
 
-    @Test func tokenExactMatchRejectsNearMissSubstring() {
+    @Test(.globalConfigIsolated) func tokenExactMatchRejectsNearMissSubstring() {
         let merged = ProfileWhenMatcher.whenFromLegacy(
             detect: ["SIG"], filenameContainsAll: ["needle"])
         let hit = ProfileWhenMatcher.tokenizeBasename("my_needle_extra.csv")
@@ -62,7 +62,7 @@ struct WhenMatcherTests {
                 basenameForContent: "my_needlefish.csv"))
     }
 
-    @Test func contentContainsAnyMatchesHeader() {
+    @Test(.globalConfigIsolated) func contentContainsAnyMatchesHeader() {
         let merged = ProfileWhenMatcher.whenFromLegacy(
             detect: ["alpha-header", "beta-header"], filenameContainsAll: nil)
         #expect(
@@ -71,7 +71,7 @@ struct WhenMatcherTests {
                 basenameForContent: "file.csv"))
     }
 
-    @Test func contentAndFilenameRequiresBoth() {
+    @Test(.globalConfigIsolated) func contentAndFilenameRequiresBoth() {
         let merged = ProfileWhenMatcher.whenFromLegacy(detect: ["HDR"], filenameContainsAll: ["tok"])
         let tokens = ProfileWhenMatcher.tokenizeBasename("tok.csv")
         #expect(
@@ -84,7 +84,7 @@ struct WhenMatcherTests {
                 basenameForContent: "tok.csv"))
     }
 
-    @Test func noGrammarContentOnlyPath() {
+    @Test(.globalConfigIsolated) func noGrammarContentOnlyPath() {
         let grammar = ProfileWhenMatcher.GrammarMatchContext(catalogLoaded: true, matchedFields: nil)
         let contentOnly = ProfileWhenMatcher.whenFromLegacy(detect: ["HDR"], filenameContainsAll: nil)
         let filenameGated = ProfileWhenMatcher.whenFromLegacy(detect: ["HDR"], filenameContainsAll: ["gate"])
@@ -92,7 +92,7 @@ struct WhenMatcherTests {
         #expect(!ProfileWhenMatcher.modeIsCandidate(filenameGated, grammar: grammar))
     }
 
-    @Test func grammarMatchZeroHitsIsError() throws {
+    @Test(.globalConfigIsolated) func grammarMatchZeroHitsIsError() throws {
         let yaml = """
         schema_version: 4
         id: test/grammar-miss
@@ -145,7 +145,7 @@ struct WhenMatcherTests {
         #expect(resolution.resolveCode == .grammarMatchedNoProfile)
     }
 
-    @Test func twoHitsAmbiguousProfileSortedCandidates() throws {
+    @Test(.globalConfigIsolated) func twoHitsAmbiguousProfileSortedCandidates() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "rawview-when-amb-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("data/instruments"), withIntermediateDirectories: true)
@@ -198,7 +198,7 @@ struct WhenMatcherTests {
         #expect(ids == ["synth", "synth-alt"])
     }
 
-    @Test func variantAndProfileWhenBothRequired() {
+    @Test(.globalConfigIsolated) func variantAndProfileWhenBothRequired() {
         var profileWhen = ProfileWhenMatcher.WhenClause(
             grammarTokens: ["mode": "cv"], contentContainsAny: ["HDR"])
         let variantWhen = ProfileWhenMatcher.WhenClause(grammarTokens: ["instrument": "autolab"])
@@ -223,7 +223,7 @@ struct WhenMatcherTests {
                 basenameForContent: "x.csv"))
     }
 
-    @Test func variantWhenWithoutContentCompiles() throws {
+    @Test(.globalConfigIsolated) func variantWhenWithoutContentCompiles() throws {
         let yaml = """
         schema_version: 4
         id: test/token-only
@@ -263,20 +263,20 @@ struct WhenMatcherTests {
         #expect(outcome.profile != nil)
     }
 
-    @Test func legacyFilenameContainsAllTranslation() {
+    @Test(.globalConfigIsolated) func legacyFilenameContainsAllTranslation() {
         let when = ProfileWhenMatcher.whenFromLegacy(
             detect: [], filenameContainsAll: ["synth-token", "dual-sweep"])
         #expect(when.filenameTokens == ["synth", "token", "dual", "sweep"])
     }
 
-    @Test func legacyHeaderSignaturesTranslation() {
+    @Test(.globalConfigIsolated) func legacyHeaderSignaturesTranslation() {
         let when = ProfileWhenMatcher.whenFromHeaderSignature(
             modeID: "cv", signature: "Potential applied (V)")
         #expect(when.contentContainsAny == ["Potential applied (V)"])
         #expect(when.grammarTokens["cv"] == "cv")
     }
 
-    @Test func legacyDetectSignaturesTranslation() {
+    @Test(.globalConfigIsolated) func legacyDetectSignaturesTranslation() {
         let when = ProfileWhenMatcher.whenFromLegacy(detect: ["detect-me"], filenameContainsAll: nil)
         #expect(
             ProfileWhenMatcher.matchesWhen(
@@ -284,14 +284,14 @@ struct WhenMatcherTests {
                 basenameForContent: "f.csv"))
     }
 
-    @Test func legacyApplicationModesTranslation() {
+    @Test(.globalConfigIsolated) func legacyApplicationModesTranslation() {
         let when = ProfileWhenMatcher.whenFromApplicationModeId(
             modeID: "dual-sweep", detectSignatures: ["dual Vsweep"], filenameContainsAll: nil)
         #expect(when.grammarTokens["mode"] == "dual-sweep")
         #expect(when.contentContainsAny.contains("dual Vsweep"))
     }
 
-    @Test func v2OptionalIdFallbackDirect() throws {
+    @Test(.globalConfigIsolated) func v2OptionalIdFallbackDirect() throws {
         let yaml = """
         schema_version: 2
         instrument:
@@ -329,7 +329,7 @@ struct WhenMatcherTests {
         #expect(outcome.profile != nil)
     }
 
-    @Test func noGrammarZeroHitsFallsBackGeneric() async throws {
+    @Test(.globalConfigIsolated) func noGrammarZeroHitsFallsBackGeneric() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "rawview-when-generic-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
@@ -387,7 +387,7 @@ struct WhenMatcherTests {
         #expect(measurement.instrument.id == "generic-table")
     }
 
-    @Test func v1ProfileResolvesEndToEndViaWhenMatcherFilenameTokens() async throws {
+    @Test(.globalConfigIsolated) func v1ProfileResolvesEndToEndViaWhenMatcherFilenameTokens() async throws {
         let profile = """
         schema_version: 1
         instrument:
@@ -444,7 +444,7 @@ struct WhenMatcherTests {
         #expect(measurement.applicationMode == "dual-sweep")
     }
 
-    @Test func ambiguousSameProfileTwoModesListsModeCandidates() throws {
+    @Test(.globalConfigIsolated) func ambiguousSameProfileTwoModesListsModeCandidates() throws {
         let yaml = """
         schema_version: 2
         instrument:

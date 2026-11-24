@@ -25,7 +25,7 @@ private func substrings(_ filename: String, _ spans: [GrammarTokenSpan]) -> [(St
     }
 }
 
-@Test func tokenSpansCoverEachCapturedValueInFilenameOrder() throws {
+@Test(.globalConfigIsolated) func tokenSpansCoverEachCapturedValueInFilenameOrder() throws {
     let filename = "100826-102100_autolab-usth.ca_[dev-1].txt"
     let spans = try #require(FilenameGrammarEngine.tokenSpans(filename: filename, grammar: spanGrammar))
 
@@ -37,11 +37,11 @@ private func substrings(_ filename: String, _ spans: [GrammarTokenSpan]) -> [(St
     #expect(pairs[3] == ("device-id", "dev-1"))
 }
 
-@Test func tokenSpansAreNilWhenTemplateDoesNotMatch() {
+@Test(.globalConfigIsolated) func tokenSpansAreNilWhenTemplateDoesNotMatch() {
     #expect(FilenameGrammarEngine.tokenSpans(filename: "readme.txt", grammar: spanGrammar) == nil)
 }
 
-@Test func missingOptionalTokenHasNoSpan() throws {
+@Test(.globalConfigIsolated) func missingOptionalTokenHasNoSpan() throws {
     let optionalGrammar = FilenameGrammar(
         id: "optional-grammar",
         name: "Optional Grammar",
@@ -55,7 +55,7 @@ private func substrings(_ filename: String, _ spans: [GrammarTokenSpan]) -> [(St
     #expect(spans.map(\.name) == ["instrument"])
 }
 
-@Test func filenamePiecesKeepLiteralTextBetweenTokens() throws {
+@Test(.globalConfigIsolated) func filenamePiecesKeepLiteralTextBetweenTokens() throws {
     let filename = "100826-102100_autolab-usth.ca_[dev-1].txt"
     let spans = try #require(FilenameGrammarEngine.tokenSpans(filename: filename, grammar: spanGrammar))
 
@@ -68,7 +68,7 @@ private func substrings(_ filename: String, _ spans: [GrammarTokenSpan]) -> [(St
     ])
 }
 
-@Test func filenamePiecesWithoutSpansReturnTheWholeName() {
+@Test(.globalConfigIsolated) func filenamePiecesWithoutSpansReturnTheWholeName() {
     let pieces = FilenameGrammarEngine.filenamePieces(filename: "notes.csv", spans: [])
     #expect(pieces == [FilenamePiece(text: "notes.csv", tokenName: nil)])
 }

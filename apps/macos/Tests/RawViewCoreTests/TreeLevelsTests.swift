@@ -5,46 +5,46 @@ import Testing
 // Issue #113: the Grammar editor converts between stored '+'-joined levels and the
 // editable [[String]] model. Pure logic only; no file is read.
 
-@Test func storedLevelsSplitCombinedTokensIntoEditableLevels() {
+@Test(.globalConfigIsolated) func storedLevelsSplitCombinedTokensIntoEditableLevels() {
     let levels = TreeLevels.levels(stored: ["instrument+application-mode", "date"])
     #expect(levels == [["instrument", "application-mode"], ["date"]])
 }
 
-@Test func storedFormRoundTripsThroughEditableLevels() {
+@Test(.globalConfigIsolated) func storedFormRoundTripsThroughEditableLevels() {
     let stored = ["instrument+application-mode", "device", "date"]
     #expect(TreeLevels.stored(levels: TreeLevels.levels(stored: stored)) == stored)
 }
 
-@Test func blankTokensAreDroppedWhenWritingStoredForm() {
+@Test(.globalConfigIsolated) func blankTokensAreDroppedWhenWritingStoredForm() {
     let stored = TreeLevels.stored(levels: [["instrument", " "], [], ["  "], ["date"]])
     #expect(stored == ["instrument", "date"])
 }
 
-@Test func levelWithEmptyTokenIsSkippedWhenReading() {
+@Test(.globalConfigIsolated) func levelWithEmptyTokenIsSkippedWhenReading() {
     #expect(TreeLevels.levels(stored: ["instrument+", "date"]) == [["date"]])
 }
 
-@Test func movingTokenIntoExistingLevelAppendsIt() {
+@Test(.globalConfigIsolated) func movingTokenIntoExistingLevelAppendsIt() {
     let moved = TreeLevels.move("date", in: [["instrument"], ["mode"], ["date"]], to: .level(0))
     #expect(moved == [["instrument", "date"], ["mode"]])
 }
 
-@Test func movingTokenToNewLevelInsertsItAtIndex() {
+@Test(.globalConfigIsolated) func movingTokenToNewLevelInsertsItAtIndex() {
     let moved = TreeLevels.move("mode", in: [["instrument", "mode"], ["date"]], to: .newLevel(at: 1))
     #expect(moved == [["instrument"], ["mode"], ["date"]])
 }
 
-@Test func movingLastTokenOutOfLevelDropsTheEmptyLevel() {
+@Test(.globalConfigIsolated) func movingLastTokenOutOfLevelDropsTheEmptyLevel() {
     let moved = TreeLevels.move("date", in: [["instrument"], ["date"]], to: .level(0))
     #expect(moved == [["instrument", "date"]])
 }
 
-@Test func removingTokenDropsLevelsItEmptied() {
+@Test(.globalConfigIsolated) func removingTokenDropsLevelsItEmptied() {
     let removed = TreeLevels.remove("mode", from: [["instrument", "mode"], ["mode"], ["date"]])
     #expect(removed == [["instrument"], ["date"]])
 }
 
-@Test func previewPathsJoinCombinedLevelFoldersWithDots() {
+@Test(.globalConfigIsolated) func previewPathsJoinCombinedLevelFoldersWithDots() {
     let grammar = FilenameGrammar(
         id: "preview-grammar",
         name: "Preview Grammar",
@@ -78,7 +78,7 @@ import Testing
     ])
 }
 
-@Test func savingKeepsCombinedLevelWhenBothTokensStayTicked() {
+@Test(.globalConfigIsolated) func savingKeepsCombinedLevelWhenBothTokensStayTicked() {
     let saved = TreeLevels.reconciled(
         stored: ["instrument+application-mode", "date"],
         ticked: ["instrument", "application-mode", "date"]
@@ -86,7 +86,7 @@ import Testing
     #expect(saved == ["instrument+application-mode", "date"])
 }
 
-@Test func savingDropsUntickedTokenFromItsCombinedLevel() {
+@Test(.globalConfigIsolated) func savingDropsUntickedTokenFromItsCombinedLevel() {
     let saved = TreeLevels.reconciled(
         stored: ["instrument+application-mode", "date"],
         ticked: ["instrument", "date"]
@@ -94,12 +94,12 @@ import Testing
     #expect(saved == ["instrument", "date"])
 }
 
-@Test func savingAppendsNewlyTickedTokenAsItsOwnLevel() {
+@Test(.globalConfigIsolated) func savingAppendsNewlyTickedTokenAsItsOwnLevel() {
     let saved = TreeLevels.reconciled(stored: ["date"], ticked: ["date", "mode"])
     #expect(saved == ["date", "mode"])
 }
 
-@Test func previewPathsStopAtLimit() {
+@Test(.globalConfigIsolated) func previewPathsStopAtLimit() {
     let sources = (1...4).map { index in
         RawSource(relativePath: "file\(index).csv", url: URL(fileURLWithPath: "/tmp/file\(index).csv"), byteSize: 1)
     }
