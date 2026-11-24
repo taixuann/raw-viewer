@@ -1,6 +1,8 @@
-//! Grammar extraction cache: behavior on repeated calls and a timing harness.
+//! Grammar extraction: repeated-call behavior, compiled-form parity, and a timing harness.
 
-use raw_viewer_core::grammar::{default_grammar, extract, load_file, FilenameGrammar};
+use raw_viewer_core::grammar::{
+    compile_grammar, default_grammar, extract, extract_compiled, load_file, FilenameGrammar,
+};
 use raw_viewer_core::yaml::parse;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -180,6 +182,20 @@ fn changed_field_format_gives_new_compiled_form() {
 }
 
 #[test]
+fn compiled_form_matches_extract_for_every_vectors_row() {
+    let grammar = standard_grammar();
+    let compiled = compile_grammar(&grammar);
+    for row in &load_vector_rows() {
+        assert_eq!(
+            extract_compiled(&row.filename, &compiled),
+            extract(&row.filename, &grammar),
+            "{}: compiled form must return the same facts as extract",
+            row.id
+        );
+    }
+}
+
+#[test]
 fn perf_extract_5000_synthetic_filenames() {
     if std::env::var("RAWVIEW_PERF").as_deref() != Ok("1") {
         return;
@@ -192,16 +208,29 @@ fn perf_extract_5000_synthetic_filenames() {
             )
         })
         .collect();
+    let compiled = compile_grammar(&grammar);
     let start = Instant::now();
     let matched = names
+        .iter()
+        .filter(|name| extract_compiled(name, &compiled).is_matched)
+        .count();
+    let elapsed = start.elapsed();
+    println!(
+        "PERF extract_compiled 5000 files: {:.1} ms, matched {}",
+        elapsed.as_secs_f64() * 1000.0,
+        matched
+    );
+    let start = Instant::now();
+    let uncached = names
         .iter()
         .filter(|name| extract(name, &grammar).is_matched)
         .count();
     let elapsed = start.elapsed();
     println!(
-        "PERF extract 5000 files: {:.1} ms, matched {}",
+        "PERF extract (compiles per call) 5000 files: {:.1} ms, matched {}",
         elapsed.as_secs_f64() * 1000.0,
-        matched
+        uncached
     );
     assert_eq!(matched, names.len(), "every synthetic filename must match");
+    assert_eq!(uncached, names.len(), "every synthetic filename must match");
 }

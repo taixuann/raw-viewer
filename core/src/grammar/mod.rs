@@ -5,33 +5,23 @@ use crate::yaml::parse;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
-
 mod compile;
 
 pub use compile::compile;
 
-type CompiledGrammar = Arc<(Regex, Vec<String>)>;
+/// A grammar compiled once. Build it with [`compile_grammar`] and reuse it for every filename.
+#[derive(Debug, Clone)]
+pub struct CompiledFilenameGrammar {
+    grammar: FilenameGrammar,
+    compiled: Result<(Regex, Vec<String>), String>,
+}
 
-/// Compiled grammars keyed by every input `compile` reads, so a changed template or field gets a new entry.
-fn compiled_grammar(grammar: &FilenameGrammar) -> Result<CompiledGrammar, String> {
-    static CACHE: OnceLock<Mutex<HashMap<String, CompiledGrammar>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = format!("{:?}\u{0}{:?}", grammar.template, grammar.fields);
-    if let Some(hit) = cache
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&key)
-    {
-        return Ok(Arc::clone(hit));
+/// Compile a grammar once, so callers do not recompile its regex for every filename.
+pub fn compile_grammar(grammar: &FilenameGrammar) -> CompiledFilenameGrammar {
+    CompiledFilenameGrammar {
+        grammar: grammar.clone(),
+        compiled: compile(&grammar.template, &grammar.fields),
     }
-    let (regex, names) = compile(&grammar.template, &grammar.fields)?;
-    let entry = Arc::new((regex, names));
-    cache
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(key, Arc::clone(&entry));
-    Ok(entry)
 }
 
 /// Primary grammar path (`.raw-viewer/grammar.yaml`).
@@ -431,8 +421,30 @@ fn canonical_role_key(role: &str) -> String {
     }
 }
 
+/// Extract facts for one filename, compiling the grammar on this call.
+/// Hot loops should call [`compile_grammar`] once and then [`extract_compiled`].
 pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFacts {
-    let Ok(compiled) = compiled_grammar(grammar) else {
+    extract_with(
+        filename,
+        grammar,
+        &compile(&grammar.template, &grammar.fields),
+    )
+}
+
+/// Extract facts for one filename using a grammar compiled by [`compile_grammar`].
+pub fn extract_compiled(
+    filename: &str,
+    compiled: &CompiledFilenameGrammar,
+) -> ExtractedGrammarFacts {
+    extract_with(filename, &compiled.grammar, &compiled.compiled)
+}
+
+fn extract_with(
+    filename: &str,
+    grammar: &FilenameGrammar,
+    compiled: &Result<(Regex, Vec<String>), String>,
+) -> ExtractedGrammarFacts {
+    let Ok((regex, field_names)) = compiled else {
         return ExtractedGrammarFacts {
             is_matched: false,
             extracted_fields: HashMap::new(),
@@ -446,7 +458,6 @@ pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFac
             unmatched_reason: Some("Invalid template syntax".into()),
         };
     };
-    let (regex, field_names) = (&compiled.0, &compiled.1);
     let target = compile::strip_data_extension(filename, &grammar.template);
     let Some(caps) = regex.captures(&target) else {
         return ExtractedGrammarFacts {

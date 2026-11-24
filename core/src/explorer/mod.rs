@@ -227,17 +227,21 @@ pub struct Explorer {
     pub project: ProjectContext,
     pub effective_grammar: EffectiveGrammar,
     pub catalog: ProfileCatalog,
+    /// Built once from `effective_grammar` in `open`; reused for every file.
+    compiled_grammar: crate::grammar::CompiledFilenameGrammar,
 }
 
 impl Explorer {
     pub fn open(project_root: &Path) -> Result<Self, ExplorerError> {
         let project = ProjectContext::open(project_root)?;
         let effective_grammar = resolve_effective_grammar(&project)?;
+        let compiled_grammar = crate::grammar::compile_grammar(&effective_grammar.grammar);
         let catalog = load_catalog(&project.root);
         Ok(Self {
             project,
             effective_grammar,
             catalog,
+            compiled_grammar,
         })
     }
 
@@ -470,7 +474,7 @@ impl Explorer {
         let prefix = read_file_prefix(&full_path, 64 * 1024)?;
 
         // Extract tokens using effective grammar
-        let facts = crate::grammar::extract(&basename, &self.effective_grammar.grammar);
+        let facts = crate::grammar::extract_compiled(&basename, &self.compiled_grammar);
         let grammar_matched = facts.is_matched;
         let mut tokens = BTreeMap::new();
         for (k, v) in &facts.extracted_fields {
