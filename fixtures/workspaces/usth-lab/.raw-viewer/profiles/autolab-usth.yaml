@@ -1,6 +1,6 @@
 schema_version: 4
 id: usth/autolab-usth
-revision: 1
+revision: 2
 instrument:
   id: autolab-usth
   name: Autolab USTH

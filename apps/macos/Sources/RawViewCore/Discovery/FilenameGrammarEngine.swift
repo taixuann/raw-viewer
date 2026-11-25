@@ -295,6 +295,110 @@ public enum SafeDeleteError: Error, LocalizedError, Equatable {
     }
 }
 
+/// Inputs that change the compiled regex: template plus each field's name, type, format and optional flag.
+struct GrammarCompileKey: Hashable {
+    struct Field: Hashable {
+        let name: String
+        let type: GrammarFieldType
+        let formatHint: String
+        let isOptional: Bool
+    }
+
+    let template: String
+    let fields: [Field]
+
+    init(template: String, fields: [GrammarField]) {
+        self.template = template
+        self.fields = fields.map {
+            Field(name: $0.name, type: $0.type, formatHint: $0.formatHint, isOptional: $0.isOptional)
+        }
+    }
+}
+
+/// Inputs that change extracted facts: the compile key plus role and bracket stripping.
+/// Role and stripBrackets do not change the regex, so they are not part of the compile key.
+struct GrammarFactsKey: Hashable {
+    struct Field: Hashable {
+        let name: String
+        let role: String?
+        let stripBrackets: Bool
+    }
+
+    let compile: GrammarCompileKey
+    let fields: [Field]
+
+    init(template: String, fields: [GrammarField]) {
+        self.compile = GrammarCompileKey(template: template, fields: fields)
+        self.fields = fields.map { Field(name: $0.name, role: $0.role, stripBrackets: $0.stripBrackets) }
+    }
+}
+
+/// Thread-safe cache of compiled grammar regexes and per-filename facts.
+/// The facts map holds one grammar at a time and drops when the grammar key changes.
+final class GrammarCache: @unchecked Sendable {
+    static let shared = GrammarCache()
+
+    private struct CompiledPattern {
+        let regex: NSRegularExpression
+        let fieldNames: [String]
+    }
+
+    private let lock = NSLock()
+    private let factsLimit: Int
+    private var patterns: [GrammarCompileKey: CompiledPattern] = [:]
+    private var activeFactsKey: GrammarFactsKey?
+    private var facts: [String: ExtractedGrammarFacts] = [:]
+    private var compilations = 0
+
+    /// Facts cache size at which the map clears. Keeps memory bounded for large trees.
+    init(factsLimit: Int = 50_000) {
+        self.factsLimit = factsLimit
+    }
+
+    var compilationCount: Int { locked { compilations } }
+    var cachedFactsCount: Int { locked { facts.count } }
+
+    func compiled(template: String, fields: [GrammarField]) throws -> (regex: NSRegularExpression, fieldNames: [String]) {
+        let key = GrammarCompileKey(template: template, fields: fields)
+        if let hit = locked({ patterns[key] }) {
+            return (hit.regex, hit.fieldNames)
+        }
+        // Compile outside the lock. Two tasks may compile the same key once each. That is harmless.
+        let made = try FilenameGrammarEngine.compile(template: template, fields: fields)
+        locked {
+            compilations += 1
+            patterns[key] = CompiledPattern(regex: made.regex, fieldNames: made.fieldNames)
+        }
+        return made
+    }
+
+    func cachedFacts(for filename: String, key: GrammarFactsKey) -> ExtractedGrammarFacts? {
+        locked {
+            guard activeFactsKey == key else { return nil }
+            return facts[filename]
+        }
+    }
+
+    func storeFacts(_ value: ExtractedGrammarFacts, for filename: String, key: GrammarFactsKey) {
+        locked {
+            if activeFactsKey != key {
+                facts.removeAll(keepingCapacity: true)
+                activeFactsKey = key
+            }
+            if facts.count >= factsLimit {
+                facts.removeAll(keepingCapacity: true)
+            }
+            facts[filename] = value
+        }
+    }
+
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
 public enum FilenameGrammarEngine {
     /// Canonical project-owned grammar catalog (schema v1).
     public static let relativePath = ".raw-viewer/grammar.yaml"
@@ -590,7 +694,21 @@ public enum FilenameGrammarEngine {
 
     /// Extracts semantic facts from a filename according to the given grammar.
     public static func extract(from filename: String, grammar: FilenameGrammar) -> ExtractedGrammarFacts {
-        guard let (regex, fieldNames) = try? compile(template: grammar.template, fields: grammar.fields) else {
+        extract(from: filename, grammar: grammar, cache: .shared)
+    }
+
+    static func extract(from filename: String, grammar: FilenameGrammar, cache: GrammarCache) -> ExtractedGrammarFacts {
+        let factsKey = GrammarFactsKey(template: grammar.template, fields: grammar.fields)
+        if let hit = cache.cachedFacts(for: filename, key: factsKey) {
+            return hit
+        }
+        let facts = extractUncached(from: filename, grammar: grammar, cache: cache)
+        cache.storeFacts(facts, for: filename, key: factsKey)
+        return facts
+    }
+
+    private static func extractUncached(from filename: String, grammar: FilenameGrammar, cache: GrammarCache) -> ExtractedGrammarFacts {
+        guard let (regex, fieldNames) = try? cache.compiled(template: grammar.template, fields: grammar.fields) else {
             return ExtractedGrammarFacts(isMatched: false, unmatchedReason: "Invalid template syntax")
         }
 
@@ -629,7 +747,7 @@ public enum FilenameGrammarEngine {
 
                 if foundCount == count {
                     let subTemplate = String(trimmed[..<matchedClose])
-                    if let (subRegex, subFieldNames) = try? compile(template: subTemplate, fields: grammar.fields) {
+                    if let (subRegex, subFieldNames) = try? cache.compiled(template: subTemplate, fields: grammar.fields) {
                         let subPattern = subRegex.pattern.hasSuffix("$") ? String(subRegex.pattern.dropLast()) : subRegex.pattern
                         if let prefixRegex = try? NSRegularExpression(pattern: subPattern, options: []) {
                             if let subMatch = prefixRegex.firstMatch(in: target, options: [], range: range) {

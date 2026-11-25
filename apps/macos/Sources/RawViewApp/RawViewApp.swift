@@ -323,10 +323,15 @@ final class RawViewModel: ObservableObject {
         saveTemporaryFilter()
     }
 
+    /// Writes 300 ms after the last change. The key and payload are captured now, so a
+    /// project switch during the delay cannot file this filter under another project.
     func saveTemporaryFilter() {
-        guard let project else { return }
+        guard let project, let data = try? JSONEncoder().encode(explorerFilter) else { return }
         let key = "rawView.temporaryFilter.\(project.root.path)"
-        if let data = try? JSONEncoder().encode(explorerFilter) {
+        filterSaveTask?.cancel()
+        filterSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
             UserDefaults.standard.set(data, forKey: key)
         }
     }
@@ -368,15 +373,30 @@ final class RawViewModel: ObservableObject {
         }
     }
 
+    /// Builds the facts index and the tree off the main thread. The previous tree stays
+    /// visible until the newest build is accepted; an older build that finishes later is dropped.
     func updateSourceTree() {
         guard let context = project, let inv = inventory else { return }
-        if treeGroupingMode == "grammar", let grammar = explorerCatalog?.activeGrammar ?? explorerCatalog?.grammars.first {
-            let granRaw = UserDefaults.standard.string(forKey: "treeDateGranularity") ?? globalPreferences.defaultTreeDateGranularity
-            let granularity = DateGranularity(rawValue: granRaw) ?? .day
-            sourceTree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: treeGroupingFields, dateGranularity: granularity)
-        } else {
-            // Physical directory tree is the universal hierarchy whenever grammar is missing or mode is folder
-            sourceTree = SourceTree(inventory: inv, project: context)
+        let token = treeGate.begin()
+        let grammar = explorerCatalog?.activeGrammar ?? explorerCatalog?.grammars.first
+        let mode = treeGroupingMode
+        let fields = treeGroupingFields
+        let granRaw = UserDefaults.standard.string(forKey: "treeDateGranularity") ?? globalPreferences.defaultTreeDateGranularity
+        let granularity = DateGranularity(rawValue: granRaw) ?? .day
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let index = FacetIndex.build(sources: inv.sources, grammar: grammar)
+            let tree: SourceTree
+            if mode == "grammar", let grammar {
+                tree = SourceTree(sources: inv.sources, grammar: grammar, groupingFields: fields, dateGranularity: granularity, index: index)
+            } else {
+                // Physical directory tree is the universal hierarchy whenever grammar is missing or mode is folder
+                tree = SourceTree(inventory: inv, project: context)
+            }
+            await MainActor.run {
+                guard let self, self.treeGate.accepts(token) else { return }
+                self.facetIndex = index
+                self.sourceTree = tree
+            }
         }
     }
 
@@ -872,6 +892,9 @@ final class RawViewModel: ObservableObject {
     @Published var inventory: SourceInventory?
     @Published var inventoryIssues: [InventoryIssue] = []
     @Published var sourceTree: SourceTree?
+    @Published var facetIndex: FacetIndex = .empty
+    private var treeGate = FacetIndexGate()
+    private var filterSaveTask: Task<Void, Never>?
     @Published var expandedDirectoryIDs: Set<String> = []
     @Published var activeNavigationMode: String = "tree"
     @Published var sessionState = ProjectSessionState()
@@ -1473,6 +1496,8 @@ final class RawViewModel: ObservableObject {
         inventory = nil
         inventoryIssues = []
         sourceTree = nil
+        facetIndex = .empty
+        _ = treeGate.begin()
         expandedDirectoryIDs.removeAll()
         inspectionCancelled = false
         axisOverrides = [:]
@@ -1528,6 +1553,8 @@ final class RawViewModel: ObservableObject {
                 self.inventory = nil
                 self.inventoryIssues = []
                 self.sourceTree = nil
+                self.facetIndex = .empty
+                _ = self.treeGate.begin()
                 self.error = "Could not inventory \(context.dataRootRelativePath): \(error.localizedDescription)"
                 return
             }
@@ -2007,6 +2034,7 @@ struct RawViewShell: View {
                     focusedSourceID: $model.focusedSourceID,
                     selectedSourceIDs: $model.selectedSourceIDs,
                     sourceTree: model.sourceTree,
+                    facetIndex: model.facetIndex,
                     inventoryIssues: model.inventoryIssues,
                     dataRoot: project.dataRootRelativePath,
                     projectRoot: project.root,

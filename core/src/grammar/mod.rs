@@ -2,12 +2,29 @@
 
 use crate::profile::sha256_hex;
 use crate::yaml::parse;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 mod compile;
 
 pub use compile::compile;
+
+/// A grammar compiled once. Build it with [`compile_grammar`] and reuse it for every filename.
+#[derive(Debug, Clone)]
+pub struct CompiledFilenameGrammar {
+    grammar: FilenameGrammar,
+    compiled: Result<(Regex, Vec<String>), String>,
+}
+
+/// Compile a grammar once, so callers do not recompile its regex for every filename.
+pub fn compile_grammar(grammar: &FilenameGrammar) -> CompiledFilenameGrammar {
+    CompiledFilenameGrammar {
+        grammar: grammar.clone(),
+        compiled: compile(&grammar.template, &grammar.fields),
+    }
+}
 
 /// Primary grammar path (`.raw-viewer/grammar.yaml`).
 pub const RELATIVE_PATH: &str = ".raw-viewer/grammar.yaml";
@@ -406,8 +423,65 @@ fn canonical_role_key(role: &str) -> String {
     }
 }
 
+/// Most compiled grammars kept by the legacy [`extract`] cache. Past this, the oldest entry is dropped.
+const LEGACY_CACHE_CAPACITY: usize = 64;
+
+type CompiledRegex = Result<(Regex, Vec<String>), String>;
+
+struct LegacyCacheEntry {
+    template: String,
+    fields: Vec<GrammarField>,
+    compiled: Arc<CompiledRegex>,
+}
+
+/// Interim cache behind [`extract`] only, so legacy callers do not recompile per file.
+/// The key is exact: the template and every field, which are the only inputs `compile` reads.
+/// Follow-up, deferred: compile once on the catalog itself (a public struct change).
+static LEGACY_CACHE: Mutex<Vec<LegacyCacheEntry>> = Mutex::new(Vec::new());
+
+fn legacy_compiled(grammar: &FilenameGrammar) -> Arc<CompiledRegex> {
+    {
+        let cache = LEGACY_CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(hit) = cache
+            .iter()
+            .find(|e| e.template == grammar.template && e.fields == grammar.fields)
+        {
+            return Arc::clone(&hit.compiled);
+        }
+    }
+    let compiled = Arc::new(compile(&grammar.template, &grammar.fields));
+    let mut cache = LEGACY_CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    if cache.len() >= LEGACY_CACHE_CAPACITY {
+        cache.remove(0);
+    }
+    cache.push(LegacyCacheEntry {
+        template: grammar.template.clone(),
+        fields: grammar.fields.clone(),
+        compiled: Arc::clone(&compiled),
+    });
+    compiled
+}
+
+/// Extract facts for one filename, using the interim legacy cache.
+/// Hot loops should call [`compile_grammar`] once and then [`extract_compiled`].
 pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFacts {
-    let Ok((regex, field_names)) = compile(&grammar.template, &grammar.fields) else {
+    extract_with(filename, grammar, &legacy_compiled(grammar))
+}
+
+/// Extract facts for one filename using a grammar compiled by [`compile_grammar`].
+pub fn extract_compiled(
+    filename: &str,
+    compiled: &CompiledFilenameGrammar,
+) -> ExtractedGrammarFacts {
+    extract_with(filename, &compiled.grammar, &compiled.compiled)
+}
+
+fn extract_with(
+    filename: &str,
+    grammar: &FilenameGrammar,
+    compiled: &Result<(Regex, Vec<String>), String>,
+) -> ExtractedGrammarFacts {
+    let Ok((regex, field_names)) = compiled else {
         return ExtractedGrammarFacts {
             is_matched: false,
             extracted_fields: HashMap::new(),
@@ -457,7 +531,7 @@ pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFac
     let mut category = None;
     let mut batch = None;
     let mut remarks = Vec::new();
-    for name in &field_names {
+    for name in field_names {
         let Some(val) = extracted.get(name) else {
             continue;
         };
@@ -491,5 +565,27 @@ pub fn extract(filename: &str, grammar: &FilenameGrammar) -> ExtractedGrammarFac
         batch,
         remarks,
         unmatched_reason: None,
+    }
+}
+
+#[cfg(test)]
+mod legacy_cache_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_cache_never_exceeds_capacity() {
+        let grammar = default_grammar();
+        for i in 0..(LEGACY_CACHE_CAPACITY + 10) {
+            let variant = FilenameGrammar {
+                template: format!("{}_v{i}", grammar.template),
+                ..grammar.clone()
+            };
+            let _ = extract("anything.txt", &variant);
+        }
+        let len = LEGACY_CACHE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len();
+        assert!(len <= LEGACY_CACHE_CAPACITY, "cache holds {len} entries");
     }
 }

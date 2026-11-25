@@ -10,3 +10,4 @@ fixtures/**/*.yaml text eol=lf
 fixtures/**/*.yml text eol=lf
 fixtures/**/.raw-viewer/** text eol=lf
 core/**/*.rs text eol=lf
+assets/profiles/** text eol=lf

@@ -1,0 +1,26 @@
+{
+  "package_id": "usth-lab",
+  "version": "0.1.1",
+  "profiles": [
+    {
+      "id": "usth/keithley-2400",
+      "revision": 1,
+      "sha256": "2c7e8bf2cb748c57c0aafc2c8dad52eab82c670da59c350f40e41a8b52e4939e"
+    },
+    {
+      "id": "usth/autolab-usth",
+      "revision": 2,
+      "sha256": "586f895ae4c7c9ee8625ec42a05bf41fed4b974adde54749eb69bb78cc61da73"
+    },
+    {
+      "id": "usth/horiba-labram",
+      "revision": 1,
+      "sha256": "a24e718f27810d5d8b1e39662fe5c783c3ebeeb4672329ab4a5735fc833183ff"
+    },
+    {
+      "id": "usth/iop-hanoi",
+      "revision": 1,
+      "sha256": "0fbe46bb57b515c98c69767329ffa77bc7e950c9fd6aad154358561323c5bc87"
+    }
+  ]
+}

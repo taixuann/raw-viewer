@@ -2,15 +2,18 @@ use raw_viewer_core::config::load_project_config_with_fallback;
 use raw_viewer_core::grammar::grammar_context;
 use raw_viewer_core::profile::load_catalog;
 use raw_viewer_core::reader::load_measurement;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-fn temp_project() -> PathBuf {
+fn unique_temp_dir(prefix: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "rawview-builtin-assets-{}-{}-{}",
+        "{prefix}-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -23,12 +26,48 @@ fn temp_project() -> PathBuf {
     dir
 }
 
+fn temp_project() -> PathBuf {
+    unique_temp_dir("rawview-builtin-assets")
+}
+
+struct XdgConfigGuard {
+    _lock: MutexGuard<'static, ()>,
+    xdg_dir: PathBuf,
+    prev_xdg: Option<OsString>,
+}
+
+impl XdgConfigGuard {
+    fn new() -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let xdg_dir = unique_temp_dir("rawview-builtin-assets-xdg");
+        fs::create_dir_all(xdg_dir.join("raw-viewer")).unwrap();
+        let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_dir);
+        Self {
+            _lock: lock,
+            xdg_dir,
+            prev_xdg,
+        }
+    }
+}
+
+impl Drop for XdgConfigGuard {
+    fn drop(&mut self) {
+        match &self.prev_xdg {
+            Some(val) => std::env::set_var("XDG_CONFIG_HOME", val),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        let _ = fs::remove_dir_all(&self.xdg_dir);
+    }
+}
+
 const STANDARD_KEITHLEY_SOURCE: &str = include_str!(
     "../../fixtures/workspaces/usth-lab/data/raw/2026-10-07/071026-143703_keithley-2400.dual-sweep_[cu-ec-pda.q14-ito.2_r2-c6]_iv.dual-sweep_r.[reproducible]_010.txt"
 );
 
 #[test]
 fn fresh_project_loads_builtins_and_resolves_standard_and_non_standard_files() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     // No .raw-viewer/ created; completely fresh project
     let grammar_ctx = grammar_context(&tmp);
@@ -92,6 +131,7 @@ fn fresh_project_loads_builtins_and_resolves_standard_and_non_standard_files() {
 
 #[test]
 fn disabling_profile_in_config_stops_it_matching() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     fs::create_dir_all(tmp.join(".raw-viewer")).unwrap();
     fs::write(
@@ -123,6 +163,7 @@ fn disabling_profile_in_config_stops_it_matching() {
 
 #[test]
 fn overriding_one_builtin_keeps_the_rest() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     fs::create_dir_all(tmp.join(".raw-viewer/profiles")).unwrap();
     let custom_keithley = r#"schema_version: 4
@@ -192,6 +233,7 @@ variants:
 
 #[test]
 fn older_revision_warning_when_project_revision_less_than_builtin() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     fs::create_dir_all(tmp.join(".raw-viewer/profiles")).unwrap();
     let old_keithley = r#"schema_version: 4
@@ -248,6 +290,7 @@ variants:
 
 #[test]
 fn duplicate_in_enabled_and_disabled_errors() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     fs::create_dir_all(tmp.join(".raw-viewer")).unwrap();
     fs::write(
@@ -270,6 +313,7 @@ fn duplicate_in_enabled_and_disabled_errors() {
 
 #[test]
 fn unknown_keys_in_profiles_config_errors() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     fs::create_dir_all(tmp.join(".raw-viewer")).unwrap();
     fs::write(
@@ -287,6 +331,7 @@ fn unknown_keys_in_profiles_config_errors() {
 
 #[test]
 fn two_matching_profiles_yields_ambiguous_profile() {
+    let _xdg = XdgConfigGuard::new();
     let tmp = temp_project();
     fs::create_dir_all(tmp.join(".raw-viewer/profiles")).unwrap();
     // Add a second profile that also matches "LabVIEW Measurement"

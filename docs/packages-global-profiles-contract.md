@@ -37,8 +37,9 @@ Every command below is labeled **ACTUAL** (exists at base SHA) or **PROPOSED** (
 | Doctor (no project) | `raw-viewer --json doctor` | **ACTUAL** — falls back to embedded builtin profile IDs |
 | Install package from local path | `raw-viewer --json packages install --from <dir-or-archive>` | **PROPOSED** |
 | List installed packages | `raw-viewer --json packages list` | **PROPOSED** |
-| Show package / upgrade preview | `raw-viewer --json packages show <id>` / `packages upgrade --dry-run <id>` | **PROPOSED** |
-| Apply upgrade with per-profile replace consent | `raw-viewer --json packages upgrade <id> [--replace <profile-id>...]` | **PROPOSED** |
+| Show package | `raw-viewer --json packages show <id>` | **PROPOSED** — no `show` subcommand yet; `packages --help` lists only `list`, `install`, `remove`, `upgrade` |
+| Upgrade preview | `raw-viewer --json packages upgrade --dry-run <id>` | **ACTUAL** — prints `data.plan` and `would_write`, writes nothing (`apps/cli/tests/packages_upgrade.rs`) |
+| Apply upgrade with per-profile replace consent | `raw-viewer --json packages upgrade <id> [--replace <profile-id>...]` | **ACTUAL** — writes stale profiles; `--replace` consent is in `upgrade_in` (`apps/cli/src/commands/packages.rs`), not yet covered by a CLI test |
 | Remove package | `raw-viewer --json packages remove <id>` | **PROPOSED** |
 | Edit global user profile | `raw-viewer --json profiles edit-global <id>` (or export/import to global user tier) | **PROPOSED** |
 
