@@ -3,20 +3,20 @@ import Testing
 @testable import RawViewCore
 
 struct KeithleyMetadataTests {
-    @Test func sweepPathDerivationFindsTurningPoints() {
+    @Test(.globalConfigIsolated) func sweepPathDerivationFindsTurningPoints() {
         // Linear rise, fall to negative, return to zero
         let sweep: [Double] = [0.0, 0.5, 1.0, 1.5, 1.0, 0.5, 0.0, -0.5, -1.0, -1.5, -1.0, -0.5, 0.0]
         let path = KeithleyMetadataParser.deriveSweepPath(from: sweep)
         #expect(path == "0 → +1.5 → -1.5 → 0 V")
     }
 
-    @Test func sweepPathHandlesMultiPeak() {
+    @Test(.globalConfigIsolated) func sweepPathHandlesMultiPeak() {
         let sweep: [Double] = [0.0, 1.0, 2.0, 0.0, 3.0, 0.0]
         let path = KeithleyMetadataParser.deriveSweepPath(from: sweep)
         #expect(path == "0 → +2 → 0 → +3 → 0 V")
     }
 
-    @Test func voltageStepUniformAndVariable() {
+    @Test(.globalConfigIsolated) func voltageStepUniformAndVariable() {
         let uniform: [Double] = [0.0, 0.05, 0.10, 0.15, 0.20]
         #expect(KeithleyMetadataParser.deriveVoltageStep(from: uniform) == "0.05 V")
 
@@ -25,14 +25,14 @@ struct KeithleyMetadataTests {
         #expect(varStep.hasPrefix("Variable"))
     }
 
-    @Test func complianceFormattingWithDeclaredUnits() {
+    @Test(.globalConfigIsolated) func complianceFormattingWithDeclaredUnits() {
         #expect(KeithleyMetadataParser.formatCompliance(0.000100) == "100 µA")
         #expect(KeithleyMetadataParser.formatCompliance(0.001) == "1 mA")
         #expect(KeithleyMetadataParser.formatCompliance(1.0) == "1.00 A")
         #expect(KeithleyMetadataParser.formatCompliance(0.00000005) == "50.0 nA")
     }
 
-    @Test func parsesKeithleyCommentLineCorrectly() {
+    @Test(.globalConfigIsolated) func parsesKeithleyCommentLineCorrectly() {
         let line = "Voltage list: 0.00;0.05;0.10;1.50;1.45;0.00;-1.50;-1.45;0.00 | Compliance level: 0.000100"
         let meta = KeithleyMetadataParser.parseLine(line)
         #expect(meta.isValid == true)
@@ -41,7 +41,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == nil)
     }
 
-    @Test func malformedCommentWarnsAndMarksInvalid() {
+    @Test(.globalConfigIsolated) func malformedCommentWarnsAndMarksInvalid() {
         let line = "Voltage list: 0.00;abc;1.00 | Compliance level: xyz"
         let meta = KeithleyMetadataParser.parseLine(line)
         #expect(meta.isValid == false)
@@ -49,7 +49,7 @@ struct KeithleyMetadataTests {
         #expect(meta.sweepPath == "Invalid path")
     }
 
-    @Test func usthKeithleyFixtureExtractsCorrectSweepMetadata() async throws {
+    @Test(.globalConfigIsolated) func usthKeithleyFixtureExtractsCorrectSweepMetadata() async throws {
         // Resolve from this source file. A relative path ran from apps/macos and skipped the check silently.
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -64,7 +64,7 @@ struct KeithleyMetadataTests {
         #expect(meta.rawVoltageCount == 121)
     }
 
-    @Test func longSweepFiveThousandPointsKeepsPathStepCountAndCompliance() throws {
+    @Test(.globalConfigIsolated) func longSweepFiveThousandPointsKeepsPathStepCountAndCompliance() throws {
         let comment = KeithleySweepFixtures.comment(tokens: KeithleySweepFixtures.longVoltageTokens())
         let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: comment))
         defer { try? FileManager.default.removeItem(at: url) }
@@ -78,7 +78,7 @@ struct KeithleyMetadataTests {
         #expect(meta.compliance == "100 µA")
     }
 
-    @Test func commentLongerThanSafetyLimitWarnsInsteadOfWrongValue() throws {
+    @Test(.globalConfigIsolated) func commentLongerThanSafetyLimitWarnsInsteadOfWrongValue() throws {
         // About 4.5 MB on one line, above the 4 MB per-line limit.
         let oversized = "Voltage list: " + String(repeating: "0.00;", count: 900_000) + "0.00 | Compliance level: 0.000100"
         let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: oversized))
@@ -93,7 +93,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == "Keithley comment line exceeds 4 MB; sweep not read")
     }
 
-    @Test func cacheReadsSourceOnceAcrossRepeatedLookups() async throws {
+    @Test(.globalConfigIsolated) func cacheReadsSourceOnceAcrossRepeatedLookups() async throws {
         let comment = KeithleySweepFixtures.comment(tokens: KeithleySweepFixtures.sampleVoltageTokens())
         let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: comment))
         defer { try? FileManager.default.removeItem(at: url) }
@@ -118,7 +118,7 @@ struct KeithleyMetadataTests {
         }
     }
 
-    @Test func changedModificationTimeInvalidatesCachedSweep() async throws {
+    @Test(.globalConfigIsolated) func changedModificationTimeInvalidatesCachedSweep() async throws {
         let tokens = KeithleySweepFixtures.sampleVoltageTokens()
         let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: KeithleySweepFixtures.comment(tokens: tokens)))
         defer { try? FileManager.default.removeItem(at: url) }
@@ -141,7 +141,7 @@ struct KeithleyMetadataTests {
         #expect(after.rawVoltageCount == 301)
     }
 
-    @Test func sampleFileGivesPathStepAndCompliance() throws {
+    @Test(.globalConfigIsolated) func sampleFileGivesPathStepAndCompliance() throws {
         let comment = KeithleySweepFixtures.comment(tokens: KeithleySweepFixtures.sampleVoltageTokens())
         let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: comment))
         defer { try? FileManager.default.removeItem(at: url) }
@@ -155,7 +155,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == nil)
     }
 
-    @Test func nonUniformVoltageListShowsVariableStep() {
+    @Test(.globalConfigIsolated) func nonUniformVoltageListShowsVariableStep() {
         let meta = KeithleyMetadataParser.parseLine("Voltage list: 0.00;0.02;0.06;0.08 | Compliance level: 0.000100")
         #expect(meta.sweepPath == "0 → +0.08 V")
         #expect(meta.voltageStep == "Variable (0.02 – 0.04 V)")
@@ -165,7 +165,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == nil)
     }
 
-    @Test func emptyCommentCellShowsNullForEveryField() throws {
+    @Test(.globalConfigIsolated) func emptyCommentCellShowsNullForEveryField() throws {
         let url = try KeithleySweepFixtures.writeTemp(KeithleySweepFixtures.lvmText(comment: ""))
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -178,7 +178,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == nil)
     }
 
-    @Test func complianceOnlyShowsNullVoltageAndStepWithCompliance() {
+    @Test(.globalConfigIsolated) func complianceOnlyShowsNullVoltageAndStepWithCompliance() {
         let meta = KeithleyMetadataParser.parseLine("Compliance level: 0.000100")
         #expect(meta.sweepPath == nil)
         #expect(meta.voltageStep == nil)
@@ -188,7 +188,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == nil)
     }
 
-    @Test func malformedVoltageTokenKeepsWarning() {
+    @Test(.globalConfigIsolated) func malformedVoltageTokenKeepsWarning() {
         let meta = KeithleyMetadataParser.parseLine("Voltage list: 0.00;abc;1.00 | Compliance level: 0.000100")
         #expect(meta.sweepPath == "Invalid path")
         #expect(meta.voltageStep == "Invalid step")
@@ -198,7 +198,7 @@ struct KeithleyMetadataTests {
         #expect(meta.warning == "Malformed Voltage list tokens in comment")
     }
 
-    @Test func fileMatchedOtherProfileNeverShowsKeithleyBlock() {
+    @Test(.globalConfigIsolated) func fileMatchedOtherProfileNeverShowsKeithleyBlock() {
         // The gate reads the matched profile id only. A comment with "Voltage list:" does not open it.
         let text = "Voltage list: 0.00;0.02;0.00 | Compliance level: 0.000100"
         #expect(KeithleyMetadataParser.parseLine(text).sweepPath == "0 → +0.02 → 0 V")
@@ -207,7 +207,7 @@ struct KeithleyMetadataTests {
         #expect(KeithleyMetadataParser.isKeithley2400(profileID: "usth/keithley-2400") == true)
     }
 
-    @Test func multiSelectCompareSharesPathAndStepAndFlagsCompliance() {
+    @Test(.globalConfigIsolated) func multiSelectCompareSharesPathAndStepAndFlagsCompliance() {
         let tokens = KeithleySweepFixtures.sampleVoltageTokens()
         let first = KeithleyMetadataParser.parseLine(KeithleySweepFixtures.comment(tokens: tokens, compliance: "0.000100"))
         let second = KeithleyMetadataParser.parseLine(KeithleySweepFixtures.comment(tokens: tokens, compliance: "0.001"))

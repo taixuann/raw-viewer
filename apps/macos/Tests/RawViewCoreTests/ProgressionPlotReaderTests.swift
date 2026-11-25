@@ -14,20 +14,20 @@ struct ProgressionPlotReaderTests {
             progression: ColumnProgressionV3(type: .time, behavior: behavior))
     }
 
-    @Test func continuousBehaviorHonorsExplicitMetadata() {
+    @Test(.globalConfigIsolated) func continuousBehaviorHonorsExplicitMetadata() {
         let col = timeColumn(behavior: .continuous)
         #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 3) == true)
         let discrete = timeColumn(behavior: .discrete)
         #expect(ProgressionPlotReader.isContinuousBehavior(column: discrete, distinctDiscreteKeys: 200) == false)
     }
 
-    @Test func discreteKeyTreatsEmptyCellsAsCycleOne() {
+    @Test(.globalConfigIsolated) func discreteKeyTreatsEmptyCellsAsCycleOne() {
         #expect(ProgressionPlotReader.discreteKey(from: "") == "1")
         #expect(ProgressionPlotReader.discreteKey(from: nil as Double?) == "1")
         #expect(ProgressionPlotReader.discreteKey(from: Double.nan) == "1")
     }
 
-    @Test func emptyProgressionCellSegmentsAsCycleOne() {
+    @Test(.globalConfigIsolated) func emptyProgressionCellSegmentsAsCycleOne() {
         let col = ProfileColumnV3(
             id: "step",
             source: ColumnSourceV3(header: "Step"),
@@ -43,7 +43,7 @@ struct ProgressionPlotReaderTests {
         #expect(segments[0].points.count == 2)
     }
 
-    @Test func inferredContinuousFromTimeColumnName() {
+    @Test(.globalConfigIsolated) func inferredContinuousFromTimeColumnName() {
         let col = ProfileColumnV3(
             id: "scan_time",
             source: ColumnSourceV3(header: "t"),
@@ -54,7 +54,7 @@ struct ProgressionPlotReaderTests {
         #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 3) == true)
     }
 
-    @Test func inferredContinuousFromProgressionTypeTime() {
+    @Test(.globalConfigIsolated) func inferredContinuousFromProgressionTypeTime() {
         let col = ProfileColumnV3(
             id: "elapsed",
             source: ColumnSourceV3(header: "Elapsed"),
@@ -65,7 +65,7 @@ struct ProgressionPlotReaderTests {
         #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 2) == true)
     }
 
-    @Test func inferredContinuousFromHighCardinality() {
+    @Test(.globalConfigIsolated) func inferredContinuousFromHighCardinality() {
         let col = ProfileColumnV3(
             id: "step",
             source: ColumnSourceV3(header: "Step"),
@@ -77,7 +77,7 @@ struct ProgressionPlotReaderTests {
         #expect(ProgressionPlotReader.isContinuousBehavior(column: col, distinctDiscreteKeys: 50) == false)
     }
 
-    @Test func inferredContinuousSegmentsUseTimeWindow() {
+    @Test(.globalConfigIsolated) func inferredContinuousSegmentsUseTimeWindow() {
         let col = ProfileColumnV3(
             id: "step",
             source: ColumnSourceV3(header: "Step"),
@@ -99,7 +99,7 @@ struct ProgressionPlotReaderTests {
         #expect(segments[0].points.count == 60)
     }
 
-    @Test func discreteSegmentsFilterSelectedCycles() {
+    @Test(.globalConfigIsolated) func discreteSegmentsFilterSelectedCycles() {
         let col = ProfileColumnV3(
             id: "step",
             source: ColumnSourceV3(header: "Step"),
@@ -121,7 +121,7 @@ struct ProgressionPlotReaderTests {
         #expect(filtered[0].points.count == 2)
     }
 
-    @Test func continuousWindowFiltersByProgressionValues() {
+    @Test(.globalConfigIsolated) func continuousWindowFiltersByProgressionValues() {
         let col = timeColumn(behavior: .continuous)
         let x: [Double?] = [0, 1, 2, 3]
         let y: [Double?] = [1, 2, 3, 4]
@@ -133,13 +133,13 @@ struct ProgressionPlotReaderTests {
         #expect(window[0].points.map(\.0) == [1, 2])
     }
 
-    @Test func extractDiscreteKeysPreservesEncounterOrderAndUniqueness() {
+    @Test(.globalConfigIsolated) func extractDiscreteKeysPreservesEncounterOrderAndUniqueness() {
         let prog: [Double?] = [1, 1, 2, 3, 2, 4, nil, Double.nan]
         let keys = ProgressionPlotReader.extractDiscreteKeys(from: prog)
         #expect(keys == ["1", "2", "3", "4"])
     }
 
-    @Test func segmentsWithExplicitContinuousFlag() {
+    @Test(.globalConfigIsolated) func segmentsWithExplicitContinuousFlag() {
         let x: [Double?] = [0, 1, 2, 3]
         let y: [Double?] = [10, 11, 20, 21]
         let prog: [Double?] = [1, 1, 2, 2]

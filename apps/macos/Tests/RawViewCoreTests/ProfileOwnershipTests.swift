@@ -6,7 +6,7 @@ import Testing
 /// when it exists. These tests observe only the reader seam: selected project
 /// folder -> YAML validation -> inspection/load results.
 struct ProfileOwnershipTests {
-    @Test func shippedViewerProfilesMatchDeclaredSyntheticHeaders() async throws {
+    @Test(.globalConfigIsolated) func shippedViewerProfilesMatchDeclaredSyntheticHeaders() async throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -43,7 +43,7 @@ struct ProfileOwnershipTests {
         #expect(report.results.first { $0.source.relativePath == "data/raw/run4_horiba-labram.raman-semicolon.txt" }?.inspection?.instrumentID == "horiba-labram")
     }
 
-    @Test func companionProfilesOverrideStudyOwnedParentProfiles() async throws {
+    @Test(.globalConfigIsolated) func companionProfilesOverrideStudyOwnedParentProfiles() async throws {
         let root = try makeOwnershipProject(
             parentProfiles: ["parent.yaml": csvProfile(instrumentID: "parent-instrument")],
             companion: .files(["companion.yaml": csvProfile(instrumentID: "companion-instrument")]),
@@ -59,7 +59,7 @@ struct ProfileOwnershipTests {
         #expect(measurement.channel(named: "voltage")?.values == [0, 0.1])
     }
 
-    @Test func missingCompanionDirectoryKeepsTopLevelProfiles() async throws {
+    @Test(.globalConfigIsolated) func missingCompanionDirectoryKeepsTopLevelProfiles() async throws {
         let root = try makeOwnershipProject(
             parentProfiles: ["parent.yaml": csvProfile(instrumentID: "parent-instrument")],
             companion: .absent,
@@ -72,7 +72,7 @@ struct ProfileOwnershipTests {
         #expect(report.results.first?.inspection?.instrumentID == "parent-instrument")
     }
 
-    @Test func emptyCompanionDirectoryFailsClosedWithoutParentFallback() async throws {
+    @Test(.globalConfigIsolated) func emptyCompanionDirectoryFailsClosedWithoutParentFallback() async throws {
         let root = try makeOwnershipProject(
             parentProfiles: ["parent.yaml": csvProfile(instrumentID: "parent-instrument")],
             companion: .empty,
@@ -89,7 +89,7 @@ struct ProfileOwnershipTests {
         }
     }
 
-    @Test func invalidCompanionProfileBlocksWithoutParentFallback() async throws {
+    @Test(.globalConfigIsolated) func invalidCompanionProfileBlocksWithoutParentFallback() async throws {
         // The companion directory is authoritative even when its only profile
         // is invalid: the parent profile must not rescue the source.
         let root = try makeOwnershipProject(
@@ -106,7 +106,7 @@ struct ProfileOwnershipTests {
         #expect(report.results.first?.error?.contains("unversioned") == true)
     }
 
-    @Test func unsearchableInstrumentsDirectoryFailsClosedWithoutParentFallback() async throws {
+    @Test(.globalConfigIsolated) func unsearchableInstrumentsDirectoryFailsClosedWithoutParentFallback() async throws {
         // An instruments directory that is readable but not searchable gives
         // lstat(rawview) a permission error: absence of the companion entry is
         // not proven, so the catalog fails closed instead of falling back to
@@ -134,7 +134,7 @@ struct ProfileOwnershipTests {
         }
     }
 
-    @Test func nonDirectoryCompanionEntryFailsClosedWithoutParentFallback() async throws {
+    @Test(.globalConfigIsolated) func nonDirectoryCompanionEntryFailsClosedWithoutParentFallback() async throws {
         let root = try makeOwnershipProject(
             parentProfiles: ["parent.yaml": csvProfile(instrumentID: "parent-instrument")],
             companion: .regularFile,
@@ -148,7 +148,7 @@ struct ProfileOwnershipTests {
         #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
     }
 
-    @Test func companionDirectorySymlinkEscapingDataInstrumentsFailsClosed() async throws {
+    @Test(.globalConfigIsolated) func companionDirectorySymlinkEscapingDataInstrumentsFailsClosed() async throws {
         let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-ownership-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: outside) }
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
@@ -171,7 +171,7 @@ struct ProfileOwnershipTests {
         #expect(report.results.first?.error?.contains("No instrument profile supports") == true)
     }
 
-    @Test func companionProfileSymlinkEscapingIsSkippedWithoutParentFallback() async throws {
+    @Test(.globalConfigIsolated) func companionProfileSymlinkEscapingIsSkippedWithoutParentFallback() async throws {
         let outside = FileManager.default.temporaryDirectory.appendingPathComponent("rawview-ownership-\(UUID().uuidString).yaml")
         defer { try? FileManager.default.removeItem(at: outside) }
         try Data(csvProfile(instrumentID: "outside-instrument").utf8).write(to: outside)

@@ -21,7 +21,7 @@ struct ProjectLayoutConfigVectorsTests {
         return try YAMLParser.parse(text)
     }
 
-    @Test func sharedConfigVectorsMatchSwiftLoader() throws {
+    @Test(.globalConfigIsolated) func sharedConfigVectorsMatchSwiftLoader() throws {
         let contract = try Self.loadCrossLanguageContract()
         guard let rel = contract.value(for: "config_vectors")?.value(for: "file")?.scalarValue else {
             Issue.record("missing config_vectors.file in contract")

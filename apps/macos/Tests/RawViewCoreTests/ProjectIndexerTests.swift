@@ -109,7 +109,7 @@ private let defaultCohort: [String: String] = [
 /// Plan-mandated name. Generic inspection consumes only the secured 64 KiB
 /// prefix that was pinned before the pathname became unavailable: deleting the
 /// file after the prefix read must not change the preview or the disposition.
-@Test func prefixOnlyInspectionNeverReopensSource() throws {
+@Test(.globalConfigIsolated) func prefixOnlyInspectionNeverReopensSource() throws {
     let (project, root) = try makeIndexerProject(files: ["data/raw/table.csv": genericCSV])
     defer { removeIndexerProject(root, project) }
     let url = root.appendingPathComponent("data/raw/table.csv")
@@ -143,7 +143,7 @@ private let defaultCohort: [String: String] = [
 /// A prefix cut before any resolvable numeric block stays unresolved: the
 /// outcome is a deterministic block with the reader diagnostic, never a
 /// structural candidate and never support.
-@Test func truncatedSampleRemainsUnresolved() throws {
+@Test(.globalConfigIsolated) func truncatedSampleRemainsUnresolved() throws {
     let (project, root) = try makeIndexerProject(files: ["data/raw/cut.csv": genericCSV])
     defer { removeIndexerProject(root, project) }
     let url = root.appendingPathComponent("data/raw/cut.csv")
@@ -171,7 +171,7 @@ private let defaultCohort: [String: String] = [
 
 /// A source that cannot be opened is a transient failure, never a cached or
 /// deterministic outcome: no inspection, no persisted row, incomplete report.
-@Test func genericReadFailureRemainsTransient() async throws {
+@Test(.globalConfigIsolated) func genericReadFailureRemainsTransient() async throws {
     let (project, root) = try makeIndexerProject(files: ["data/raw/present.csv": genericCSV])
     defer { removeIndexerProject(root, project) }
     let missing = root.appendingPathComponent("data/raw/gone.csv")
@@ -190,7 +190,7 @@ private let defaultCohort: [String: String] = [
 /// the same store: whatever one persists, the other validates to the same
 /// recomputed outcome — and a GUI-side focused record is visible to a
 /// subsequent coordinator run.
-@Test func CLIAndGUIShareIndexValidity() async throws {
+@Test(.globalConfigIsolated) func CLIAndGUIShareIndexValidity() async throws {
     let (project, root) = try makeIndexerProject(files: defaultCohort, withProfile: true)
     defer { removeIndexerProject(root, project) }
 
@@ -233,7 +233,7 @@ private let defaultCohort: [String: String] = [
 
 /// A catalog change produces a new index namespace: every previously recorded
 /// hint stops being restorable, for every affected source.
-@Test func catalogChangeInvalidatesAllAffectedHints() async throws {
+@Test(.globalConfigIsolated) func catalogChangeInvalidatesAllAffectedHints() async throws {
     let (project, root) = try makeIndexerProject(files: defaultCohort, withProfile: true)
     defer { removeIndexerProject(root, project) }
     let first = try await ProjectIndexer.run(project: project)
@@ -261,7 +261,7 @@ private let defaultCohort: [String: String] = [
 
 /// Refresh drops entries whose source no longer exists: the row disappears
 /// from the index and cannot be restored.
-@Test func deletedFilesDisappear() async throws {
+@Test(.globalConfigIsolated) func deletedFilesDisappear() async throws {
     let (project, root) = try makeIndexerProject(files: defaultCohort, withProfile: true)
     defer { removeIndexerProject(root, project) }
     _ = try await ProjectIndexer.run(project: project)
@@ -282,7 +282,7 @@ private let defaultCohort: [String: String] = [
 
 /// Deterministic blocks are persisted and restorable: the index keeps the
 /// source visible with its recomputed diagnostic.
-@Test func blockedSourcesRemainVisible() async throws {
+@Test(.globalConfigIsolated) func blockedSourcesRemainVisible() async throws {
     let (project, root) = try makeIndexerProject(
         files: ["data/raw/notes.csv": unresolvableCSV, "data/raw/table.csv": genericCSV])
     defer { removeIndexerProject(root, project) }
@@ -306,7 +306,7 @@ private let defaultCohort: [String: String] = [
 
 /// Transient failures are never persisted: no row, no restoration, and the
 /// run reports itself incomplete.
-@Test func transientErrorsAreNotCached() async throws {
+@Test(.globalConfigIsolated) func transientErrorsAreNotCached() async throws {
     let (project, root) = try makeIndexerProject(
         files: ["data/raw/table.csv": genericCSV, "data/raw/locked.csv": genericCSV])
     defer {
@@ -335,7 +335,7 @@ private let defaultCohort: [String: String] = [
 /// Plan-mandated name. Cancellation after the first completed batch keeps
 /// every completed batch durable, counts the unvisited sources as cancelled
 /// (never inspected), and reports the run incomplete.
-@Test func cancelledIndexKeepsCompletedBatches() async throws {
+@Test(.globalConfigIsolated) func cancelledIndexKeepsCompletedBatches() async throws {
     var many: [String: String] = [:]
     for index in 0..<300 {
         many["data/raw/run-\(String(format: "%03d", index)).csv"] = genericCSV
@@ -358,7 +358,7 @@ private let defaultCohort: [String: String] = [
 
 /// One source that cannot be opened does not drop the other results: the run
 /// isolates the failure, persists the verified outcomes, and stays incomplete.
-@Test func sourceFailureDoesNotDropOtherResults() async throws {
+@Test(.globalConfigIsolated) func sourceFailureDoesNotDropOtherResults() async throws {
     let (project, root) = try makeIndexerProject(
         files: ["data/raw/a.csv": genericCSV, "data/raw/b.csv": genericCSV,
                 "data/raw/c.csv": unresolvableCSV, "data/raw/locked.csv": genericCSV],
@@ -392,7 +392,7 @@ private let defaultCohort: [String: String] = [
 /// A forged record with correct validity metadata still cannot promote itself:
 /// the store recomputes the outcome from the pinned prefix and current
 /// catalog. A deterministic unprofiled result is not scientific acceptance.
-@Test func forgedRecordCannotPromoteInspection() async throws {
+@Test(.globalConfigIsolated) func forgedRecordCannotPromoteInspection() async throws {
     let (project, root) = try makeIndexerProject(files: ["data/raw/matched.csv": profiledCSV],
                                                   withProfile: true)
     defer { removeIndexerProject(root, project) }
@@ -426,7 +426,7 @@ private let defaultCohort: [String: String] = [
 /// Same size, same mtime, different bytes: the pinned prefix digest changes,
 /// so the stored hint stops being restorable even though every advisory field
 /// still matches.
-@Test func sameSizeSameTimeEditInvalidatesStoredInspection() async throws {
+@Test(.globalConfigIsolated) func sameSizeSameTimeEditInvalidatesStoredInspection() async throws {
     let (project, root) = try makeIndexerProject(
         files: ["data/raw/edited.csv": String(repeating: "A", count: 2048) + "\n"])
     defer { removeIndexerProject(root, project) }
@@ -457,7 +457,7 @@ private let defaultCohort: [String: String] = [
 /// Rebuild bypasses SQLite hints without deleting raw or cache data: poisoned
 /// rows are rewritten from a fresh inspection, source bytes/mtimes and cache
 /// entries survive, and outcomes match a non-rebuild run.
-@Test func rebuildBypassesIndexWithoutDeletingRawOrCache() async throws {
+@Test(.globalConfigIsolated) func rebuildBypassesIndexWithoutDeletingRawOrCache() async throws {
     let (project, root) = try makeIndexerProject(files: defaultCohort, withProfile: true)
     defer { removeIndexerProject(root, project) }
     let cold = try await ProjectIndexer.run(project: project)
@@ -498,7 +498,7 @@ private let defaultCohort: [String: String] = [
 /// the index create nothing; only the first writer job (under the OS lease)
 /// migrates legacy hints and only then creates the app-local destination.
 /// Legacy db/WAL stay byte-identical afterwards.
-@Test func firstGUIOpenMigratesBeforeDestinationCreation() async throws {
+@Test(.globalConfigIsolated) func firstGUIOpenMigratesBeforeDestinationCreation() async throws {
     let (project, root) = try makeIndexerProject(files: ["data/raw/table.csv": genericCSV])
     defer { removeIndexerProject(root, project) }
     let legacyURL = ProjectIndexStore.legacyIndexURL(project: project)
@@ -564,7 +564,7 @@ private let defaultCohort: [String: String] = [
 
 /// Cold and warm runs over one fixed synthetic cohort must report identical
 /// outcomes and counts. Timings are recorded as evidence only — no threshold.
-@Test func coldAndWarmRunsReportOutcomeParity() async throws {
+@Test(.globalConfigIsolated) func coldAndWarmRunsReportOutcomeParity() async throws {
     let (project, root) = try makeIndexerProject(files: defaultCohort, withProfile: true)
     defer { removeIndexerProject(root, project) }
 

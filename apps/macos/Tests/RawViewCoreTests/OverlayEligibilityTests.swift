@@ -7,7 +7,7 @@ import Testing
 /// full normalized arrays -> exact-manifest membership + quantity/unit match.
 /// Synthetic fixtures only; category labels never establish membership.
 struct OverlayEligibilityTests {
-    @Test func manifestAcceptsSourcesListAtParentIndent() throws {
+    @Test(.globalConfigIsolated) func manifestAcceptsSourcesListAtParentIndent() throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8)],
@@ -22,7 +22,7 @@ struct OverlayEligibilityTests {
         #expect(index.manifests.first?.members == ["data/raw/a.csv"])
     }
 
-    @Test func manifestSkipsNonMeasurementFilesSuchAsIntakeLog() throws {
+    @Test(.globalConfigIsolated) func manifestSkipsNonMeasurementFilesSuchAsIntakeLog() throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8)],
@@ -47,7 +47,7 @@ struct OverlayEligibilityTests {
         #expect(index.manifests.first?.members == ["data/raw/a.csv"])
     }
 
-    @Test func studyManifestResolvesExplicitRawAliasesAndIgnoresFoldedRationale() async throws {
+    @Test(.globalConfigIsolated) func studyManifestResolvesExplicitRawAliasesAndIgnoresFoldedRationale() async throws {
         let csv = Data(syntheticCSV(values: [(0, 1e-12), (0.1, 2e-12)]).utf8)
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
@@ -86,7 +86,7 @@ struct OverlayEligibilityTests {
         #expect(ifEligible(OverlayEvaluator.evaluate(measurements: measurements, manifests: index.manifests)))
     }
 
-    @Test func manifestDiscoveryIgnoresDerivedCacheYAML() async throws {
+    @Test(.globalConfigIsolated) func manifestDiscoveryIgnoresDerivedCacheYAML() async throws {
         let source = Data(syntheticCSV(values: [(0, 1e-12)]).utf8)
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
@@ -100,7 +100,7 @@ struct OverlayEligibilityTests {
         #expect(index.manifests.isEmpty, "derived cache files must not establish overlay membership")
     }
 
-    @Test func unrelatedProjectYAMLDoesNotCreateManifestWarnings() throws {
+    @Test(.globalConfigIsolated) func unrelatedProjectYAMLDoesNotCreateManifestWarnings() throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8)],
@@ -114,7 +114,7 @@ struct OverlayEligibilityTests {
         #expect(index.issues.isEmpty)
     }
 
-    @Test func sameManifestAcceptsCompatibleSourcesPreservingFullArrays() async throws {
+    @Test(.globalConfigIsolated) func sameManifestAcceptsCompatibleSourcesPreservingFullArrays() async throws {
         let csvA = syntheticCSV(values: [(0, 1e-12), (0.1, 2e-12), (0.2, nil)])
         let csvB = syntheticCSV(values: [(0, 3e-12), (0.1, 4e-12), (0.2, 5e-12)])
         let root = try makeOverlayProject(
@@ -148,7 +148,7 @@ struct OverlayEligibilityTests {
         #expect(measurements.count == 2)
     }
 
-    @Test func sameStudyIDDifferentManifestsRejects() async throws {
+    @Test(.globalConfigIsolated) func sameStudyIDDifferentManifestsRejects() async throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8),
@@ -170,7 +170,7 @@ struct OverlayEligibilityTests {
         #expect(OverlaySelection.focused(selected: ["data/raw/b.csv"], current: nil) == "data/raw/b.csv")
     }
 
-    @Test func missingMembershipBlocksWholeComparison() async throws {
+    @Test(.globalConfigIsolated) func missingMembershipBlocksWholeComparison() async throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8),
@@ -188,7 +188,7 @@ struct OverlayEligibilityTests {
         #expect(reason.contains("data/raw/b.csv"))
     }
 
-    @Test func ambiguousMembershipBlocks() async throws {
+    @Test(.globalConfigIsolated) func ambiguousMembershipBlocks() async throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8),
@@ -207,7 +207,7 @@ struct OverlayEligibilityTests {
         #expect(reason.contains("data/raw/b.csv"))
     }
 
-    @Test func readerDrivenQuantityMismatchBlocks() async throws {
+    @Test(.globalConfigIsolated) func readerDrivenQuantityMismatchBlocks() async throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile, "fixture-dat.yaml": Fixtures.dataProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8),
@@ -226,7 +226,7 @@ struct OverlayEligibilityTests {
         #expect(reason.contains("X mismatch") || reason.contains("Y mismatch") || reason.contains("quantity") || reason.contains("unit"))
     }
 
-    @Test func unitAndQuantityMismatchBlocks() async throws {
+    @Test(.globalConfigIsolated) func unitAndQuantityMismatchBlocks() async throws {
         // Direct quantity/unit mismatch through decoded measurements (synthetic,
         // no raw identifiers): exact units required, no conversion.
         let mA = syntheticMeasurement(path: "data/raw/a.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A")
@@ -274,7 +274,7 @@ struct OverlayEligibilityTests {
         #expect(ifBlocked(blockedMissing))
     }
 
-    @Test func manifestRelativePathsResolveAndMalformedFailsClosed() async throws {
+    @Test(.globalConfigIsolated) func manifestRelativePathsResolveAndMalformedFailsClosed() async throws {
         let root = try makeOverlayProject(
             profiles: ["keysight-b1500a.yaml": Fixtures.keysightProfile],
             sources: ["data/raw/a.csv": Data(syntheticCSV(values: [(0, 1e-12)]).utf8),
@@ -303,7 +303,7 @@ struct OverlayEligibilityTests {
         #expect(badIndex.issues.contains { $0.contains("bad.yaml") })
     }
 
-    @Test func categoryLabelsNeverEstablishMembership() async throws {
+    @Test(.globalConfigIsolated) func categoryLabelsNeverEstablishMembership() async throws {
         // Two sources share a filename category token but no manifest lists both.
         let csv = syntheticCSV(values: [(0, 1e-12)])
         let root = try makeOverlayProject(
@@ -320,7 +320,7 @@ struct OverlayEligibilityTests {
         #expect(ifBlocked(result))
     }
 
-    @Test func wgfmuUnknownQuantityBlocksOverlay() {
+    @Test(.globalConfigIsolated) func wgfmuUnknownQuantityBlocksOverlay() {
         // Synthetic WGFMU shape: X time is declared, Y channels carry unknown
         // quantity/unspecified unit. Displayable singly, never overlayable.
         func wgfmuLike(path: String) -> NormalizedMeasurement {
@@ -349,7 +349,7 @@ struct OverlayEligibilityTests {
         #expect(reason.lowercased().contains("quantity") || reason.lowercased().contains("unspecified") || reason.lowercased().contains("unit"))
     }
 
-    @Test func focusedCohortAnchorsToFocusRatherThanLargestSubgroup() {
+    @Test(.globalConfigIsolated) func focusedCohortAnchorsToFocusRatherThanLargestSubgroup() {
         // Focus group {f, p1} (unit A) is smaller than {p2, p3, p4} (unit mV).
         let members = ["data/raw/f.csv", "data/raw/p1.csv", "data/raw/p2.csv", "data/raw/p3.csv", "data/raw/p4.csv"]
         let manifest = StudyManifest(relativePath: "study.yaml", studyID: "s", members: Set(members))
@@ -373,7 +373,7 @@ struct OverlayEligibilityTests {
         #expect(group.excluded.allSatisfy { !$0.reason.isEmpty })
     }
 
-    @Test func focusedCohortManifestMismatchStaysFullyBlocked() {
+    @Test(.globalConfigIsolated) func focusedCohortManifestMismatchStaysFullyBlocked() {
         let measurements = [
             syntheticMeasurement(path: "data/raw/f.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
             syntheticMeasurement(path: "data/raw/p1.csv", xQty: "voltage", xUnit: "V", yQty: "current", yUnit: "A"),
@@ -387,7 +387,7 @@ struct OverlayEligibilityTests {
             measurements: measurements, manifests: split, focusedSourceID: "data/raw/f.csv")))
     }
 
-    @Test func focusedCohortWithoutCompatiblePeerIsBlocked() {
+    @Test(.globalConfigIsolated) func focusedCohortWithoutCompatiblePeerIsBlocked() {
         let manifest = StudyManifest(relativePath: "study.yaml", studyID: "s",
                                      members: ["data/raw/f.csv", "data/raw/p2.csv"])
         let result = OverlayEvaluator.evaluateFocused(

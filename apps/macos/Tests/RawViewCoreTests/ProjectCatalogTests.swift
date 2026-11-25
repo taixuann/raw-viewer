@@ -32,7 +32,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     return root
 }
 
-@Test func discoversNestedSourcesInStableRelativePathOrderWithoutReader() throws {
+@Test(.globalConfigIsolated) func discoversNestedSourcesInStableRelativePathOrderWithoutReader() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -49,7 +49,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.allSatisfy { $0.url == $0.url.resolvingSymlinksInPath().standardizedFileURL })
 }
 
-@Test func doesNotDiscoverDescendantProjectRoots() async throws {
+@Test(.globalConfigIsolated) func doesNotDiscoverDescendantProjectRoots() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -75,7 +75,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(report.results.first?.error?.contains("outside") == true)
 }
 
-@Test func nestedDataRawMarkerInsideSelectedRootKeepsItsSources() throws {
+@Test(.globalConfigIsolated) func nestedDataRawMarkerInsideSelectedRootKeepsItsSources() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -94,7 +94,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.map(\.relativePath) == ["data/raw/inner/data/raw/deep.csv", "data/raw/top.csv"])
 }
 
-@Test func doesNotListDirectoriesAsRawSources() throws {
+@Test(.globalConfigIsolated) func doesNotListDirectoriesAsRawSources() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -106,7 +106,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.map(\.relativePath) == ["data/raw/source.csv"])
 }
 
-@Test func discoverySkipsSPEAndAFFMFilesCaseInsensitively() throws {
+@Test(.globalConfigIsolated) func discoverySkipsSPEAndAFFMFilesCaseInsensitively() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -120,7 +120,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.map(\.relativePath) == ["data/raw/shown.csv"])
 }
 
-@Test func discoveryIncludesOnlySupportedMeasurementExtensions() throws {
+@Test(.globalConfigIsolated) func discoveryIncludesOnlySupportedMeasurementExtensions() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -144,7 +144,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     ])
 }
 
-@Test func discoveryPopulatesFileModificationTimestamp() throws {
+@Test(.globalConfigIsolated) func discoveryPopulatesFileModificationTimestamp() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -157,7 +157,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources[0].mtime > 0)
 }
 
-@Test func listsDiscoveredSymlinksLexicallyWithoutTargetAccess() throws {
+@Test(.globalConfigIsolated) func listsDiscoveredSymlinksLexicallyWithoutTargetAccess() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")
@@ -177,7 +177,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(sources.first(where: { $0.relativePath == "data/raw/escape.csv" })?.byteSize == 0)
 }
 
-@Test func discoveryAsyncUsesProductionSeamOffMain() async throws {
+@Test(.globalConfigIsolated) func discoveryAsyncUsesProductionSeamOffMain() async throws {
     let root = try makeWideProject(directoryCount: 4)
     defer { try? FileManager.default.removeItem(at: root) }
     let project = try ProjectContext.open(root)
@@ -187,7 +187,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(viaSeam.count == 8)
 }
 
-@Test func discoveryAsyncCanceledBeforeProgressThrowsWithoutWalkingAll() async throws {
+@Test(.globalConfigIsolated) func discoveryAsyncCanceledBeforeProgressThrowsWithoutWalkingAll() async throws {
     let total = 40
     let root = try makeWideProject(directoryCount: total)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -208,7 +208,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(counter.count < total + 1)
 }
 
-@Test func discoveryAsyncCanceledDuringInventoryStopsEarly() async throws {
+@Test(.globalConfigIsolated) func discoveryAsyncCanceledDuringInventoryStopsEarly() async throws {
     let total = 40
     let stopAt = 8
     let root = try makeWideProject(directoryCount: total)
@@ -228,7 +228,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(counter.count < total + 1)
 }
 
-@Test func wideDirectoryInventoryIsCancellable() async throws {
+@Test(.globalConfigIsolated) func wideDirectoryInventoryIsCancellable() async throws {
     let total = 3000
     let stopAt = 50
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -252,7 +252,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(counter.count < total)
 }
 
-@Test func discoveryGateSupersedesStaleGenerations() async {
+@Test(.globalConfigIsolated) func discoveryGateSupersedesStaleGenerations() async {
     let gate = DiscoveryGate()
     let stale = await gate.begin()
     #expect(await gate.isCurrent(stale))
@@ -263,7 +263,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(!(await gate.isCurrent(stale)))
 }
 
-@Test func reselectSupersedesInFlightDiscovery() async throws {
+@Test(.globalConfigIsolated) func reselectSupersedesInFlightDiscovery() async throws {
     let total = 40
     let root = try makeWideProject(directoryCount: total)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -290,7 +290,7 @@ private func makeWideProject(directoryCount: Int) throws -> URL {
     #expect(await gate.isCurrent(tokenB))
 }
 
-@Test func discoveryFiltersSymlinksToUnsupportedExtensions() throws {
+@Test(.globalConfigIsolated) func discoveryFiltersSymlinksToUnsupportedExtensions() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let raw = root.appendingPathComponent("data/raw")

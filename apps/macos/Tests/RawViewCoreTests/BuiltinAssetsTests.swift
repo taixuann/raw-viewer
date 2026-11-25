@@ -26,39 +26,8 @@ struct BuiltinAssetsTests {
         return dir
     }
 
-    private func prepareIsolatedXdgConfig() throws -> () -> Void {
-        let xdgDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("rawview-swift-xdg-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(
-            at: xdgDir.appendingPathComponent("raw-viewer"),
-            withIntermediateDirectories: true
-        )
-        let prev = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
-        setenv("XDG_CONFIG_HOME", xdgDir.path, 1)
-        return {
-            if let prev {
-                setenv("XDG_CONFIG_HOME", prev, 1)
-            } else {
-                unsetenv("XDG_CONFIG_HOME")
-            }
-            try? FileManager.default.removeItem(at: xdgDir)
-        }
-    }
-
-    private func withIsolatedXdgConfig<T>(_ body: () throws -> T) throws -> T {
-        let restore = try prepareIsolatedXdgConfig()
-        defer { restore() }
-        return try body()
-    }
-
-    private func withIsolatedXdgConfig<T>(_ body: () async throws -> T) async throws -> T {
-        let restore = try prepareIsolatedXdgConfig()
-        defer { restore() }
-        return try await body()
-    }
-
     @Test func freshProjectLoadsBuiltinsAndResolvesFiles() async throws {
-        try await withIsolatedXdgConfig {
+        try await withIsolatedGlobalConfig {
             let tmp = try tempProject()
             defer { try? FileManager.default.removeItem(at: tmp) }
 
@@ -97,7 +66,7 @@ struct BuiltinAssetsTests {
     }
 
     @Test func disablingProfileInConfigStopsItMatching() async throws {
-        try await withIsolatedXdgConfig {
+        try await withIsolatedGlobalConfig {
             let tmp = try tempProject()
             defer { try? FileManager.default.removeItem(at: tmp) }
 
@@ -120,8 +89,8 @@ struct BuiltinAssetsTests {
         }
     }
 
-    @Test func overridingOneBuiltinKeepsTheRest() throws {
-        try withIsolatedXdgConfig {
+    @Test func overridingOneBuiltinKeepsTheRest() async throws {
+        try await withIsolatedGlobalConfig {
             let tmp = try tempProject()
             defer { try? FileManager.default.removeItem(at: tmp) }
 
@@ -175,8 +144,8 @@ variants:
         }
     }
 
-    @Test func olderRevisionEmitsWarning() throws {
-        try withIsolatedXdgConfig {
+    @Test func olderRevisionEmitsWarning() async throws {
+        try await withIsolatedGlobalConfig {
             let tmp = try tempProject()
             defer { try? FileManager.default.removeItem(at: tmp) }
 

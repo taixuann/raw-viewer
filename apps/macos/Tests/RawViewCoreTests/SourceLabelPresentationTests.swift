@@ -6,7 +6,7 @@ struct SourceLabelPresentationTests {
         SourceLabelRow(variables: [], fontSize: 12, weight: "regular", font: "normal", emphasis: "primary")
     }
 
-    @Test func exactFilenameFallback() {
+    @Test(.globalConfigIsolated) func exactFilenameFallback() {
         let names = ["DEV01_20240101.csv", "測定データ🔬 raw file (v2).CSV"]
         for name in names {
             let rows = SourceLabelPresentation.resolve(
@@ -18,7 +18,7 @@ struct SourceLabelPresentationTests {
         }
     }
 
-    @Test func optionalValuesJoinWithoutDanglingSeparator() {
+    @Test(.globalConfigIsolated) func optionalValuesJoinWithoutDanglingSeparator() {
         let layout = SourceLabelLayout(grammarID: "g1", rows: [
             SourceLabelRow(variables: ["device", "date", "mode"])
         ])
@@ -37,7 +37,7 @@ struct SourceLabelPresentationTests {
         #expect(allMissing[0].style == filenameStyle())
     }
 
-    @Test func emptyRowsDisappear() {
+    @Test(.globalConfigIsolated) func emptyRowsDisappear() {
         let layout = SourceLabelLayout(grammarID: "g1", rows: [
             SourceLabelRow(variables: []),
             SourceLabelRow(variables: ["device"], fontSize: 14, weight: "medium", font: "monospace", emphasis: "secondary"),
@@ -61,7 +61,7 @@ struct SourceLabelPresentationTests {
         #expect(fallback[0].style == filenameStyle())
     }
 
-    @Test func staleOrUnmatchedGrammarFallsBack() {
+    @Test(.globalConfigIsolated) func staleOrUnmatchedGrammarFallsBack() {
         let layoutA = SourceLabelLayout(grammarID: "grammar-a", rows: [
             SourceLabelRow(variables: ["device"])
         ])
@@ -88,7 +88,7 @@ struct SourceLabelPresentationTests {
         #expect(stale[0].style == filenameStyle())
     }
 
-    @Test func customValuesRemainExact() {
+    @Test(.globalConfigIsolated) func customValuesRemainExact() {
         let layout = SourceLabelLayout(grammarID: "g1", rows: [
             SourceLabelRow(variables: ["device", "note"])
         ])

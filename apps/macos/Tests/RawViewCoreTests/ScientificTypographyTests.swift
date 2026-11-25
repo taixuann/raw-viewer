@@ -3,7 +3,7 @@ import Testing
 
 @Suite struct ScientificTypographyTests {
 
-    @Test func convertsOhmAndMetricOhmShorthands() {
+    @Test(.globalConfigIsolated) func convertsOhmAndMetricOhmShorthands() {
         #expect(ScientificTypography.format("ohm") == "Ω")
         #expect(ScientificTypography.format("\\ohm") == "Ω")
         #expect(ScientificTypography.format("kohm") == "kΩ")
@@ -13,7 +13,7 @@ import Testing
         #expect(ScientificTypography.format("uohm") == "μΩ")
     }
 
-    @Test func convertsMicroAndGreekLetters() {
+    @Test(.globalConfigIsolated) func convertsMicroAndGreekLetters() {
         #expect(ScientificTypography.format("mu") == "μ")
         #expect(ScientificTypography.format("\\mu") == "μ")
         #expect(ScientificTypography.format("uA") == "μA")
@@ -26,7 +26,7 @@ import Testing
         #expect(ScientificTypography.format("\\theta") == "θ")
     }
 
-    @Test func convertsPowersAndSuperscripts() {
+    @Test(.globalConfigIsolated) func convertsPowersAndSuperscripts() {
         #expect(ScientificTypography.format("cm^-1") == "cm⁻¹")
         #expect(ScientificTypography.format("mu cm^-1") == "μ cm⁻¹")
         #expect(ScientificTypography.format("mA/cm^2") == "mA/cm²")
@@ -36,14 +36,14 @@ import Testing
         #expect(ScientificTypography.format("^{-2}") == "⁻²")
     }
 
-    @Test func convertsSubscripts() {
+    @Test(.globalConfigIsolated) func convertsSubscripts() {
         #expect(ScientificTypography.format("E_p") == "Eₚ")
         #expect(ScientificTypography.format("Delta E_p") == "Δ Eₚ")
         #expect(ScientificTypography.format("I_0") == "I₀")
         #expect(ScientificTypography.format("V_{1}") == "V₁")
     }
 
-    @Test func convertsDegreesAndSpecialSymbols() {
+    @Test(.globalConfigIsolated) func convertsDegreesAndSpecialSymbols() {
         #expect(ScientificTypography.format("degC") == "°C")
         #expect(ScientificTypography.format("\\degC") == "°C")
         #expect(ScientificTypography.format("deg") == "°")
@@ -52,14 +52,14 @@ import Testing
         #expect(ScientificTypography.format("\\times") == "×")
     }
 
-    @Test func preservesUnrelatedWords() {
+    @Test(.globalConfigIsolated) func preservesUnrelatedWords() {
         #expect(ScientificTypography.format("counts") == "counts")
         #expect(ScientificTypography.format("column") == "column")
         #expect(ScientificTypography.format("amount") == "amount")
         #expect(ScientificTypography.format("cycle") == "cycle")
     }
 
-    @Test func formatsCombinedAxisTitlesWithUnits() {
+    @Test(.globalConfigIsolated) func formatsCombinedAxisTitlesWithUnits() {
         #expect(ScientificTypography.format("Potential applied (V)") == "Potential applied (V)")
         #expect(ScientificTypography.format("Potential (muV)") == "Potential (μV)")
         #expect(ScientificTypography.format("Current (mA/cm^2)") == "Current (mA/cm²)")
@@ -67,7 +67,7 @@ import Testing
         #expect(ScientificTypography.format("Wavenumber (cm^-1)") == "Wavenumber (cm⁻¹)")
     }
 
-    @Test func unitCategoriesArePopulated() {
+    @Test(.globalConfigIsolated) func unitCategoriesArePopulated() {
         #expect(!ScientificTypography.unitCategories.isEmpty)
         #expect(ScientificTypography.unitCategories.contains(where: { $0.category.contains("Electrical") }))
     }

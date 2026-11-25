@@ -9,7 +9,7 @@ private let defaultFilenameSecond = "010526-000002_autolab-usth.ca_[dev-1]_elect
 
 struct GrammarCacheTests {
 
-    @Test func repeatedExtractReturnsEqualFactsWithoutRecompiling() {
+    @Test(.globalConfigIsolated) func repeatedExtractReturnsEqualFactsWithoutRecompiling() {
         let cache = GrammarCache()
         let grammar = FilenameGrammarCatalog.standardDefaults[0]
 
@@ -34,7 +34,7 @@ struct GrammarCacheTests {
         #expect(cache.compilationCount == 1)
     }
 
-    @Test func changedTemplateOrFieldFormatCompilesAgain() throws {
+    @Test(.globalConfigIsolated) func changedTemplateOrFieldFormatCompilesAgain() throws {
         let cache = GrammarCache()
         let twoDigitFields = [
             GrammarField(name: "code", type: .number, formatHint: "01"),
@@ -73,7 +73,7 @@ struct GrammarCacheTests {
         #expect(cache.compilationCount == 3)
     }
 
-    @Test func changedRoleGivesNewFactsWithoutRecompiling() {
+    @Test(.globalConfigIsolated) func changedRoleGivesNewFactsWithoutRecompiling() {
         let cache = GrammarCache()
         let plain = FilenameGrammar(
             name: "plain",
@@ -96,7 +96,7 @@ struct GrammarCacheTests {
         #expect(cache.compilationCount == 1)
     }
 
-    @Test func concurrentExtractReturnsCorrectFacts() async {
+    @Test(.globalConfigIsolated) func concurrentExtractReturnsCorrectFacts() async {
         let grammars = [FilenameGrammarCatalog.standardDefaults[0], FilenameGrammarCatalog.standardDefaults[1]]
         var names: [String] = []
         for index in 1...200 {
@@ -130,7 +130,7 @@ struct GrammarCacheTests {
         }
     }
 
-    @Test func factsCacheClearsWhenBoundIsReached() {
+    @Test(.globalConfigIsolated) func factsCacheClearsWhenBoundIsReached() {
         let cache = GrammarCache(factsLimit: 3)
         let grammar = FilenameGrammar(
             name: "bounded",
@@ -147,7 +147,7 @@ struct GrammarCacheTests {
         #expect(cache.cachedFactsCount == 1)
     }
 
-    @Test(.enabled(if: grammarPerfEnabled))
+    @Test(.globalConfigIsolated, .enabled(if: grammarPerfEnabled))
     func extractBenchmarkFiveThousandFiles() {
         let grammar = FilenameGrammarCatalog.standardDefaults[0]
         let names = (1...5_000).map { index in
